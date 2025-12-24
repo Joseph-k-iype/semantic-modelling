@@ -1,0 +1,735 @@
+enterprise-modeling-platform/
+├── README.md
+├── LICENSE
+├── .gitignore
+├── docker-compose.yml
+├── docker-compose.dev.yml
+├── docker-compose.prod.yml
+├── .env.example
+├── package.json (root workspace config)
+├── turbo.json
+├── .prettierrc
+├── .eslintrc.js
+│
+├── docs/
+│   ├── architecture/
+│   │   ├── 01-system-overview.md
+│   │   ├── 02-data-model.md
+│   │   ├── 03-semantic-layer.md
+│   │   ├── 04-diagram-layer.md
+│   │   ├── 05-layout-engine.md
+│   │   ├── 06-collaboration.md
+│   │   └── 07-security.md
+│   ├── api/
+│   │   ├── rest-api.md
+│   │   ├── websocket-api.md
+│   │   └── graph-queries.md
+│   ├── user-guides/
+│   │   ├── getting-started.md
+│   │   ├── er-modeling.md
+│   │   ├── uml-modeling.md
+│   │   ├── bpmn-modeling.md
+│   │   └── collaboration.md
+│   └── development/
+│       ├── setup.md
+│       ├── contributing.md
+│       ├── plugin-development.md
+│       └── deployment.md
+│
+├── frontend/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── vite.config.ts
+│   ├── tailwind.config.js
+│   ├── postcss.config.js
+│   ├── index.html
+│   ├── .env.development
+│   ├── .env.production
+│   │
+│   ├── public/
+│   │   ├── favicon.ico
+│   │   ├── logo.svg
+│   │   └── robots.txt
+│   │
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── App.tsx
+│   │   ├── vite-env.d.ts
+│   │   │
+│   │   ├── assets/
+│   │   │   ├── icons/
+│   │   │   │   ├── uml/
+│   │   │   │   ├── bpmn/
+│   │   │   │   ├── er/
+│   │   │   │   └── common/
+│   │   │   ├── images/
+│   │   │   └── fonts/
+│   │   │
+│   │   ├── components/
+│   │   │   ├── common/
+│   │   │   │   ├── Button/
+│   │   │   │   │   ├── Button.tsx
+│   │   │   │   │   ├── Button.test.tsx
+│   │   │   │   │   └── Button.module.css
+│   │   │   │   ├── Input/
+│   │   │   │   ├── Modal/
+│   │   │   │   ├── Dropdown/
+│   │   │   │   ├── Toast/
+│   │   │   │   ├── Tooltip/
+│   │   │   │   ├── ContextMenu/
+│   │   │   │   ├── CommandPalette/
+│   │   │   │   ├── SearchBar/
+│   │   │   │   └── Breadcrumbs/
+│   │   │   │
+│   │   │   ├── layout/
+│   │   │   │   ├── AppShell/
+│   │   │   │   ├── Sidebar/
+│   │   │   │   ├── Header/
+│   │   │   │   ├── Footer/
+│   │   │   │   └── WorkspaceLayout/
+│   │   │   │
+│   │   │   ├── auth/
+│   │   │   │   ├── LoginForm/
+│   │   │   │   ├── RegisterForm/
+│   │   │   │   ├── PasswordReset/
+│   │   │   │   └── AuthGuard/
+│   │   │   │
+│   │   │   ├── workspace/
+│   │   │   │   ├── WorkspaceSelector/
+│   │   │   │   ├── WorkspaceSettings/
+│   │   │   │   ├── WorkspaceMembers/
+│   │   │   │   ├── FolderTree/
+│   │   │   │   ├── FolderBrowser/
+│   │   │   │   └── WorkspacePermissions/
+│   │   │   │
+│   │   │   ├── diagram/
+│   │   │   │   ├── DiagramCanvas/
+│   │   │   │   │   ├── DiagramCanvas.tsx
+│   │   │   │   │   ├── DiagramCanvas.hooks.ts
+│   │   │   │   │   └── DiagramCanvas.utils.ts
+│   │   │   │   ├── DiagramToolbar/
+│   │   │   │   ├── DiagramMinimap/
+│   │   │   │   ├── DiagramControls/
+│   │   │   │   ├── DiagramProperties/
+│   │   │   │   └── DiagramValidation/
+│   │   │   │
+│   │   │   ├── nodes/
+│   │   │   │   ├── base/
+│   │   │   │   │   ├── BaseNode.tsx
+│   │   │   │   │   ├── BaseNode.types.ts
+│   │   │   │   │   └── BaseNode.styles.ts
+│   │   │   │   ├── uml/
+│   │   │   │   │   ├── ClassNode/
+│   │   │   │   │   ├── InterfaceNode/
+│   │   │   │   │   ├── PackageNode/
+│   │   │   │   │   ├── ComponentNode/
+│   │   │   │   │   ├── StateNode/
+│   │   │   │   │   ├── ActivityNode/
+│   │   │   │   │   ├── LifelineNode/
+│   │   │   │   │   └── ActorNode/
+│   │   │   │   ├── bpmn/
+│   │   │   │   │   ├── TaskNode/
+│   │   │   │   │   ├── EventNode/
+│   │   │   │   │   ├── GatewayNode/
+│   │   │   │   │   ├── PoolNode/
+│   │   │   │   │   ├── LaneNode/
+│   │   │   │   │   └── DataObjectNode/
+│   │   │   │   └── er/
+│   │   │   │       ├── EntityNode/
+│   │   │   │       ├── AttributeNode/
+│   │   │   │       └── TableNode/
+│   │   │   │
+│   │   │   ├── edges/
+│   │   │   │   ├── base/
+│   │   │   │   │   ├── BaseEdge.tsx
+│   │   │   │   │   ├── BaseEdge.types.ts
+│   │   │   │   │   └── BaseEdge.styles.ts
+│   │   │   │   ├── uml/
+│   │   │   │   │   ├── AssociationEdge/
+│   │   │   │   │   ├── GeneralizationEdge/
+│   │   │   │   │   ├── DependencyEdge/
+│   │   │   │   │   ├── AggregationEdge/
+│   │   │   │   │   ├── CompositionEdge/
+│   │   │   │   │   └── MessageEdge/
+│   │   │   │   ├── bpmn/
+│   │   │   │   │   ├── SequenceFlowEdge/
+│   │   │   │   │   ├── MessageFlowEdge/
+│   │   │   │   │   └── AssociationEdge/
+│   │   │   │   └── er/
+│   │   │   │       ├── RelationshipEdge/
+│   │   │   │       └── ForeignKeyEdge/
+│   │   │   │
+│   │   │   ├── collaboration/
+│   │   │   │   ├── PresenceIndicator/
+│   │   │   │   ├── CursorOverlay/
+│   │   │   │   ├── UserAvatar/
+│   │   │   │   ├── CommentPanel/
+│   │   │   │   ├── CommentThread/
+│   │   │   │   └── ActivityFeed/
+│   │   │   │
+│   │   │   ├── versioning/
+│   │   │   │   ├── VersionHistory/
+│   │   │   │   ├── VersionCompare/
+│   │   │   │   ├── ChangeLog/
+│   │   │   │   └── VersionRestore/
+│   │   │   │
+│   │   │   ├── publishing/
+│   │   │   │   ├── PublishRequest/
+│   │   │   │   ├── PublishReview/
+│   │   │   │   ├── PublishApproval/
+│   │   │   │   ├── PublishHistory/
+│   │   │   │   └── PublishWorkflow/
+│   │   │   │
+│   │   │   ├── validation/
+│   │   │   │   ├── ValidationPanel/
+│   │   │   │   ├── ValidationMessage/
+│   │   │   │   ├── ValidationRules/
+│   │   │   │   └── ValidationReport/
+│   │   │   │
+│   │   │   ├── lineage/
+│   │   │   │   ├── LineageGraph/
+│   │   │   │   ├── LineagePanel/
+│   │   │   │   ├── ImpactAnalysis/
+│   │   │   │   └── DependencyTree/
+│   │   │   │
+│   │   │   └── export/
+│   │   │       ├── ExportDialog/
+│   │   │       ├── ExportOptions/
+│   │   │       ├── ExportPreview/
+│   │   │       └── ExportFormats/
+│   │   │
+│   │   ├── pages/
+│   │   │   ├── HomePage/
+│   │   │   │   └── HomePage.tsx
+│   │   │   ├── LoginPage/
+│   │   │   │   └── LoginPage.tsx
+│   │   │   ├── WorkspacePage/
+│   │   │   │   └── WorkspacePage.tsx
+│   │   │   ├── ModelEditorPage/
+│   │   │   │   └── ModelEditorPage.tsx
+│   │   │   ├── DiagramEditorPage/
+│   │   │   │   └── DiagramEditorPage.tsx
+│   │   │   ├── SettingsPage/
+│   │   │   │   └── SettingsPage.tsx
+│   │   │   └── NotFoundPage/
+│   │   │       └── NotFoundPage.tsx
+│   │   │
+│   │   ├── features/
+│   │   │   ├── diagram-engine/
+│   │   │   │   ├── DiagramEngine.ts
+│   │   │   │   ├── DiagramEngine.types.ts
+│   │   │   │   ├── DiagramRenderer.ts
+│   │   │   │   ├── NodeFactory.ts
+│   │   │   │   ├── EdgeFactory.ts
+│   │   │   │   └── SelectionManager.ts
+│   │   │   │
+│   │   │   ├── layout-engine/
+│   │   │   │   ├── LayoutEngine.ts
+│   │   │   │   ├── LayoutEngine.types.ts
+│   │   │   │   ├── engines/
+│   │   │   │   │   ├── ManualLayout.ts
+│   │   │   │   │   ├── LayeredLayout.ts
+│   │   │   │   │   ├── ForceDirectedLayout.ts
+│   │   │   │   │   ├── BPMNSwimlaneLayout.ts
+│   │   │   │   │   ├── UMLSequenceLayout.ts
+│   │   │   │   │   └── StateMachineLayout.ts
+│   │   │   │   ├── LayoutConstraints.ts
+│   │   │   │   ├── LayoutWorker.ts
+│   │   │   │   └── LayoutAdapter.ts
+│   │   │   │
+│   │   │   ├── notation/
+│   │   │   │   ├── NotationRegistry.ts
+│   │   │   │   ├── NotationPlugin.types.ts
+│   │   │   │   ├── uml/
+│   │   │   │   │   ├── UMLClassNotation.ts
+│   │   │   │   │   ├── UMLSequenceNotation.ts
+│   │   │   │   │   ├── UMLActivityNotation.ts
+│   │   │   │   │   ├── UMLStateMachineNotation.ts
+│   │   │   │   │   ├── UMLComponentNotation.ts
+│   │   │   │   │   ├── UMLDeploymentNotation.ts
+│   │   │   │   │   └── UMLPackageNotation.ts
+│   │   │   │   ├── bpmn/
+│   │   │   │   │   ├── BPMNNotation.ts
+│   │   │   │   │   ├── BPMNValidator.ts
+│   │   │   │   │   └── BPMNRenderer.ts
+│   │   │   │   └── er/
+│   │   │   │       ├── ERNotation.ts
+│   │   │   │       ├── ERValidator.ts
+│   │   │   │       └── ERRenderer.ts
+│   │   │   │
+│   │   │   ├── validation/
+│   │   │   │   ├── ValidationEngine.ts
+│   │   │   │   ├── ValidationEngine.types.ts
+│   │   │   │   ├── rules/
+│   │   │   │   │   ├── BPMNRules.ts
+│   │   │   │   │   ├── UMLRules.ts
+│   │   │   │   │   ├── ERRules.ts
+│   │   │   │   │   └── SemanticRules.ts
+│   │   │   │   └── ValidationRunner.ts
+│   │   │   │
+│   │   │   ├── collaboration/
+│   │   │   │   ├── CollaborationProvider.tsx
+│   │   │   │   ├── CollaborationManager.ts
+│   │   │   │   ├── YjsProvider.ts
+│   │   │   │   ├── PresenceManager.ts
+│   │   │   │   ├── LockManager.ts
+│   │   │   │   └── CommentManager.ts
+│   │   │   │
+│   │   │   ├── semantic-model/
+│   │   │   │   ├── SemanticModelClient.ts
+│   │   │   │   ├── SemanticModelCache.ts
+│   │   │   │   ├── ConceptManager.ts
+│   │   │   │   ├── RelationshipManager.ts
+│   │   │   │   └── LineageAnalyzer.ts
+│   │   │   │
+│   │   │   └── export/
+│   │   │       ├── ExportEngine.ts
+│   │   │       ├── exporters/
+│   │   │       │   ├── SVGExporter.ts
+│   │   │       │   ├── PNGExporter.ts
+│   │   │       │   ├── PDFExporter.ts
+│   │   │       │   ├── SQLExporter.ts
+│   │   │       │   └── CypherExporter.ts
+│   │   │       └── ExportFormats.ts
+│   │   │
+│   │   ├── hooks/
+│   │   │   ├── useAuth.ts
+│   │   │   ├── useWorkspace.ts
+│   │   │   ├── useDiagram.ts
+│   │   │   ├── useSemanticModel.ts
+│   │   │   ├── useLayout.ts
+│   │   │   ├── useCollaboration.ts
+│   │   │   ├── useValidation.ts
+│   │   │   ├── useVersioning.ts
+│   │   │   ├── useKeyboard.ts
+│   │   │   ├── useCommandPalette.ts
+│   │   │   └── useUndoRedo.ts
+│   │   │
+│   │   ├── store/
+│   │   │   ├── index.ts
+│   │   │   ├── authStore.ts
+│   │   │   ├── workspaceStore.ts
+│   │   │   ├── diagramStore.ts
+│   │   │   ├── semanticModelStore.ts
+│   │   │   ├── layoutStore.ts
+│   │   │   ├── collaborationStore.ts
+│   │   │   ├── validationStore.ts
+│   │   │   ├── uiStore.ts
+│   │   │   └── selectionStore.ts
+│   │   │
+│   │   ├── services/
+│   │   │   ├── api/
+│   │   │   │   ├── client.ts
+│   │   │   │   ├── auth.api.ts
+│   │   │   │   ├── workspace.api.ts
+│   │   │   │   ├── model.api.ts
+│   │   │   │   ├── diagram.api.ts
+│   │   │   │   ├── layout.api.ts
+│   │   │   │   ├── validation.api.ts
+│   │   │   │   ├── publish.api.ts
+│   │   │   │   └── export.api.ts
+│   │   │   ├── websocket/
+│   │   │   │   ├── WebSocketClient.ts
+│   │   │   │   ├── CollaborationSocket.ts
+│   │   │   │   └── PresenceSocket.ts
+│   │   │   └── workers/
+│   │   │       ├── layout.worker.ts
+│   │   │       ├── validation.worker.ts
+│   │   │       └── export.worker.ts
+│   │   │
+│   │   ├── utils/
+│   │   │   ├── graph/
+│   │   │   │   ├── graphUtils.ts
+│   │   │   │   ├── traversal.ts
+│   │   │   │   └── algorithms.ts
+│   │   │   ├── geometry/
+│   │   │   │   ├── vectors.ts
+│   │   │   │   ├── bbox.ts
+│   │   │   │   └── routing.ts
+│   │   │   ├── parsers/
+│   │   │   │   ├── sqlParser.ts
+│   │   │   │   ├── cypherParser.ts
+│   │   │   │   └── xmiParser.ts
+│   │   │   ├── formatters/
+│   │   │   │   ├── dateFormatter.ts
+│   │   │   │   └── textFormatter.ts
+│   │   │   └── helpers/
+│   │   │       ├── debounce.ts
+│   │   │       ├── throttle.ts
+│   │   │       ├── uuid.ts
+│   │   │       └── logger.ts
+│   │   │
+│   │   ├── types/
+│   │   │   ├── index.ts
+│   │   │   ├── auth.types.ts
+│   │   │   ├── workspace.types.ts
+│   │   │   ├── model.types.ts
+│   │   │   ├── diagram.types.ts
+│   │   │   ├── notation.types.ts
+│   │   │   ├── layout.types.ts
+│   │   │   ├── collaboration.types.ts
+│   │   │   ├── validation.types.ts
+│   │   │   ├── versioning.types.ts
+│   │   │   ├── node.types.ts
+│   │   │   ├── edge.types.ts
+│   │   │   └── api.types.ts
+│   │   │
+│   │   ├── styles/
+│   │   │   ├── globals.css
+│   │   │   ├── variables.css
+│   │   │   ├── themes/
+│   │   │   │   ├── light.css
+│   │   │   │   └── dark.css
+│   │   │   └── notations/
+│   │   │       ├── uml.css
+│   │   │       ├── bpmn.css
+│   │   │       └── er.css
+│   │   │
+│   │   └── config/
+│   │       ├── constants.ts
+│   │       ├── env.ts
+│   │       ├── routes.ts
+│   │       └── notations.ts
+│   │
+│   └── tests/
+│       ├── unit/
+│       │   ├── components/
+│       │   ├── hooks/
+│       │   ├── utils/
+│       │   └── store/
+│       ├── integration/
+│       │   ├── diagram-engine/
+│       │   ├── layout-engine/
+│       │   └── collaboration/
+│       └── e2e/
+│           ├── auth.spec.ts
+│           ├── workspace.spec.ts
+│           ├── modeling.spec.ts
+│           └── collaboration.spec.ts
+│
+├── backend/
+│   ├── pyproject.toml
+│   ├── poetry.lock
+│   ├── .env.development
+│   ├── .env.production
+│   ├── alembic.ini
+│   │
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── dependencies.py
+│   │   │
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── v1/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── router.py
+│   │   │   │   ├── endpoints/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── auth.py
+│   │   │   │   │   ├── users.py
+│   │   │   │   │   ├── workspaces.py
+│   │   │   │   │   ├── folders.py
+│   │   │   │   │   ├── models.py
+│   │   │   │   │   ├── diagrams.py
+│   │   │   │   │   ├── concepts.py
+│   │   │   │   │   ├── relationships.py
+│   │   │   │   │   ├── layouts.py
+│   │   │   │   │   ├── validation.py
+│   │   │   │   │   ├── publish.py
+│   │   │   │   │   ├── versions.py
+│   │   │   │   │   ├── lineage.py
+│   │   │   │   │   └── export.py
+│   │   │   │   └── websocket/
+│   │   │   │       ├── __init__.py
+│   │   │   │       ├── collaboration.py
+│   │   │   │       └── presence.py
+│   │   │   └── deps.py
+│   │   │
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── security.py
+│   │   │   ├── permissions.py
+│   │   │   ├── config.py
+│   │   │   └── exceptions.py
+│   │   │
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── user.py
+│   │   │   ├── workspace.py
+│   │   │   ├── folder.py
+│   │   │   ├── model.py
+│   │   │   ├── diagram.py
+│   │   │   ├── layout.py
+│   │   │   ├── version.py
+│   │   │   ├── publish_workflow.py
+│   │   │   ├── comment.py
+│   │   │   └── audit_log.py
+│   │   │
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth.py
+│   │   │   ├── user.py
+│   │   │   ├── workspace.py
+│   │   │   ├── folder.py
+│   │   │   ├── model.py
+│   │   │   ├── diagram.py
+│   │   │   ├── concept.py
+│   │   │   ├── relationship.py
+│   │   │   ├── layout.py
+│   │   │   ├── validation.py
+│   │   │   ├── publish.py
+│   │   │   ├── version.py
+│   │   │   ├── lineage.py
+│   │   │   └── export.py
+│   │   │
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth_service.py
+│   │   │   ├── workspace_service.py
+│   │   │   ├── model_service.py
+│   │   │   ├── diagram_service.py
+│   │   │   ├── semantic_model_service.py
+│   │   │   ├── layout_service.py
+│   │   │   ├── validation_service.py
+│   │   │   ├── publish_service.py
+│   │   │   ├── version_service.py
+│   │   │   ├── lineage_service.py
+│   │   │   ├── export_service.py
+│   │   │   └── collaboration_service.py
+│   │   │
+│   │   ├── repositories/
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py
+│   │   │   ├── user_repository.py
+│   │   │   ├── workspace_repository.py
+│   │   │   ├── folder_repository.py
+│   │   │   ├── model_repository.py
+│   │   │   ├── diagram_repository.py
+│   │   │   ├── layout_repository.py
+│   │   │   ├── version_repository.py
+│   │   │   └── publish_repository.py
+│   │   │
+│   │   ├── graph/
+│   │   │   ├── __init__.py
+│   │   │   ├── client.py
+│   │   │   ├── queries/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── concept_queries.py
+│   │   │   │   ├── relationship_queries.py
+│   │   │   │   ├── lineage_queries.py
+│   │   │   │   ├── impact_queries.py
+│   │   │   │   └── traversal_queries.py
+│   │   │   ├── models/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── concept.py
+│   │   │   │   ├── attribute.py
+│   │   │   │   ├── relationship.py
+│   │   │   │   └── model.py
+│   │   │   └── utils/
+│   │   │       ├── __init__.py
+│   │   │       ├── cypher_builder.py
+│   │   │       └── graph_mapper.py
+│   │   │
+│   │   ├── db/
+│   │   │   ├── __init__.py
+│   │   │   ├── session.py
+│   │   │   ├── base.py
+│   │   │   └── init_db.py
+│   │   │
+│   │   ├── cache/
+│   │   │   ├── __init__.py
+│   │   │   ├── redis_client.py
+│   │   │   ├── cache_manager.py
+│   │   │   └── crdt_manager.py
+│   │   │
+│   │   ├── validation/
+│   │   │   ├── __init__.py
+│   │   │   ├── validation_engine.py
+│   │   │   ├── rules/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── base_rule.py
+│   │   │   │   ├── bpmn_rules.py
+│   │   │   │   ├── uml_rules.py
+│   │   │   │   ├── er_rules.py
+│   │   │   │   └── semantic_rules.py
+│   │   │   └── validators/
+│   │   │       ├── __init__.py
+│   │   │       ├── bpmn_validator.py
+│   │   │       ├── uml_validator.py
+│   │   │       └── er_validator.py
+│   │   │
+│   │   ├── layout/
+│   │   │   ├── __init__.py
+│   │   │   ├── layout_engine.py
+│   │   │   ├── engines/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── elk_adapter.py
+│   │   │   │   ├── force_layout.py
+│   │   │   │   ├── bpmn_swimlane.py
+│   │   │   │   ├── uml_sequence.py
+│   │   │   │   └── state_machine.py
+│   │   │   └── constraints.py
+│   │   │
+│   │   ├── parsers/
+│   │   │   ├── __init__.py
+│   │   │   ├── sql_parser.py
+│   │   │   ├── cypher_parser.py
+│   │   │   └── xmi_parser.py
+│   │   │
+│   │   ├── exporters/
+│   │   │   ├── __init__.py
+│   │   │   ├── base_exporter.py
+│   │   │   ├── sql_exporter.py
+│   │   │   ├── cypher_exporter.py
+│   │   │   ├── xmi_exporter.py
+│   │   │   └── json_exporter.py
+│   │   │
+│   │   ├── middleware/
+│   │   │   ├── __init__.py
+│   │   │   ├── auth_middleware.py
+│   │   │   ├── logging_middleware.py
+│   │   │   ├── error_middleware.py
+│   │   │   └── cors_middleware.py
+│   │   │
+│   │   └── utils/
+│   │       ├── __init__.py
+│   │       ├── logger.py
+│   │       ├── datetime.py
+│   │       ├── uuid.py
+│   │       └── validators.py
+│   │
+│   ├── migrations/
+│   │   ├── versions/
+│   │   │   └── (alembic migration files)
+│   │   ├── env.py
+│   │   └── script.py.mako
+│   │
+│   └── tests/
+│       ├── __init__.py
+│       ├── conftest.py
+│       ├── unit/
+│       │   ├── test_services/
+│       │   ├── test_repositories/
+│       │   ├── test_validation/
+│       │   └── test_graph/
+│       ├── integration/
+│       │   ├── test_api/
+│       │   ├── test_websocket/
+│       │   └── test_graph_queries/
+│       └── fixtures/
+│           ├── models.py
+│           └── data.py
+│
+├── shared/
+│   ├── types/
+│   │   ├── index.ts
+│   │   ├── common.types.ts
+│   │   ├── workspace.types.ts
+│   │   ├── model.types.ts
+│   │   ├── diagram.types.ts
+│   │   ├── notation.types.ts
+│   │   └── api.types.ts
+│   └── constants/
+│       ├── index.ts
+│       ├── notations.ts
+│       └── validation.ts
+│
+├── database/
+│   ├── postgres/
+│   │   ├── init/
+│   │   │   └── 01-init-db.sql
+│   │   └── schema/
+│   │       ├── 01-users.sql
+│   │       ├── 02-workspaces.sql
+│   │       ├── 03-folders.sql
+│   │       ├── 04-models.sql
+│   │       ├── 05-diagrams.sql
+│   │       ├── 06-layouts.sql
+│   │       ├── 07-versions.sql
+│   │       ├── 08-publish_workflows.sql
+│   │       ├── 09-comments.sql
+│   │       └── 10-audit_logs.sql
+│   │
+│   ├── falkordb/
+│   │   ├── init/
+│   │   │   └── 01-init-graph.cypher
+│   │   └── schema/
+│   │       ├── 01-constraints.cypher
+│   │       ├── 02-indexes.cypher
+│   │       └── 03-seed-data.cypher
+│   │
+│   └── redis/
+│       └── redis.conf
+│
+├── scripts/
+│   ├── setup.sh
+│   ├── dev.sh
+│   ├── build.sh
+│   ├── test.sh
+│   ├── seed-data.py
+│   ├── migrate.sh
+│   └── backup.sh
+│
+├── docker/
+│   ├── frontend/
+│   │   ├── Dockerfile
+│   │   └── nginx.conf
+│   ├── backend/
+│   │   ├── Dockerfile
+│   │   └── entrypoint.sh
+│   ├── postgres/
+│   │   └── Dockerfile
+│   ├── falkordb/
+│   │   └── Dockerfile
+│   └── redis/
+│       └── Dockerfile
+│
+├── infrastructure/
+│   ├── kubernetes/
+│   │   ├── namespace.yaml
+│   │   ├── frontend-deployment.yaml
+│   │   ├── backend-deployment.yaml
+│   │   ├── postgres-statefulset.yaml
+│   │   ├── falkordb-statefulset.yaml
+│   │   ├── redis-deployment.yaml
+│   │   ├── services.yaml
+│   │   ├── ingress.yaml
+│   │   └── configmaps.yaml
+│   │
+│   ├── terraform/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   ├── outputs.tf
+│   │   ├── vpc.tf
+│   │   ├── eks.tf
+│   │   └── rds.tf
+│   │
+│   └── helm/
+│       └── modeling-platform/
+│           ├── Chart.yaml
+│           ├── values.yaml
+│           └── templates/
+│
+├── tools/
+│   ├── cli/
+│   │   ├── package.json
+│   │   └── src/
+│   │       ├── index.ts
+│   │       └── commands/
+│   └── generators/
+│       ├── notation-generator/
+│       └── plugin-generator/
+│
+└── examples/
+    ├── plugins/
+    │   ├── custom-notation/
+    │   ├── custom-layout/
+    │   └── custom-validator/
+    └── sample-models/
+        ├── er-model-sample.json
+        ├── uml-model-sample.json
+        └── bpmn-model-sample.json

@@ -1,0 +1,182 @@
+version: '3.9'
+
+services:
+  # PostgreSQL - System of Record
+  postgres:
+    image: postgres:16-alpine
+    container_name: modeling-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-modeling}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-modeling_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-modeling_platform}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-modeling}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - modeling-network
+
+  # FalkorDB - Semantic Graph Database
+  falkordb:
+    image: falkordb/falkordb:latest
+    container_name: modeling-falkordb
+    ports:
+      - "6379:6379"
+    volumes:
+      - falkordb_data:/data
+      - ./database/falkordb/init:/docker-entrypoint-initdb.d
+    command: >
+      redis-server
+      --loadmodule /usr/lib/redis/modules/libgraphcontext.so
+      --appendonly yes
+      --appendfilename "appendonly.aof"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - modeling-network
+
+  # Redis - Caching & Real-time
+  redis:
+    image: redis:7-alpine
+    container_name: modeling-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+      - ./database/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - modeling-network
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+      target: development
+    container_name: modeling-backend
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${POSTGRES_USER:-modeling}:${POSTGRES_PASSWORD:-modeling_dev}@postgres:5432/${POSTGRES_DB:-modeling_platform}
+      
+      # FalkorDB
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: 6379
+      FALKORDB_GRAPH: modeling_graph
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Auth
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REFRESH_TOKEN_EXPIRE_DAYS: 7
+      
+      # Application
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      
+      # WebSocket
+      WS_HEARTBEAT_INTERVAL: 30
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_cache:/app/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      falkordb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - modeling-network
+
+  # Frontend (React + Vite)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
+      target: development
+    container_name: modeling-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_WS_URL: ws://localhost:8000/ws
+      VITE_APP_NAME: Enterprise Modeling Platform
+    ports:
+      - "5173:5173"  # Changed from 3000 to 5173 (Vite default)
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: npm run dev -- --host 0.0.0.0 --port 5173
+    networks:
+      - modeling-network
+
+  # Adminer - Database UI (Optional)
+  adminer:
+    image: adminer:latest
+    container_name: modeling-adminer
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      - postgres
+    networks:
+      - modeling-network
+    profiles:
+      - tools
+
+  # RedisInsight - Redis UI (Optional)
+  redis-insight:
+    image: redislabs/redisinsight:latest
+    container_name: modeling-redis-insight
+    ports:
+      - "8001:8001"
+    volumes:
+      - redis_insight_data:/db
+    networks:
+      - modeling-network
+    profiles:
+      - tools
+
+volumes:
+  postgres_data:
+    driver: local
+  falkordb_data:
+    driver: local
+  redis_data:
+    driver: local
+  redis_insight_data:
+    driver: local
+  backend_cache:
+    driver: local
+
+networks:
+  modeling-network:
+    driver: bridge

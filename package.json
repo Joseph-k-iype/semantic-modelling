@@ -1,0 +1,39 @@
+{
+  "name": "enterprise-modeling-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Open-source enterprise-grade modeling platform (Visual Paradigm alternative)",
+  "author": "Your Organization",
+  "license": "MIT",
+  "workspaces": [
+    "frontend",
+    "shared",
+    "tools/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "clean": "turbo run clean && rm -rf node_modules",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose build",
+    "setup": "./scripts/setup.sh",
+    "migrate": "./scripts/migrate.sh",
+    "seed": "python scripts/seed-data.py"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1",
+    "@types/node": "^20.10.6",
+    "prettier": "^3.1.1",
+    "turbo": "^1.11.3",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "packageManager": "pnpm@8.14.0"
+}
