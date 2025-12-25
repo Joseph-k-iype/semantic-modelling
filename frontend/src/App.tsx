@@ -2,10 +2,10 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 
 // Pages
-import LoginPage from '@/pages/LoginPage/LoginPage';
-import HomePage from '@/pages/HomePage/HomePage';
-import WorkspacePage from '@/pages/WorkspacePage/WorkspacePage';
-import ModelEditorPage from '@/pages/ModelEditorPage/ModelEditorPage';
+import LoginPage from './pages/LoginPage/LoginPage';
+import HomePage from './pages/HomePage/HomePage';
+import WorkspacePage from './pages/WorkspacePage/WorkspacePage';
+import ModelEditorPage from './pages/ModelEditorPage/ModelEditorPage';
 
 function App() {
   return (
