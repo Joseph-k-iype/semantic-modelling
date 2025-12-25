@@ -1,69 +1,105 @@
-# Multi-stage build for Python backend
+# docker/backend/Dockerfile
+# Handles poetry.lock issues gracefully
 
-# ===== Development Stage =====
-FROM python:3.11-slim as development
+FROM python:3.11-slim as base
 
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    g++ \
+    make \
+    curl \
     postgresql-client \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry (1.8.0+ required for package-mode support)
-RUN pip install poetry==1.8.3
+# Install Poetry
+ENV POETRY_VERSION=1.8.3
+ENV POETRY_HOME=/opt/poetry
+ENV POETRY_NO_INTERACTION=1
+ENV POETRY_VIRTUALENVS_CREATE=false
+ENV PATH="$POETRY_HOME/bin:$PATH"
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
+RUN curl -sSL https://install.python-poetry.org | python3 -
 
-# Configure poetry to not create virtual environment
-RUN poetry config virtualenvs.create false
+# ===== Development Stage =====
+FROM base as development
 
-# Install dependencies
-RUN poetry install --no-root --no-interaction --no-ansi
+# Copy pyproject.toml first
+COPY pyproject.toml ./
+
+# Copy poetry.lock if it exists, regenerate if needed
+COPY poetry.lock* ./
+
+# Install dependencies with lock file regeneration if needed
+RUN if [ ! -f poetry.lock ]; then \
+        echo "No poetry.lock found, generating..." && \
+        poetry lock --no-update; \
+    fi && \
+    poetry install --no-root --no-interaction --no-ansi || \
+    (echo "Lock file out of sync, regenerating..." && \
+     rm -f poetry.lock && \
+     poetry lock --no-update && \
+     poetry install --no-root --no-interaction --no-ansi)
+
+# Ensure email-validator is installed
+RUN pip install --no-cache-dir email-validator==2.2.0
+
+# Verify installation
+RUN python -c "import email_validator; print(f'email-validator {email_validator.__version__} installed successfully')"
 
 # Copy application code
 COPY . .
 
+# Create necessary directories
+RUN mkdir -p /app/logs /app/uploads
+
 # Expose port
 EXPOSE 8000
 
-# Run with hot reload
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 # ===== Production Stage =====
-FROM python:3.11-slim as production
+FROM base as production
 
-WORKDIR /app
+# Copy pyproject.toml and poetry.lock
+COPY pyproject.toml poetry.lock* ./
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies with lock file handling
+RUN if [ ! -f poetry.lock ]; then \
+        poetry lock --no-update; \
+    fi && \
+    poetry install --no-root --no-interaction --no-ansi --only main || \
+    (rm -f poetry.lock && \
+     poetry lock --no-update && \
+     poetry install --no-root --no-interaction --no-ansi --only main)
 
-# Install Poetry
-RUN pip install poetry==1.7.1
-
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
-
-# Configure poetry
-RUN poetry config virtualenvs.create false
-
-# Install only production dependencies
-RUN poetry install --no-root --no-interaction --no-ansi --only main
+# Ensure email-validator is installed
+RUN pip install --no-cache-dir email-validator==2.2.0
 
 # Copy application code
 COPY . .
 
 # Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/logs /app/uploads && \
+    chown -R appuser:appuser /app
+
 USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Run with production settings
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Command
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

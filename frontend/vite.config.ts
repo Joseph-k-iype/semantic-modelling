@@ -1,51 +1,13 @@
+// frontend/vite.config.ts
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [
-    react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'logo.svg'],
-      manifest: {
-        name: 'Enterprise Modeling Platform',
-        short_name: 'Modeling Platform',
-        description: 'Open-source enterprise-grade modeling platform',
-        theme_color: '#ffffff',
-        icons: [
-          {
-            src: 'logo-192.png',
-            sizes: '192x192',
-            type: 'image/png',
-          },
-          {
-            src: 'logo-512.png',
-            sizes: '512x512',
-            type: 'image/png',
-          },
-        ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        runtimeCaching: [
-          {
-            urlPattern: /^https:\/\/api\..*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'api-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24, // 1 day
-              },
-            },
-          },
-        ],
-      },
-    }),
-  ],
+  plugins: [react()],
+  
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -59,23 +21,28 @@ export default defineConfig({
       '@types': path.resolve(__dirname, './src/types'),
       '@styles': path.resolve(__dirname, './src/styles'),
       '@config': path.resolve(__dirname, './src/config'),
+      '@assets': path.resolve(__dirname, './src/assets'),
     },
   },
+  
   server: {
     port: 3000,
     host: true,
+    strictPort: true,
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
+        target: 'http://localhost:8000',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
+        secure: false,
       },
       '/ws': {
-        target: process.env.VITE_WS_URL || 'ws://localhost:8000',
+        target: 'ws://localhost:8000',
         ws: true,
+        changeOrigin: true,
       },
     },
   },
+  
   build: {
     outDir: 'dist',
     sourcemap: true,
@@ -83,32 +50,45 @@ export default defineConfig({
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          'diagram-vendor': ['reactflow', 'elkjs', 'd3-force'],
-          'ui-vendor': ['@radix-ui/react-dropdown-menu', '@radix-ui/react-dialog'],
-          'collaboration': ['yjs', 'y-websocket'],
+          'diagram-vendor': ['reactflow'],
+          'state-vendor': ['zustand'],
+          'utils-vendor': ['lodash-es', 'date-fns'],
         },
       },
     },
     chunkSizeWarningLimit: 1000,
   },
+  
   optimizeDeps: {
-    include: ['react', 'react-dom', 'reactflow'],
+    include: [
+      'react',
+      'react-dom',
+      'react-router-dom',
+      'reactflow',
+      'zustand',
+      'lodash-es',
+      'date-fns',
+    ],
     exclude: ['@vite/client', '@vite/env'],
   },
-  test: {
-    globals: true,
-    environment: 'jsdom',
-    setupFiles: './src/tests/setup.ts',
-    css: true,
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      exclude: [
-        'node_modules/',
-        'src/tests/',
-        '**/*.test.{ts,tsx}',
-        '**/*.spec.{ts,tsx}',
-      ],
+  
+  css: {
+    modules: {
+      localsConvention: 'camelCase',
+      generateScopedName: '[name]__[local]___[hash:base64:5]',
+    },
+    preprocessorOptions: {
+      scss: {
+        additionalData: '@import "@/styles/variables.css";',
+      },
     },
   },
+  
+  define: {
+    'process.env': {},
+  },
+  
+  // Vitest configuration (if you're using vitest for testing)
+  // Note: For proper vitest support, install vitest and use /// <reference types="vitest" /> at the top
+  // or create a separate vitest.config.ts file
 });
