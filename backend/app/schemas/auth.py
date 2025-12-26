@@ -4,7 +4,7 @@ Authentication Pydantic schemas
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, UUID4
+from pydantic import BaseModel, EmailStr, Field
 
 
 class Token(BaseModel):
@@ -21,6 +21,11 @@ class TokenPayload(BaseModel):
     type: Optional[str] = None
 
 
+class RefreshToken(BaseModel):
+    """Refresh token request"""
+    refresh_token: str
+
+
 class UserRegister(BaseModel):
     """User registration request"""
     email: EmailStr
@@ -34,16 +39,12 @@ class UserLogin(BaseModel):
     password: str
 
 
-class UserResponse(BaseModel):
-    """User response (without sensitive data)"""
-    id: UUID4
-    email: str
-    full_name: Optional[str] = None
-    avatar_url: Optional[str] = None
-    is_active: bool
-    is_superuser: bool
-    created_at: datetime
-    last_login_at: Optional[datetime] = None
-    
-    class Config:
-        from_attributes = True
+class PasswordReset(BaseModel):
+    """Password reset request"""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Password reset confirmation"""
+    token: str
+    new_password: str = Field(..., min_length=8, max_length=100)

@@ -1,5 +1,3 @@
-// frontend/vite.config.ts
-
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -26,17 +24,21 @@ export default defineConfig({
   },
   
   server: {
-    port: 3000,
-    host: true,
+    port: 5173,  // Changed from 3000 to 5173
+    host: '0.0.0.0',  // Changed from true to '0.0.0.0' for better Docker compatibility
     strictPort: true,
+    watch: {
+      usePolling: true,  // Better for Docker
+    },
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
         secure: false,
+        rewrite: (path) => path,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: 'ws://backend:8000',
         ws: true,
         changeOrigin: true,
       },
@@ -77,18 +79,9 @@ export default defineConfig({
       localsConvention: 'camelCase',
       generateScopedName: '[name]__[local]___[hash:base64:5]',
     },
-    preprocessorOptions: {
-      scss: {
-        additionalData: '@import "@/styles/variables.css";',
-      },
-    },
   },
   
   define: {
     'process.env': {},
   },
-  
-  // Vitest configuration (if you're using vitest for testing)
-  // Note: For proper vitest support, install vitest and use /// <reference types="vitest" /> at the top
-  // or create a separate vitest.config.ts file
 });

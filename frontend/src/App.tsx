@@ -1,9 +1,5 @@
-// frontend/src/App.tsx
-
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-
-// Pages - USING DEFAULT IMPORTS
 import HomePage from './pages/HomePage/HomePage';
 import LoginPage from './pages/LoginPage/LoginPage';
 import WorkspacePage from './pages/WorkspacePage/WorkspacePage';
@@ -11,12 +7,7 @@ import ModelEditorPage from './pages/ModelEditorPage/ModelEditorPage';
 import DiagramEditorPage from './pages/DiagramEditorPage/DiagramEditorPage';
 import SettingsPage from './pages/SettingsPage/SettingsPage';
 import NotFoundPage from './pages/NotFoundPage/NotFoundPage';
-
-// Components
 import AuthGuard from './components/auth/AuthGuard/AuthGuard';
-
-// Styles
-import './styles/globals.css';
 
 const App: React.FC = () => {
   return (

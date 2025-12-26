@@ -1,14 +1,16 @@
-# backend/app/core/config.py
+"""
+Application configuration settings
+"""
 
-from typing import Any, Dict, List, Optional, Union
-from pydantic import AnyHttpUrl, PostgresDsn, RedisDsn, field_validator, ValidationInfo
+from typing import List, Optional, Union
+from pydantic import field_validator, ValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import secrets
 
 
 class Settings(BaseSettings):
     """
-    Application settings loaded from environment variables.
+    Application settings loaded from environment variables
     """
     
     model_config = SettingsConfigDict(
@@ -16,135 +18,182 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
         extra="ignore",
         case_sensitive=True,
+        # CRITICAL: This prevents Pydantic from trying to parse lists as JSON
+        env_parse_none_str="null",
     )
     
-    # API Settings
-    API_V1_STR: str = "/api/v1"
+    # Application
     PROJECT_NAME: str = "Enterprise Modeling Platform"
     VERSION: str = "1.0.0"
     DESCRIPTION: str = "Graph-native enterprise modeling platform"
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = False
+    PORT: int = 8000
+    HOST: str = "0.0.0.0"
+    LOG_LEVEL: str = "INFO"
+    
+    # API
+    API_V1_STR: str = "/api/v1"
     
     # Security
     SECRET_KEY: str = secrets.token_urlsafe(32)
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 30  # 30 days
     ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # 7 days
     
-    # CORS
-    BACKEND_CORS_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
-    ]
+    # CORS - Using string type to avoid JSON parsing issues
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8000"
     
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
-    @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[List[str], str]:
-        if isinstance(v, str) and not v.startswith("["):
-            return [i.strip() for i in v.split(",")]
-        elif isinstance(v, (list, str)):
-            return v
-        raise ValueError(v)
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """
+        Get CORS origins as a list
+        
+        Returns:
+            List of allowed origin URLs
+        """
+        if isinstance(self.CORS_ORIGINS, str):
+            # Handle comma-separated string
+            if self.CORS_ORIGINS.startswith("["):
+                # It's a JSON array string, parse it
+                import json
+                return json.loads(self.CORS_ORIGINS)
+            else:
+                # It's a comma-separated string
+                return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        elif isinstance(self.CORS_ORIGINS, list):
+            return self.CORS_ORIGINS
+        return []
+    
+    # Alias for backwards compatibility
+    @property
+    def BACKEND_CORS_ORIGINS(self) -> List[str]:
+        """Alias for cors_origins_list for backwards compatibility"""
+        return self.cors_origins_list
     
     # PostgreSQL Database
-    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_HOST: str = "localhost"
     POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_DB: str = "modeling_platform"
+    POSTGRES_USER: str = "modeling"
+    POSTGRES_PASSWORD: str = "modeling_dev"
+    POSTGRES_DB: str = "modeling"
+    
+    # SQLAlchemy Database URI
     SQLALCHEMY_DATABASE_URI: Optional[str] = None
     
     @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
     @classmethod
     def assemble_db_connection(cls, v: Optional[str], info: ValidationInfo) -> str:
-        if isinstance(v, str):
+        if isinstance(v, str) and v:
             return v
         
-        return str(PostgresDsn.build(
-            scheme="postgresql+asyncpg",
-            username=info.data.get("POSTGRES_USER"),
-            password=info.data.get("POSTGRES_PASSWORD"),
-            host=info.data.get("POSTGRES_SERVER"),
-            port=info.data.get("POSTGRES_PORT"),
-            path=f"{info.data.get('POSTGRES_DB') or ''}",
-        ))
+        # Build database URL from components
+        user = info.data.get("POSTGRES_USER", "modeling")
+        password = info.data.get("POSTGRES_PASSWORD", "modeling_dev")
+        host = info.data.get("POSTGRES_HOST", "localhost")
+        port = info.data.get("POSTGRES_PORT", 5432)
+        db = info.data.get("POSTGRES_DB", "modeling")
+        
+        return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
     
+    # Database pool settings
     SQLALCHEMY_ECHO: bool = False
-    SQLALCHEMY_POOL_SIZE: int = 5
+    SQLALCHEMY_POOL_SIZE: int = 20
     SQLALCHEMY_MAX_OVERFLOW: int = 10
+    SQLALCHEMY_POOL_TIMEOUT: int = 30
+    SQLALCHEMY_POOL_RECYCLE: int = 3600
     
-    # FalkorDB (Graph Database)
+    # FalkorDB - Graph Database
     FALKORDB_HOST: str = "localhost"
     FALKORDB_PORT: int = 6379
-    FALKORDB_GRAPH_NAME: str = "modeling_graph"
+    FALKORDB_GRAPH: str = "modeling_graph"
     FALKORDB_PASSWORD: Optional[str] = None
     
-    # Redis Cache
+    # Redis - Caching & Real-time
     REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6380
-    REDIS_PASSWORD: Optional[str] = None
+    REDIS_PORT: int = 6379
     REDIS_DB: int = 0
-    REDIS_URL: Optional[str] = None
-    
-    @field_validator("REDIS_URL", mode="before")
-    @classmethod
-    def assemble_redis_connection(cls, v: Optional[str], info: ValidationInfo) -> str:
-        if isinstance(v, str):
-            return v
-        
-        password = info.data.get("REDIS_PASSWORD")
-        auth = f":{password}@" if password else ""
-        
-        return f"redis://{auth}{info.data.get('REDIS_HOST')}:{info.data.get('REDIS_PORT')}/{info.data.get('REDIS_DB')}"
-    
-    # Email (Optional - for notifications)
-    SMTP_TLS: bool = True
-    SMTP_PORT: Optional[int] = None
-    SMTP_HOST: Optional[str] = None
-    SMTP_USER: Optional[str] = None
-    SMTP_PASSWORD: Optional[str] = None
-    EMAILS_FROM_EMAIL: Optional[str] = None
-    EMAILS_FROM_NAME: Optional[str] = None
-    
-    # First Superuser
-    FIRST_SUPERUSER_EMAIL: str = "admin@example.com"
-    FIRST_SUPERUSER_PASSWORD: str = "changethis"
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_MAX_CONNECTIONS: int = 50
     
     # WebSocket
     WS_HEARTBEAT_INTERVAL: int = 30
-    WS_MESSAGE_QUEUE_SIZE: int = 100
-    
-    # File Upload
-    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
-    ALLOWED_UPLOAD_EXTENSIONS: List[str] = [
-        ".json", ".xml", ".xmi", ".sql", ".cypher", ".csv"
-    ]
-    
-    # Validation
-    VALIDATION_CACHE_TTL: int = 300  # 5 minutes
-    
-    # Layout Engine
-    LAYOUT_COMPUTATION_TIMEOUT: int = 30  # seconds
-    LAYOUT_MAX_ITERATIONS: int = 1000
+    WS_MAX_CONNECTIONS_PER_USER: int = 10
     
     # Collaboration
-    PRESENCE_TIMEOUT: int = 60  # seconds
-    LOCK_TIMEOUT: int = 300  # 5 minutes
+    COLLABORATION_LOCK_TIMEOUT: int = 300  # 5 minutes
+    COLLABORATION_PRESENCE_TIMEOUT: int = 60  # 1 minute
     
-    # Publishing
-    PUBLISH_APPROVAL_REQUIRED: bool = True
-    PUBLISH_AUTO_VERSION: bool = True
+    # Validation
+    VALIDATION_MAX_NODES: int = 10000
+    VALIDATION_MAX_EDGES: int = 20000
+    VALIDATION_TIMEOUT: int = 30  # seconds
     
-    # Logging
-    LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "json"
+    # Layout Engine
+    LAYOUT_COMPUTATION_TIMEOUT: int = 60  # seconds
+    LAYOUT_MAX_ITERATIONS: int = 1000
     
-    # Environment
-    ENVIRONMENT: str = "development"
-    DEBUG: bool = False
-    TESTING: bool = False
+    # Export
+    EXPORT_MAX_FILE_SIZE: int = 100  # MB
+    EXPORT_TIMEOUT: int = 120  # seconds
+    
+    # File Upload
+    MAX_UPLOAD_SIZE: int = 50  # MB
+    ALLOWED_UPLOAD_EXTENSIONS: List[str] = [
+        ".json",
+        ".xml",
+        ".xmi",
+        ".sql",
+        ".cypher",
+    ]
+    
+    # Versioning
+    MAX_VERSIONS_PER_MODEL: int = 100
+    VERSION_RETENTION_DAYS: int = 90
+    
+    # Rate Limiting
+    RATE_LIMIT_PER_MINUTE: int = 60
+    RATE_LIMIT_PER_HOUR: int = 1000
+    
+    # Audit & Logging
+    AUDIT_LOG_RETENTION_DAYS: int = 365
+    ENABLE_QUERY_LOGGING: bool = False
+    
+    # Performance
+    MAX_PAGE_SIZE: int = 100
+    DEFAULT_PAGE_SIZE: int = 20
+    
+    # Caching
+    CACHE_TTL_SHORT: int = 300  # 5 minutes
+    CACHE_TTL_MEDIUM: int = 3600  # 1 hour
+    CACHE_TTL_LONG: int = 86400  # 24 hours
+    
+    # Background Tasks
+    CLEANUP_INTERVAL_HOURS: int = 24
+    
+    # Feature Flags
+    ENABLE_EXPERIMENTAL_FEATURES: bool = False
+    ENABLE_TELEMETRY: bool = False
+    
+    # First Admin User
+    FIRST_ADMIN_EMAIL: str = "admin@example.com"
+    FIRST_ADMIN_PASSWORD: str = "change-this-password"
+    
+    @property
+    def is_development(self) -> bool:
+        """Check if running in development mode"""
+        return self.ENVIRONMENT.lower() in ["development", "dev"]
+    
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production mode"""
+        return self.ENVIRONMENT.lower() in ["production", "prod"]
+    
+    @property
+    def is_testing(self) -> bool:
+        """Check if running in testing mode"""
+        return self.ENVIRONMENT.lower() in ["testing", "test"]
 
 
-# Create global settings instance
+# Global settings instance
 settings = Settings()
