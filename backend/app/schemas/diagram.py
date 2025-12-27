@@ -3,16 +3,20 @@
 Diagram Pydantic Schemas
 """
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 
 
-class DiagramCreate(BaseModel):
-    """Schema for creating a diagram"""
+class DiagramBase(BaseModel):
+    """Base diagram schema"""
     name: str = Field(..., min_length=1, max_length=255)
     type: str = Field(..., description="Diagram type (ER, UML_CLASS, BPMN, etc.)")
-    model_id: str = Field(..., description="ID of the parent model")
     description: Optional[str] = None
+
+
+class DiagramCreate(DiagramBase):
+    """Schema for creating a diagram"""
+    model_id: str = Field(..., description="ID of the parent model")
 
 
 class DiagramUpdate(BaseModel):
@@ -34,13 +38,10 @@ class DiagramSaveRequest(BaseModel):
     )
 
 
-class DiagramResponse(BaseModel):
+class DiagramResponse(DiagramBase):
     """Schema for diagram response"""
     id: str
-    name: str
-    type: str
     model_id: str
-    description: Optional[str] = None
     nodes: List[Dict[str, Any]] = Field(default_factory=list)
     edges: List[Dict[str, Any]] = Field(default_factory=list)
     viewport: Dict[str, Any] = Field(default_factory=lambda: {"x": 0, "y": 0, "zoom": 1})
@@ -49,7 +50,22 @@ class DiagramResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DiagramWithLayouts(DiagramResponse):
+    """Diagram response with layout information"""
+    layouts: List[Dict[str, Any]] = Field(default_factory=list)
+    default_layout_id: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DiagramDuplicate(BaseModel):
+    """Schema for duplicating a diagram"""
+    new_name: str = Field(..., min_length=1, max_length=255)
+    copy_layouts: bool = Field(default=True, description="Whether to copy layouts")
+    target_model_id: Optional[str] = Field(None, description="Target model ID (if different)")
 
 
 class DiagramLineageRequest(BaseModel):
@@ -69,6 +85,7 @@ class DiagramLineageResponse(BaseModel):
     lineage: List[Dict[str, Any]]
 
 
+# Node Data Schemas
 class NodeData(BaseModel):
     """Base node data schema"""
     label: str
@@ -78,11 +95,14 @@ class NodeData(BaseModel):
 class EREntityData(NodeData):
     """ER Entity node data"""
     entity: Optional[Dict[str, Any]] = None
+    attributes: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class UMLClassData(NodeData):
     """UML Class node data"""
     class_: Optional[Dict[str, Any]] = Field(None, alias="class")
+    attributes: List[Dict[str, Any]] = Field(default_factory=list)
+    methods: List[Dict[str, Any]] = Field(default_factory=list)
     is_abstract: bool = False
     stereotype: Optional[str] = None
 
@@ -90,16 +110,19 @@ class UMLClassData(NodeData):
 class BPMNTaskData(NodeData):
     """BPMN Task node data"""
     task: Optional[Dict[str, Any]] = None
+    task_type: Optional[str] = None  # user, service, manual, etc.
 
 
 class BPMNEventData(NodeData):
     """BPMN Event node data"""
     event: Optional[Dict[str, Any]] = None
+    event_type: Optional[str] = None  # start, end, intermediate
 
 
 class BPMNGatewayData(NodeData):
     """BPMN Gateway node data"""
     gateway: Optional[Dict[str, Any]] = None
+    gateway_type: Optional[str] = None  # exclusive, parallel, inclusive
 
 
 class DiagramNode(BaseModel):
@@ -108,6 +131,8 @@ class DiagramNode(BaseModel):
     type: str
     data: Dict[str, Any]
     position: Dict[str, float]
+    width: Optional[float] = None
+    height: Optional[float] = None
 
 
 class DiagramEdge(BaseModel):
@@ -117,3 +142,6 @@ class DiagramEdge(BaseModel):
     source: str
     target: str
     data: Optional[Dict[str, Any]] = None
+    sourceHandle: Optional[str] = None
+    targetHandle: Optional[str] = None
+    label: Optional[str] = None

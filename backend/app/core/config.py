@@ -1,5 +1,7 @@
+# backend/app/core/config.py
 """
 Application configuration settings
+SINGLE SOURCE OF TRUTH for all configuration
 """
 from typing import List, Optional, Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -160,5 +162,5 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT.lower() in ["testing", "test"]
 
 
-# Global settings instance
+# Global settings instance - SINGLE INSTANCE
 settings = Settings()

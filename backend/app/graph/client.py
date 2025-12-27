@@ -5,11 +5,10 @@ Manages connections and operations with FalkorDB graph database
 """
 from typing import Any, Dict, List, Optional
 from falkordb import FalkorDB, Graph
-from app.core.config import get_settings
+from app.core.config import settings  # FIXED: Use singleton settings instead of get_settings()
 import structlog
 
 logger = structlog.get_logger()
-settings = get_settings()
 
 
 class GraphClient:
@@ -326,3 +325,11 @@ def get_graph_client() -> GraphClient:
         _graph_client.connect()
     
     return _graph_client
+
+
+def close_graph_client() -> None:
+    """Close global graph client"""
+    global _graph_client
+    if _graph_client:
+        _graph_client.close()
+        _graph_client = None
