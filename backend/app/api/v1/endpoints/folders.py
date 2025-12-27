@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.workspace import Folder
+from app.models.folder import Folder  # FIXED: Import from app.models.folder instead of app.models.workspace
 from app.schemas.folder import FolderCreate, FolderUpdate, FolderResponse
 
 logger = structlog.get_logger(__name__)

@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.workspace import Model
+from app.models.model import Model  # FIXED: Import from app.models.model instead of app.models.workspace
 from app.schemas.model import ModelCreate, ModelUpdate, ModelResponse
 
 logger = structlog.get_logger(__name__)
