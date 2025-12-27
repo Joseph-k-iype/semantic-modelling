@@ -1,3 +1,4 @@
+// frontend/src/components/diagram/DiagramCanvas/DiagramCanvas.tsx
 import { useCallback, useRef, useEffect } from 'react';
 import ReactFlow, {
   Background,
@@ -13,7 +14,6 @@ import 'reactflow/dist/style.css';
 
 import { useDiagramStore } from '../../../store/diagramStore';
 import { nodeTypes, edgeTypes } from '../../../features/diagram-engine/NodeFactory';
-import { EdgeMarkers } from '../../../components/edges/uml/UMLEdges';
 import { DiagramToolbar } from '../DiagramToolbar';
 import { DiagramProperties } from '../DiagramProperties';
 import { Save, AlertCircle } from 'lucide-react';
@@ -32,7 +32,7 @@ const DiagramCanvasContent: React.FC = () => {
     error,
     onNodesChange,
     onEdgesChange,
-    addEdge,
+    addEdge: storeAddEdge,
     addNode,
     setViewport,
     saveDiagram,
@@ -42,9 +42,9 @@ const DiagramCanvasContent: React.FC = () => {
   // Handle connection between nodes
   const onConnect = useCallback(
     (connection: any) => {
-      addEdge(connection);
+      storeAddEdge(connection);
     },
-    [addEdge]
+    [storeAddEdge]
   );
 
   // Handle drop from palette
@@ -92,29 +92,29 @@ const DiagramCanvasContent: React.FC = () => {
   }, [reactFlowInstance, setViewport]);
 
   return (
-    <div className="h-full w-full flex flex-col bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-bold text-gray-800">{diagramName}</h1>
+    <div className="w-full h-full flex flex-col">
+      {/* Top Bar */}
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-gray-800">{diagramName}</h2>
           {isDirty && (
             <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
               Unsaved changes
             </span>
           )}
         </div>
-        
+
         <div className="flex items-center gap-2">
           {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded">
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-1 rounded">
               <AlertCircle className="w-4 h-4" />
               <span>{error}</span>
             </div>
           )}
           
           <button
-            onClick={saveDiagram}
-            disabled={!isDirty || isSaving}
+            onClick={() => saveDiagram()}
+            disabled={isSaving || !isDirty}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <Save className="w-4 h-4" />
@@ -188,9 +188,6 @@ const DiagramCanvasContent: React.FC = () => {
                 {diagramType}
               </div>
             </Panel>
-
-            {/* SVG markers for edges */}
-            <EdgeMarkers />
           </ReactFlow>
         </div>
 

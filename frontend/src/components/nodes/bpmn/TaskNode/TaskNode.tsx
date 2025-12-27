@@ -1,95 +1,117 @@
+// frontend/src/components/nodes/bpmn/TaskNode/TaskNode.tsx
 import { memo, useState } from 'react';
-import { NodeProps } from 'reactflow';
-import { BaseNode } from '../../base/BaseNode';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { BPMNNodeData } from '../../../../types/diagram.types';
-import { User, Settings, FileText, Code, Edit2 } from 'lucide-react';
+import { User, Settings, Code, FileText, Edit2 } from 'lucide-react';
 import clsx from 'clsx';
 
-export const TaskNode = memo<NodeProps<BPMNNodeData>>(({ id, data, selected }) => {
+export const TaskNode = memo<NodeProps<BPMNNodeData>>(({ data, selected }) => {
   const [isHovered, setIsHovered] = useState(false);
   const task = data.task;
 
   if (!task) {
     return (
-      <BaseNode id={id} data={data} selected={selected}>
-        <div className="px-4 py-2">
-          <div className="font-bold text-gray-800">New Task</div>
-        </div>
-      </BaseNode>
+      <div className="px-8 py-4 bg-white border-2 border-gray-300 rounded-lg shadow-sm">
+        <div className="text-sm text-gray-600">New Task</div>
+      </div>
     );
   }
 
+  // Get task icon based on type
   const getTaskIcon = () => {
     switch (task.type) {
       case 'userTask':
         return <User className="w-4 h-4" />;
       case 'serviceTask':
         return <Settings className="w-4 h-4" />;
-      case 'manualTask':
-        return <FileText className="w-4 h-4" />;
       case 'scriptTask':
         return <Code className="w-4 h-4" />;
+      case 'manualTask':
+        return <FileText className="w-4 h-4" />;
       default:
         return null;
     }
   };
 
+  // Get task color based on type
   const getTaskColor = () => {
     switch (task.type) {
       case 'userTask':
-        return 'from-blue-400 to-blue-500';
+        return 'border-blue-500 bg-blue-50';
       case 'serviceTask':
-        return 'from-green-400 to-green-500';
-      case 'manualTask':
-        return 'from-orange-400 to-orange-500';
+        return 'border-green-500 bg-green-50';
       case 'scriptTask':
-        return 'from-purple-400 to-purple-500';
+        return 'border-purple-500 bg-purple-50';
+      case 'manualTask':
+        return 'border-yellow-500 bg-yellow-50';
       default:
-        return 'from-gray-400 to-gray-500';
+        return 'border-gray-400 bg-white';
     }
   };
 
   return (
-    <BaseNode 
-      id={id} 
-      data={data} 
-      selected={selected}
-      className="min-w-[160px]"
+    <div
+      className={clsx(
+        'relative transition-all duration-200',
+        selected && 'ring-2 ring-blue-500 ring-offset-2'
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="w-3 h-3 !bg-gray-400 border-2 border-white"
+      />
+
       <div
-        className="relative"
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
+        className={clsx(
+          'px-6 py-4 border-2 rounded-lg shadow-sm min-w-[140px] max-w-[200px]',
+          getTaskColor(),
+          isHovered && 'shadow-md'
+        )}
       >
-        <div className={clsx(
-          'bg-gradient-to-br rounded px-4 py-3',
-          getTaskColor()
-        )}>
-          <div className="flex items-start gap-2">
-            {getTaskIcon() && (
-              <div className="mt-0.5 text-white opacity-80">
-                {getTaskIcon()}
-              </div>
-            )}
-            <div className="flex-1">
-              <div className="text-white font-semibold text-sm">
-                {task.name}
-              </div>
-              {task.assignee && (
-                <div className="text-white text-xs opacity-75 mt-1">
-                  {task.assignee}
-                </div>
-              )}
-            </div>
-            {isHovered && (
-              <button className="text-white opacity-80 hover:opacity-100 transition-opacity">
-                <Edit2 className="w-3 h-3" />
-              </button>
-            )}
+        {/* Task Icon */}
+        {task.type !== 'task' && (
+          <div className="absolute top-1 left-1 p-1 bg-white rounded border border-gray-300">
+            {getTaskIcon()}
           </div>
+        )}
+
+        {/* Task Name */}
+        <div className="flex items-center gap-2">
+          <div className="flex-1 text-sm font-medium text-gray-800 text-center break-words">
+            {task.name || 'Unnamed Task'}
+          </div>
+          {isHovered && (
+            <button className="p-1 hover:bg-white rounded transition-colors">
+              <Edit2 className="w-3 h-3 text-gray-600" />
+            </button>
+          )}
         </div>
+
+        {/* Assignee */}
+        {task.assignee && (
+          <div className="mt-2 text-xs text-gray-600 text-center">
+            <User className="w-3 h-3 inline mr-1" />
+            {task.assignee}
+          </div>
+        )}
+
+        {/* Documentation indicator */}
+        {task.documentation && (
+          <div className="absolute bottom-1 right-1">
+            <FileText className="w-3 h-3 text-gray-400" />
+          </div>
+        )}
       </div>
-    </BaseNode>
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-3 h-3 !bg-gray-400 border-2 border-white"
+      />
+    </div>
   );
 });
 

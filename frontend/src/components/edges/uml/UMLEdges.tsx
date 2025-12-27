@@ -1,195 +1,515 @@
+// frontend/src/components/edges/uml/UMLEdges.tsx
 import { memo } from 'react';
-import { EdgeProps } from 'reactflow';
-import { BaseEdge } from '../base/BaseEdge';
+import { EdgeProps, getBezierPath, EdgeLabelRenderer } from 'reactflow';
 
-// Association Edge (simple line)
-export const AssociationEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+// Association Edge (solid line)
+export const AssociationEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      markerEnd="url(#arrow)"
-      label={label}
-    />
+    <>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
-AssociationEdge.displayName = 'AssociationEdge';
 
-// Generalization Edge (inheritance - hollow triangle)
-export const GeneralizationEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+// Generalization Edge (solid line with hollow triangle)
+export const GeneralizationEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      markerEnd="url(#triangle)"
-      label={label}
-    />
+    <>
+      <defs>
+        <marker
+          id={`generalization-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 5 L 10 10 L 0 15 Z"
+            fill="white"
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        markerEnd={`url(#generalization-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
-GeneralizationEdge.displayName = 'GeneralizationEdge';
 
 // Dependency Edge (dashed line with arrow)
-export const DependencyEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+export const DependencyEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      strokeDasharray="5,5"
-      markerEnd="url(#arrow)"
-      label={label}
-    />
+    <>
+      <defs>
+        <marker
+          id={`dependency-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 5 L 10 10 L 0 15"
+            fill="none"
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        strokeDasharray="5,5"
+        markerEnd={`url(#dependency-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
-DependencyEdge.displayName = 'DependencyEdge';
 
 // Aggregation Edge (hollow diamond)
-export const AggregationEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+export const AggregationEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      markerStart="url(#diamond-hollow)"
-      label={label}
-    />
+    <>
+      <defs>
+        <marker
+          id={`aggregation-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 10 L 5 5 L 10 10 L 5 15 Z"
+            fill="white"
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        markerStart={`url(#aggregation-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
-AggregationEdge.displayName = 'AggregationEdge';
 
 // Composition Edge (filled diamond)
-export const CompositionEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+export const CompositionEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      markerStart="url(#diamond-filled)"
-      label={label}
-    />
+    <>
+      <defs>
+        <marker
+          id={`composition-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 10 L 5 5 L 10 10 L 5 15 Z"
+            fill={selected ? '#8b5cf6' : '#6b7280'}
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        markerStart={`url(#composition-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
-CompositionEdge.displayName = 'CompositionEdge';
 
 // Realization Edge (dashed line with hollow triangle)
-export const RealizationEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
+export const RealizationEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
   return (
-    <BaseEdge
-      {...props}
-      strokeDasharray="5,5"
-      markerEnd="url(#triangle)"
-      label={label}
-    />
+    <>
+      <defs>
+        <marker
+          id={`realization-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 5 L 10 10 L 0 15 Z"
+            fill="white"
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        strokeDasharray="5,5"
+        markerEnd={`url(#realization-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
   );
 });
+
+// Message Edge (solid line with arrow)
+export const MessageEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <defs>
+        <marker
+          id={`message-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 5 L 10 10 L 0 15"
+            fill="none"
+            stroke={selected ? '#8b5cf6' : '#6b7280'}
+            strokeWidth="2"
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        markerEnd={`url(#message-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+});
+
+// Transition Edge (solid line with arrow)
+export const TransitionEdge = memo<EdgeProps>(({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  selected,
+}) => {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <defs>
+        <marker
+          id={`transition-${id}`}
+          markerWidth="20"
+          markerHeight="20"
+          refX="10"
+          refY="10"
+          orient="auto"
+        >
+          <path
+            d="M 0 5 L 10 10 L 0 15 Z"
+            fill={selected ? '#8b5cf6' : '#6b7280'}
+          />
+        </marker>
+      </defs>
+      <path
+        id={id}
+        className="react-flow__edge-path"
+        d={edgePath}
+        strokeWidth={selected ? 3 : 2}
+        stroke={selected ? '#8b5cf6' : '#6b7280'}
+        markerEnd={`url(#transition-${id})`}
+      />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+            className="bg-white px-2 py-1 rounded text-xs font-medium text-gray-700 border border-gray-300 shadow-sm"
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+});
+
+// Set display names
+AssociationEdge.displayName = 'AssociationEdge';
+GeneralizationEdge.displayName = 'GeneralizationEdge';
+DependencyEdge.displayName = 'DependencyEdge';
+AggregationEdge.displayName = 'AggregationEdge';
+CompositionEdge.displayName = 'CompositionEdge';
 RealizationEdge.displayName = 'RealizationEdge';
-
-// Message Edge (for sequence diagrams)
-export const MessageEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
-  return (
-    <BaseEdge
-      {...props}
-      markerEnd="url(#arrow)"
-      label={label}
-      strokeWidth={2}
-    />
-  );
-});
 MessageEdge.displayName = 'MessageEdge';
-
-// Transition Edge (for state machines)
-export const TransitionEdge = memo<EdgeProps>((props) => {
-  const label = typeof props.data?.label === 'string' ? props.data.label : undefined;
-  
-  return (
-    <BaseEdge
-      {...props}
-      markerEnd="url(#arrow)"
-      label={label}
-    />
-  );
-});
 TransitionEdge.displayName = 'TransitionEdge';
-
-// Edge Markers (SVG definitions)
-export const EdgeMarkers = () => (
-  <svg style={{ position: 'absolute', width: 0, height: 0 }}>
-    <defs>
-      {/* Arrow marker */}
-      <marker
-        id="arrow"
-        viewBox="0 0 10 10"
-        refX="9"
-        refY="5"
-        markerWidth="6"
-        markerHeight="6"
-        orient="auto"
-      >
-        <path
-          d="M 0 0 L 10 5 L 0 10 z"
-          fill="#6b7280"
-        />
-      </marker>
-
-      {/* Triangle marker (for inheritance) */}
-      <marker
-        id="triangle"
-        viewBox="0 0 10 10"
-        refX="9"
-        refY="5"
-        markerWidth="8"
-        markerHeight="8"
-        orient="auto"
-      >
-        <path
-          d="M 0 0 L 10 5 L 0 10 z"
-          fill="white"
-          stroke="#6b7280"
-          strokeWidth="1"
-        />
-      </marker>
-
-      {/* Hollow diamond (for aggregation) */}
-      <marker
-        id="diamond-hollow"
-        viewBox="0 0 12 12"
-        refX="11"
-        refY="6"
-        markerWidth="12"
-        markerHeight="12"
-        orient="auto"
-      >
-        <path
-          d="M 6 0 L 12 6 L 6 12 L 0 6 z"
-          fill="white"
-          stroke="#6b7280"
-          strokeWidth="1"
-        />
-      </marker>
-
-      {/* Filled diamond (for composition) */}
-      <marker
-        id="diamond-filled"
-        viewBox="0 0 12 12"
-        refX="11"
-        refY="6"
-        markerWidth="12"
-        markerHeight="12"
-        orient="auto"
-      >
-        <path
-          d="M 6 0 L 12 6 L 6 12 L 0 6 z"
-          fill="#6b7280"
-          stroke="#6b7280"
-          strokeWidth="1"
-        />
-      </marker>
-    </defs>
-  </svg>
-);

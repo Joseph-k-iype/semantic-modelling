@@ -1,265 +1,230 @@
+# backend/app/services/diagram_service.py
 """
-Diagram Service - Handles diagram business logic
+Diagram Service - Enhanced with semantic graph synchronization
 """
-import json
-from typing import List, Dict, Any, Optional
-from datetime import datetime
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
-
+from typing import Any, Dict, List, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.diagram import Diagram
 from app.models.layout import Layout
+from app.repositories.diagram_repository import DiagramRepository
+from app.repositories.layout_repository import LayoutRepository
+from app.services.semantic_model_service import SemanticModelService
 from app.schemas.diagram import DiagramCreate, DiagramUpdate
-from app.validation.validation_engine import ValidationEngine
-from app.exporters.sql_exporter import SQLExporter
-from app.exporters.cypher_exporter import CypherExporter
-from app.layout.layout_engine import LayoutEngine
-from app.utils.logger import get_logger
+import structlog
+import uuid
 
-logger = get_logger(__name__)
+logger = structlog.get_logger()
 
 
 class DiagramService:
     """Service for managing diagrams"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
-        self.validation_engine = ValidationEngine()
-        self.sql_exporter = SQLExporter()
-        self.cypher_exporter = CypherExporter()
-        self.layout_engine = LayoutEngine()
+        self.diagram_repo = DiagramRepository(db)
+        self.layout_repo = LayoutRepository(db)
+        self.semantic_service = SemanticModelService()
     
-    def get_diagram(self, diagram_id: str) -> Optional[Diagram]:
-        """Get a diagram by ID"""
-        return self.db.query(Diagram).filter(Diagram.id == diagram_id).first()
+    async def create_diagram(
+        self,
+        user_id: str,
+        diagram_data: DiagramCreate
+    ) -> Diagram:
+        """
+        Create a new diagram
+        
+        Args:
+            user_id: ID of the user creating the diagram
+            diagram_data: Diagram creation data
+            
+        Returns:
+            Created diagram
+        """
+        # Create diagram
+        diagram = await self.diagram_repo.create({
+            "id": str(uuid.uuid4()),
+            "name": diagram_data.name,
+            "type": diagram_data.type,
+            "model_id": diagram_data.model_id,
+            "description": diagram_data.description,
+            "nodes": [],
+            "edges": [],
+            "created_by": user_id,
+            "updated_by": user_id
+        })
+        
+        # Create default layout
+        await self.layout_repo.create({
+            "id": str(uuid.uuid4()),
+            "diagram_id": diagram.id,
+            "name": "Default Layout",
+            "algorithm": "manual",
+            "layout_data": {
+                "nodes": [],
+                "direction": "TB",
+                "spacing": {"node": [80, 80], "rank": 80}
+            },
+            "is_default": True,
+            "created_by": user_id
+        })
+        
+        logger.info(
+            "Diagram created",
+            diagram_id=diagram.id,
+            user_id=user_id,
+            type=diagram.type
+        )
+        
+        return diagram
     
-    def get_diagrams_by_model(
+    async def update_diagram(
+        self,
+        diagram_id: str,
+        user_id: str,
+        update_data: DiagramUpdate
+    ) -> Diagram:
+        """
+        Update diagram and sync to semantic graph
+        
+        Args:
+            diagram_id: Diagram ID
+            user_id: ID of the user updating
+            update_data: Update data
+            
+        Returns:
+            Updated diagram
+        """
+        # Get existing diagram
+        diagram = await self.diagram_repo.get(diagram_id)
+        if not diagram:
+            raise ValueError(f"Diagram {diagram_id} not found")
+        
+        # Update diagram
+        update_dict = update_data.model_dump(exclude_unset=True)
+        update_dict["updated_by"] = user_id
+        
+        diagram = await self.diagram_repo.update(diagram_id, update_dict)
+        
+        # Sync to semantic graph if nodes or edges changed
+        if "nodes" in update_dict or "edges" in update_dict:
+            try:
+                sync_stats = await self.semantic_service.sync_diagram_to_graph(
+                    self.db,
+                    diagram_id,
+                    user_id,
+                    diagram.nodes,
+                    diagram.edges
+                )
+                logger.info(
+                    "Diagram synced to graph",
+                    diagram_id=diagram_id,
+                    stats=sync_stats
+                )
+            except Exception as e:
+                logger.error(
+                    "Failed to sync diagram to graph",
+                    diagram_id=diagram_id,
+                    error=str(e)
+                )
+                # Don't fail the update if graph sync fails
+        
+        return diagram
+    
+    async def save_diagram(
+        self,
+        diagram_id: str,
+        user_id: str,
+        nodes: List[Dict[str, Any]],
+        edges: List[Dict[str, Any]],
+        viewport: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Save diagram state (nodes, edges, viewport)
+        
+        Args:
+            diagram_id: Diagram ID
+            user_id: User ID
+            nodes: List of nodes
+            edges: List of edges
+            viewport: Viewport state
+            
+        Returns:
+            Save result with statistics
+        """
+        # Update diagram
+        diagram = await self.diagram_repo.update(diagram_id, {
+            "nodes": nodes,
+            "edges": edges,
+            "viewport": viewport or {"x": 0, "y": 0, "zoom": 1},
+            "updated_by": user_id
+        })
+        
+        # Sync to semantic graph
+        sync_stats = await self.semantic_service.sync_diagram_to_graph(
+            self.db,
+            diagram_id,
+            user_id,
+            nodes,
+            edges
+        )
+        
+        return {
+            "diagram_id": diagram.id,
+            "saved_at": diagram.updated_at.isoformat() if diagram.updated_at else None,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "sync_stats": sync_stats
+        }
+    
+    async def get_diagram(self, diagram_id: str) -> Optional[Diagram]:
+        """Get diagram by ID"""
+        return await self.diagram_repo.get(diagram_id)
+    
+    async def get_diagrams_by_model(
         self,
         model_id: str,
         skip: int = 0,
         limit: int = 100
     ) -> List[Diagram]:
         """Get all diagrams for a model"""
-        return (
-            self.db.query(Diagram)
-            .filter(Diagram.model_id == model_id)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+        return await self.diagram_repo.get_by_model(model_id, skip, limit)
     
-    def get_diagrams_by_workspace(
-        self,
-        workspace_id: str,
-        skip: int = 0,
-        limit: int = 100
-    ) -> List[Diagram]:
-        """Get all diagrams for a workspace"""
-        return (
-            self.db.query(Diagram)
-            .filter(Diagram.workspace_id == workspace_id)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
+    async def delete_diagram(self, diagram_id: str) -> bool:
+        """Delete a diagram"""
+        return await self.diagram_repo.delete(diagram_id)
     
-    def get_user_diagrams(
-        self,
-        user_id: str,
-        skip: int = 0,
-        limit: int = 100
-    ) -> List[Diagram]:
-        """Get all diagrams created by a user"""
-        return (
-            self.db.query(Diagram)
-            .filter(Diagram.created_by == user_id)
-            .offset(skip)
-            .limit(limit)
-            .all()
-        )
-    
-    def create_diagram(
-        self,
-        data: DiagramCreate,
-        user_id: str
-    ) -> Diagram:
-        """Create a new diagram"""
-        diagram = Diagram(
-            name=data.name,
-            type=data.type,
-            model_id=data.model_id,
-            workspace_id=data.workspace_id,
-            nodes=data.nodes or [],
-            edges=data.edges or [],
-            viewport=data.viewport or {"x": 0, "y": 0, "zoom": 1},
-            created_by=user_id,
-            updated_by=user_id,
-        )
-        
-        self.db.add(diagram)
-        self.db.commit()
-        self.db.refresh(diagram)
-        
-        logger.info(f"Created diagram {diagram.id} by user {user_id}")
-        
-        return diagram
-    
-    def update_diagram(
+    async def get_diagram_lineage(
         self,
         diagram_id: str,
-        data: DiagramUpdate,
-        user_id: str
-    ) -> Diagram:
-        """Update an existing diagram"""
-        diagram = self.get_diagram(diagram_id)
+        user_id: str,
+        node_id: str,
+        direction: str = "both"
+    ) -> List[Dict[str, Any]]:
+        """Get lineage for a node in the diagram"""
+        diagram = await self.diagram_repo.get(diagram_id)
+        if not diagram:
+            raise ValueError(f"Diagram {diagram_id} not found")
         
-        if data.name is not None:
-            diagram.name = data.name
-        
-        if data.type is not None:
-            diagram.type = data.type
-        
-        if data.nodes is not None:
-            diagram.nodes = data.nodes
-        
-        if data.edges is not None:
-            diagram.edges = data.edges
-        
-        if data.viewport is not None:
-            diagram.viewport = data.viewport
-        
-        diagram.updated_by = user_id
-        diagram.updated_at = datetime.utcnow()
-        
-        self.db.commit()
-        self.db.refresh(diagram)
-        
-        logger.info(f"Updated diagram {diagram_id} by user {user_id}")
-        
-        return diagram
-    
-    def delete_diagram(self, diagram_id: str) -> None:
-        """Delete a diagram"""
-        diagram = self.get_diagram(diagram_id)
-        self.db.delete(diagram)
-        self.db.commit()
-        
-        logger.info(f"Deleted diagram {diagram_id}")
-    
-    def convert_to_sql(self, diagram: Diagram) -> str:
-        """
-        Convert ER diagram to SQL DDL statements
-        """
-        if diagram.type != "ER":
-            raise ValueError("Only ER diagrams can be converted to SQL")
-        
-        nodes = diagram.nodes
-        edges = diagram.edges
-        
-        sql_statements = self.sql_exporter.export(nodes, edges)
-        
-        logger.info(f"Converted diagram {diagram.id} to SQL")
-        
-        return sql_statements
-    
-    def convert_to_cypher(self, diagram: Diagram) -> str:
-        """
-        Convert diagram to Cypher statements
-        """
-        nodes = diagram.nodes
-        edges = diagram.edges
-        
-        cypher_statements = self.cypher_exporter.export(nodes, edges, diagram.type)
-        
-        logger.info(f"Converted diagram {diagram.id} to Cypher")
-        
-        return cypher_statements
-    
-    def validate_diagram(self, diagram: Diagram) -> Dict[str, Any]:
-        """
-        Validate diagram according to notation rules
-        """
-        nodes = diagram.nodes
-        edges = diagram.edges
-        diagram_type = diagram.type
-        
-        validation_results = self.validation_engine.validate(
-            nodes=nodes,
-            edges=edges,
-            diagram_type=diagram_type
+        return await self.semantic_service.get_lineage(
+            user_id,
+            diagram.model_id,
+            node_id,
+            direction
         )
-        
-        logger.info(
-            f"Validated diagram {diagram.id}: "
-            f"{len(validation_results.get('errors', []))} errors, "
-            f"{len(validation_results.get('warnings', []))} warnings"
-        )
-        
-        return validation_results
     
-    def apply_auto_layout(
+    async def get_impact_analysis(
         self,
-        diagram: Diagram,
-        algorithm: str = "layered"
-    ) -> Diagram:
-        """
-        Apply automatic layout algorithm to diagram
-        """
-        nodes = diagram.nodes
-        edges = diagram.edges
+        diagram_id: str,
+        user_id: str,
+        node_id: str
+    ) -> Dict[str, Any]:
+        """Get impact analysis for a node"""
+        diagram = await self.diagram_repo.get(diagram_id)
+        if not diagram:
+            raise ValueError(f"Diagram {diagram_id} not found")
         
-        # Apply layout algorithm
-        laid_out_nodes = self.layout_engine.apply_layout(
-            nodes=nodes,
-            edges=edges,
-            algorithm=algorithm,
-            diagram_type=diagram.type
+        return await self.semantic_service.get_impact_analysis(
+            user_id,
+            diagram.model_id,
+            node_id
         )
-        
-        # Update diagram nodes with new positions
-        diagram.nodes = laid_out_nodes
-        diagram.updated_at = datetime.utcnow()
-        
-        self.db.commit()
-        self.db.refresh(diagram)
-        
-        logger.info(f"Applied {algorithm} layout to diagram {diagram.id}")
-        
-        return diagram
-    
-    def export_diagram(
-        self,
-        diagram: Diagram,
-        format: str
-    ) -> str:
-        """
-        Export diagram to various formats
-        """
-        if format == "json":
-            return json.dumps({
-                "id": diagram.id,
-                "name": diagram.name,
-                "type": diagram.type,
-                "nodes": diagram.nodes,
-                "edges": diagram.edges,
-                "viewport": diagram.viewport,
-            }, indent=2)
-        
-        elif format == "svg":
-            # TODO: Implement SVG export
-            return "<svg>SVG export not yet implemented</svg>"
-        
-        elif format == "png":
-            # TODO: Implement PNG export
-            return "PNG export not yet implemented"
-        
-        elif format == "pdf":
-            # TODO: Implement PDF export
-            return "PDF export not yet implemented"
-        
-        elif format == "xmi":
-            # TODO: Implement XMI export for UML
-            return "XMI export not yet implemented"
-        
-        else:
-            raise ValueError(f"Unsupported export format: {format}")

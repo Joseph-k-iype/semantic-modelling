@@ -1,78 +1,112 @@
-import { memo } from 'react';
-import { NodeProps } from 'reactflow';
-import { BaseNode } from '../../base/BaseNode';
+// frontend/src/components/nodes/bpmn/EventNode/EventNode.tsx
+import { memo, useState } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { BPMNNodeData } from '../../../../types/diagram.types';
-import { Play, Square, Clock, Mail, AlertCircle } from 'lucide-react';
+import { Play, Square, Circle, Clock, Mail, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 
 export const EventNode = memo<NodeProps<BPMNNodeData>>(({ id, data, selected }) => {
+  const [isHovered, setIsHovered] = useState(false);
   const event = data.event;
 
   if (!event) {
     return (
-      <BaseNode id={id} data={data} selected={selected} showHandles={false}>
-        <div className="w-12 h-12 rounded-full bg-gray-300" />
-      </BaseNode>
+      <div className="w-10 h-10 rounded-full border-2 border-gray-400 bg-white flex items-center justify-center">
+        <Circle className="w-5 h-5 text-gray-400" />
+      </div>
     );
   }
 
+  // Get event icon based on definition
   const getEventIcon = () => {
     switch (event.eventDefinition) {
       case 'message':
-        return <Mail className="w-5 h-5" />;
+        return <Mail className="w-4 h-4" />;
       case 'timer':
-        return <Clock className="w-5 h-5" />;
+        return <Clock className="w-4 h-4" />;
       case 'error':
-        return <AlertCircle className="w-5 h-5" />;
+        return <AlertTriangle className="w-4 h-4" />;
+      case 'signal':
+        return <Circle className="w-4 h-4" />;
       default:
-        if (event.eventType === 'start') return <Play className="w-5 h-5" />;
-        if (event.eventType === 'end') return <Square className="w-5 h-5" />;
         return null;
     }
   };
 
+  // Determine border style based on event type
   const getBorderStyle = () => {
-    if (event.eventType === 'start') return 'border-4 border-green-500';
-    if (event.eventType === 'end') return 'border-4 border-red-500';
-    return 'border-2 border-orange-500';
+    switch (event.eventType) {
+      case 'start':
+        return 'border-2 border-green-600';
+      case 'end':
+        return 'border-4 border-red-600';
+      case 'intermediate':
+        return 'border-2 border-orange-600 border-double';
+      default:
+        return 'border-2 border-gray-400';
+    }
   };
 
+  // Determine background color
   const getBackgroundColor = () => {
-    if (event.eventType === 'start') return 'bg-green-50';
-    if (event.eventType === 'end') return 'bg-red-50';
-    return 'bg-orange-50';
+    switch (event.eventType) {
+      case 'start':
+        return 'bg-green-50';
+      case 'end':
+        return 'bg-red-50';
+      case 'intermediate':
+        return 'bg-orange-50';
+      default:
+        return 'bg-white';
+    }
   };
 
   return (
-    <BaseNode 
-      id={id} 
-      data={data} 
-      selected={selected}
-      className="!border-0 !shadow-none !bg-transparent"
-      showHandles={false}
+    <div
+      className={clsx(
+        'relative transition-all duration-200',
+        selected && 'ring-2 ring-blue-500 ring-offset-2 rounded-full'
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="relative">
-        <div className={clsx(
-          'w-16 h-16 rounded-full flex items-center justify-center',
-          getBorderStyle(),
-          getBackgroundColor()
-        )}>
-          <div className={clsx(
-            event.eventType === 'start' && 'text-green-600',
-            event.eventType === 'end' && 'text-red-600',
-            event.eventType === 'intermediate' && 'text-orange-600'
-          )}>
-            {getEventIcon()}
-          </div>
+      {event.eventType !== 'start' && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          className="w-3 h-3 !bg-gray-400 border-2 border-white"
+        />
+      )}
+
+      <div className="flex flex-col items-center">
+        {/* Event Circle */}
+        <div
+          className={clsx(
+            'w-12 h-12 rounded-full flex items-center justify-center transition-all',
+            getBorderStyle(),
+            getBackgroundColor(),
+            isHovered && 'shadow-md scale-110'
+          )}
+        >
+          {getEventIcon()}
         </div>
-        
+
+        {/* Event Label */}
         {event.name && (
-          <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 whitespace-nowrap text-xs text-gray-600 bg-white px-2 py-1 rounded shadow-sm">
+          <div className="mt-2 text-xs text-gray-600 text-center max-w-[100px] break-words">
             {event.name}
           </div>
         )}
       </div>
-    </BaseNode>
+
+      {event.eventType !== 'end' && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className="w-3 h-3 !bg-gray-400 border-2 border-white"
+        />
+      )}
+    </div>
   );
 });
 

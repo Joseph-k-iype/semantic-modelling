@@ -1,208 +1,253 @@
+# backend/app/api/v1/endpoints/diagrams.py
 """
-Diagram management endpoints
+Diagram API Endpoints
 """
-from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+from app.api.deps import get_current_user, get_db
+from app.models.user import User
+from app.schemas.diagram import (
+    DiagramCreate,
+    DiagramUpdate,
+    DiagramResponse,
+    DiagramSaveRequest,
+    DiagramLineageRequest,
+    DiagramLineageResponse
+)
+from app.services.diagram_service import DiagramService
 import structlog
-import uuid
-from datetime import datetime
 
-from app.db.session import get_db
-from app.models.diagram import Diagram
-from app.schemas.diagram import DiagramCreate, DiagramUpdate, DiagramResponse
-
-logger = structlog.get_logger(__name__)
-
+logger = structlog.get_logger()
 router = APIRouter()
-
-
-@router.get("/", response_model=List[DiagramResponse])
-async def list_diagrams(
-    workspace_id: str = Query(None, description="Filter by workspace"),
-    model_id: str = Query(None, description="Filter by model"),
-    diagram_type: str = Query(None, description="Filter by diagram type"),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """List diagrams with optional filters"""
-    query = select(Diagram).where(Diagram.deleted_at.is_(None))
-    
-    if workspace_id:
-        query = query.where(Diagram.workspace_id == workspace_id)
-    
-    if model_id:
-        query = query.where(Diagram.model_id == model_id)
-    
-    if diagram_type:
-        query = query.where(Diagram.type == diagram_type)
-    
-    query = query.offset(skip).limit(limit).order_by(Diagram.updated_at.desc())
-    
-    result = await db.execute(query)
-    diagrams = result.scalars().all()
-    
-    logger.info("Diagrams listed", count=len(diagrams))
-    
-    return diagrams
 
 
 @router.post("/", response_model=DiagramResponse, status_code=status.HTTP_201_CREATED)
 async def create_diagram(
-    diagram_in: DiagramCreate,
+    *,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_in: DiagramCreate
 ) -> Any:
-    """Create new diagram"""
-    # Mock user ID - replace with actual authenticated user
-    mock_user_id = str(uuid.uuid4())
+    """
+    Create a new diagram
+    """
+    diagram_service = DiagramService(db)
     
-    diagram = Diagram(
-        name=diagram_in.name,
-        description=diagram_in.description,
-        type=diagram_in.type,
-        workspace_id=diagram_in.workspace_id,
-        model_id=diagram_in.model_id if diagram_in.model_id else None,
-        folder_id=diagram_in.folder_id if diagram_in.folder_id else None,
-        nodes=diagram_in.nodes or [],
-        edges=diagram_in.edges or [],
-        viewport=diagram_in.viewport or {"x": 0, "y": 0, "zoom": 1},
-        meta_data=diagram_in.meta_data or {},
-        created_by=mock_user_id,
-        updated_by=mock_user_id,
-    )
-    
-    db.add(diagram)
-    await db.commit()
-    await db.refresh(diagram)
-    
-    logger.info("Diagram created", diagram_id=str(diagram.id), name=diagram.name)
-    
-    return diagram
+    try:
+        diagram = await diagram_service.create_diagram(
+            user_id=str(current_user.id),
+            diagram_data=diagram_in
+        )
+        return diagram
+    except Exception as e:
+        logger.error("Failed to create diagram", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create diagram: {str(e)}"
+        )
 
 
 @router.get("/{diagram_id}", response_model=DiagramResponse)
 async def get_diagram(
-    diagram_id: str,
+    *,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_id: str
 ) -> Any:
-    """Get diagram by ID"""
-    result = await db.execute(
-        select(Diagram).where(
-            Diagram.id == diagram_id,
-            Diagram.deleted_at.is_(None)
-        )
-    )
-    diagram = result.scalar_one_or_none()
+    """
+    Get diagram by ID
+    """
+    diagram_service = DiagramService(db)
     
+    diagram = await diagram_service.get_diagram(diagram_id)
     if not diagram:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
+            detail=f"Diagram {diagram_id} not found"
         )
     
-    logger.info("Diagram retrieved", diagram_id=diagram_id)
-    
     return diagram
+
+
+@router.get("/model/{model_id}", response_model=List[DiagramResponse])
+async def get_diagrams_by_model(
+    *,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    model_id: str,
+    skip: int = 0,
+    limit: int = 100
+) -> Any:
+    """
+    Get all diagrams for a model
+    """
+    diagram_service = DiagramService(db)
+    
+    diagrams = await diagram_service.get_diagrams_by_model(
+        model_id=model_id,
+        skip=skip,
+        limit=limit
+    )
+    
+    return diagrams
 
 
 @router.put("/{diagram_id}", response_model=DiagramResponse)
 async def update_diagram(
-    diagram_id: str,
-    diagram_in: DiagramUpdate,
+    *,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_id: str,
+    diagram_in: DiagramUpdate
 ) -> Any:
-    """Update diagram"""
-    result = await db.execute(
-        select(Diagram).where(
-            Diagram.id == diagram_id,
-            Diagram.deleted_at.is_(None)
-        )
-    )
-    diagram = result.scalar_one_or_none()
+    """
+    Update diagram
+    """
+    diagram_service = DiagramService(db)
     
-    if not diagram:
+    try:
+        diagram = await diagram_service.update_diagram(
+            diagram_id=diagram_id,
+            user_id=str(current_user.id),
+            update_data=diagram_in
+        )
+        return diagram
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
+            detail=str(e)
         )
-    
-    update_data = diagram_in.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(diagram, field, value)
-    
-    # Mock user ID for updated_by
-    diagram.updated_by = str(uuid.uuid4())
-    diagram.updated_at = datetime.utcnow()
-    
-    await db.commit()
-    await db.refresh(diagram)
-    
-    logger.info("Diagram updated", diagram_id=diagram_id)
-    
-    return diagram
+    except Exception as e:
+        logger.error("Failed to update diagram", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update diagram: {str(e)}"
+        )
 
 
-@router.delete("/{diagram_id}")
+@router.post("/{diagram_id}/save")
+async def save_diagram(
+    *,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_id: str,
+    save_data: DiagramSaveRequest
+) -> Any:
+    """
+    Save diagram state (nodes, edges, viewport) and sync to semantic graph
+    """
+    diagram_service = DiagramService(db)
+    
+    try:
+        result = await diagram_service.save_diagram(
+            diagram_id=diagram_id,
+            user_id=str(current_user.id),
+            nodes=save_data.nodes,
+            edges=save_data.edges,
+            viewport=save_data.viewport
+        )
+        return result
+    except Exception as e:
+        logger.error("Failed to save diagram", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save diagram: {str(e)}"
+        )
+
+
+@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_diagram(
-    diagram_id: str,
-    hard_delete: bool = Query(False, description="Permanent delete"),
+    *,
     db: AsyncSession = Depends(get_db),
-) -> Any:
-    """Delete diagram (soft delete by default)"""
-    result = await db.execute(
-        select(Diagram).where(Diagram.id == diagram_id)
-    )
-    diagram = result.scalar_one_or_none()
+    current_user: User = Depends(get_current_user),
+    diagram_id: str
+) -> None:
+    """
+    Delete diagram
+    """
+    diagram_service = DiagramService(db)
     
-    if not diagram:
+    success = await diagram_service.delete_diagram(diagram_id)
+    if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
+            detail=f"Diagram {diagram_id} not found"
         )
-    
-    if hard_delete:
-        # Permanent deletion
-        await db.delete(diagram)
-        logger.info("Diagram permanently deleted", diagram_id=diagram_id)
-    else:
-        # Soft deletion
-        diagram.deleted_at = datetime.utcnow()
-        logger.info("Diagram soft deleted", diagram_id=diagram_id)
-    
-    await db.commit()
-    
-    return {"message": f"Diagram {diagram_id} deleted successfully"}
 
 
-@router.post("/{diagram_id}/restore")
-async def restore_diagram(
-    diagram_id: str,
+@router.post("/{diagram_id}/lineage", response_model=DiagramLineageResponse)
+async def get_node_lineage(
+    *,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_id: str,
+    lineage_request: DiagramLineageRequest
 ) -> Any:
-    """Restore a soft-deleted diagram"""
-    result = await db.execute(
-        select(Diagram).where(Diagram.id == diagram_id)
-    )
-    diagram = result.scalar_one_or_none()
+    """
+    Get lineage (upstream/downstream) for a node in the diagram
+    """
+    diagram_service = DiagramService(db)
     
-    if not diagram:
+    try:
+        lineage = await diagram_service.get_diagram_lineage(
+            diagram_id=diagram_id,
+            user_id=str(current_user.id),
+            node_id=lineage_request.node_id,
+            direction=lineage_request.direction
+        )
+        
+        return {
+            "node_id": lineage_request.node_id,
+            "direction": lineage_request.direction,
+            "lineage": lineage
+        }
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
+            detail=str(e)
         )
-    
-    if diagram.deleted_at is None:
+    except Exception as e:
+        logger.error("Failed to get lineage", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Diagram is not deleted"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get lineage: {str(e)}"
         )
+
+
+@router.post("/{diagram_id}/impact/{node_id}")
+async def get_node_impact(
+    *,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    diagram_id: str,
+    node_id: str
+) -> Any:
+    """
+    Get impact analysis for a node
+    """
+    diagram_service = DiagramService(db)
     
-    diagram.deleted_at = None
-    await db.commit()
-    await db.refresh(diagram)
-    
-    logger.info("Diagram restored", diagram_id=diagram_id)
-    
-    return diagram
+    try:
+        impact = await diagram_service.get_impact_analysis(
+            diagram_id=diagram_id,
+            user_id=str(current_user.id),
+            node_id=node_id
+        )
+        
+        return {
+            "node_id": node_id,
+            "impact": impact
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error("Failed to get impact analysis", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get impact analysis: {str(e)}"
+        )

@@ -1,6 +1,6 @@
+// frontend/src/components/nodes/uml/ClassNode/ClassNode.tsx
 import { memo, useState } from 'react';
-import { NodeProps } from 'reactflow';
-import { BaseNode } from '../../base/BaseNode';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { UMLNodeData, UMLAttribute, UMLMethod } from '../../../../types/diagram.types';
 import { Package, Plus, Edit2 } from 'lucide-react';
 import clsx from 'clsx';
@@ -11,84 +11,130 @@ export const ClassNode = memo<NodeProps<UMLNodeData>>(({ id, data, selected }) =
 
   if (!umlClass) {
     return (
-      <BaseNode id={id} data={data} selected={selected}>
-        <div className="px-4 py-2">
-          <div className="font-bold text-gray-800">New Class</div>
+      <div className="min-w-[250px] bg-white border-2 border-purple-500 rounded shadow-sm">
+        <div className="bg-purple-500 text-white px-4 py-3 rounded-t flex items-center gap-2">
+          <Package className="w-5 h-5" />
+          <span className="font-bold">New Class</span>
         </div>
-      </BaseNode>
+        <div className="px-4 py-3 text-sm text-gray-400 italic">
+          No attributes or methods defined
+        </div>
+      </div>
     );
   }
 
+  // Get visibility symbol
   const getVisibilitySymbol = (visibility: string) => {
     switch (visibility) {
-      case 'public': return '+';
-      case 'private': return '-';
-      case 'protected': return '#';
-      case 'package': return '~';
-      default: return '';
+      case 'public':
+        return '+';
+      case 'private':
+        return '-';
+      case 'protected':
+        return '#';
+      case 'package':
+        return '~';
+      default:
+        return '';
     }
   };
 
+  // Render attribute
   const renderAttribute = (attr: UMLAttribute) => (
     <div
       key={attr.id}
-      className="px-3 py-1 text-sm font-mono hover:bg-gray-50 transition-colors"
+      className="px-3 py-1.5 text-sm flex items-start gap-2 hover:bg-gray-50 transition-colors font-mono group"
     >
-      <span className="text-gray-600">{getVisibilitySymbol(attr.visibility)}</span>
-      <span className={clsx(attr.isStatic && 'underline', 'ml-2')}>
-        {attr.name}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id={`${id}-attr-${attr.id}-target`}
+        className="w-2 h-2 !bg-purple-400 border border-white opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ left: -4 }}
+      />
+      
+      <span className="text-purple-600 font-bold w-4 text-center flex-shrink-0">
+        {getVisibilitySymbol(attr.visibility)}
       </span>
-      <span className="text-gray-500">: {attr.type}</span>
+      <span className={clsx(
+        'flex-1',
+        attr.isStatic && 'underline',
+        attr.isFinal && 'font-bold'
+      )}>
+        {attr.name}: {attr.type}
+      </span>
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        id={`${id}-attr-${attr.id}-source`}
+        className="w-2 h-2 !bg-purple-400 border border-white opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ right: -4 }}
+      />
     </div>
   );
 
+  // Render method
   const renderMethod = (method: UMLMethod) => {
     const params = method.parameters
       .map(p => `${p.name}: ${p.type}`)
       .join(', ');
-
+    
     return (
       <div
         key={method.id}
-        className={clsx(
-          'px-3 py-1 text-sm font-mono hover:bg-gray-50 transition-colors',
-          method.isAbstract && 'italic'
-        )}
+        className="px-3 py-1.5 text-sm flex items-start gap-2 hover:bg-gray-50 transition-colors font-mono"
       >
-        <span className="text-gray-600">{getVisibilitySymbol(method.visibility)}</span>
-        <span className={clsx(method.isStatic && 'underline', 'ml-2')}>
-          {method.name}({params})
+        <span className="text-purple-600 font-bold w-4 text-center flex-shrink-0">
+          {getVisibilitySymbol(method.visibility)}
         </span>
-        <span className="text-gray-500">: {method.returnType}</span>
+        <span className={clsx(
+          'flex-1 break-all',
+          method.isStatic && 'underline',
+          method.isAbstract && 'italic'
+        )}>
+          {method.name}({params}): {method.returnType}
+        </span>
       </div>
     );
   };
 
   return (
-    <BaseNode 
-      id={id} 
-      data={data} 
-      selected={selected}
-      className="min-w-[280px]"
+    <div
+      className={clsx(
+        'relative transition-all duration-200',
+        selected && 'ring-2 ring-purple-500 ring-offset-2 rounded'
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <div
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        {/* Class Name Section */}
+      {/* Main class connection handles */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="w-3 h-3 !bg-purple-500 border-2 border-white"
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="w-3 h-3 !bg-purple-500 border-2 border-white"
+      />
+
+      <div className="min-w-[280px] max-w-[450px] bg-white border-2 border-purple-500 rounded shadow-md overflow-hidden">
+        {/* Header */}
         <div className={clsx(
           'bg-gradient-to-r from-purple-500 to-purple-600 text-white px-4 py-3 rounded-t',
           data.isAbstract && 'from-purple-400 to-purple-500'
         )}>
           {data.stereotype && (
-            <div className="text-xs text-purple-100 mb-1">
+            <div className="text-xs text-purple-100 mb-1 text-center">
               &#171;{data.stereotype}&#187;
             </div>
           )}
           <div className="flex items-center gap-2">
-            <Package className="w-5 h-5" />
+            <Package className="w-5 h-5 flex-shrink-0" />
             <span className={clsx(
-              'font-bold text-lg flex-1',
+              'font-bold text-lg flex-1 truncate',
               data.isAbstract && 'italic'
             )}>
               {umlClass.name}
@@ -103,13 +149,24 @@ export const ClassNode = memo<NodeProps<UMLNodeData>>(({ id, data, selected }) =
 
         {/* Attributes Section */}
         <div className="border-t-2 border-gray-300">
-          <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-600 uppercase">Attributes</span>
+          <div className="bg-gray-50 px-3 py-1 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-600 uppercase">
+                Attributes
+              </span>
+              {isHovered && (
+                <button className="text-purple-600 hover:text-purple-700">
+                  <Plus className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
           {umlClass.attributes.length > 0 ? (
-            umlClass.attributes.map(renderAttribute)
+            <div className="divide-y divide-gray-200">
+              {umlClass.attributes.map(renderAttribute)}
+            </div>
           ) : (
-            <div className="px-4 py-2 text-sm text-gray-400 italic">
+            <div className="px-4 py-2 text-sm text-gray-400 italic text-center">
               No attributes
             </div>
           )}
@@ -117,33 +174,56 @@ export const ClassNode = memo<NodeProps<UMLNodeData>>(({ id, data, selected }) =
 
         {/* Methods Section */}
         <div className="border-t-2 border-gray-300">
-          <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-200">
-            <span className="text-xs font-semibold text-gray-600 uppercase">Methods</span>
+          <div className="bg-gray-50 px-3 py-1 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-gray-600 uppercase">
+                Methods
+              </span>
+              {isHovered && (
+                <button className="text-purple-600 hover:text-purple-700">
+                  <Plus className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           </div>
           {umlClass.methods.length > 0 ? (
-            umlClass.methods.map(renderMethod)
+            <div className="divide-y divide-gray-200">
+              {umlClass.methods.map(renderMethod)}
+            </div>
           ) : (
-            <div className="px-4 py-2 text-sm text-gray-400 italic">
+            <div className="px-4 py-2 text-sm text-gray-400 italic text-center">
               No methods
             </div>
           )}
         </div>
 
-        {/* Footer - Add Actions */}
+        {/* Footer */}
         {isHovered && (
-          <div className="border-t border-gray-200 px-3 py-2 flex gap-2">
-            <button className="flex-1 flex items-center justify-center gap-2 text-xs text-purple-600 hover:text-purple-700 transition-colors py-1">
+          <div className="border-t border-gray-200 px-3 py-2 flex gap-2 bg-gray-50">
+            <button className="flex-1 flex items-center justify-center gap-1 text-xs text-purple-600 hover:text-purple-700 transition-colors py-1">
               <Plus className="w-3 h-3" />
               <span>Attribute</span>
             </button>
-            <button className="flex-1 flex items-center justify-center gap-2 text-xs text-purple-600 hover:text-purple-700 transition-colors py-1">
+            <button className="flex-1 flex items-center justify-center gap-1 text-xs text-purple-600 hover:text-purple-700 transition-colors py-1">
               <Plus className="w-3 h-3" />
               <span>Method</span>
             </button>
           </div>
         )}
       </div>
-    </BaseNode>
+
+      {/* Main class connection handles */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-3 h-3 !bg-purple-500 border-2 border-white"
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className="w-3 h-3 !bg-purple-500 border-2 border-white"
+      />
+    </div>
   );
 });
 

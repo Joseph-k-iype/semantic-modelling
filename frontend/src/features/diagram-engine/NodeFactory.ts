@@ -1,3 +1,4 @@
+// frontend/src/features/diagram-engine/NodeFactory.ts
 import { ComponentType } from 'react';
 import { NodeTypes, EdgeTypes, EdgeProps } from 'reactflow';
 
@@ -9,7 +10,10 @@ import { EventNode } from '../../components/nodes/bpmn/EventNode/EventNode';
 import { GatewayNode } from '../../components/nodes/bpmn/GatewayNode/GatewayNode';
 import { PoolNode } from '../../components/nodes/bpmn/PoolNode/PoolNode';
 
-// Import edge components
+// Import ER edge components
+import { RelationshipEdge } from '../../components/edges/er/RelationshipEdge/RelationshipEdge';
+
+// Import UML edge components
 import {
   AssociationEdge,
   GeneralizationEdge,
@@ -20,7 +24,13 @@ import {
   MessageEdge,
   TransitionEdge,
 } from '../../components/edges/uml/UMLEdges';
-import { BaseEdge } from '../../components/edges/base/BaseEdge';
+
+// Import BPMN edge components
+import {
+  SequenceFlowEdge,
+  MessageFlowEdge,
+  BPMNAssociationEdge,
+} from '../../components/edges/bpmn/BPMNEdges';
 
 // Node type registry
 export const nodeTypes: NodeTypes = {
@@ -56,8 +66,8 @@ export const nodeTypes: NodeTypes = {
 // Edge type registry with proper typing
 export const edgeTypes: EdgeTypes = {
   // ER Edges
-  ER_RELATIONSHIP: BaseEdge as ComponentType<EdgeProps>,
-  ER_ATTRIBUTE_LINK: BaseEdge as ComponentType<EdgeProps>,
+  ER_RELATIONSHIP: RelationshipEdge as ComponentType<EdgeProps>,
+  ER_ATTRIBUTE_LINK: RelationshipEdge as ComponentType<EdgeProps>,
 
   // UML Edges
   UML_ASSOCIATION: AssociationEdge as ComponentType<EdgeProps>,
@@ -70,10 +80,10 @@ export const edgeTypes: EdgeTypes = {
   UML_TRANSITION: TransitionEdge as ComponentType<EdgeProps>,
 
   // BPMN Edges
-  BPMN_SEQUENCE_FLOW: BaseEdge as ComponentType<EdgeProps>,
-  BPMN_MESSAGE_FLOW: MessageEdge as ComponentType<EdgeProps>,
-  BPMN_ASSOCIATION: BaseEdge as ComponentType<EdgeProps>,
-  BPMN_DATA_ASSOCIATION: BaseEdge as ComponentType<EdgeProps>,
+  BPMN_SEQUENCE_FLOW: SequenceFlowEdge as ComponentType<EdgeProps>,
+  BPMN_MESSAGE_FLOW: MessageFlowEdge as ComponentType<EdgeProps>,
+  BPMN_ASSOCIATION: BPMNAssociationEdge as ComponentType<EdgeProps>,
+  BPMN_DATA_ASSOCIATION: BPMNAssociationEdge as ComponentType<EdgeProps>,
 };
 
 // Helper function to create default node data based on type

@@ -1,92 +1,102 @@
-import { memo } from 'react';
-import { NodeProps } from 'reactflow';
-import { BaseNode } from '../../base/BaseNode';
+// frontend/src/components/nodes/bpmn/GatewayNode/GatewayNode.tsx
+import { memo, useState } from 'react';
+import { NodeProps, Handle, Position } from 'reactflow';
 import { BPMNNodeData } from '../../../../types/diagram.types';
+import { X, Plus, Circle, Diamond } from 'lucide-react';
 import clsx from 'clsx';
 
 export const GatewayNode = memo<NodeProps<BPMNNodeData>>(({ id, data, selected }) => {
+  const [isHovered, setIsHovered] = useState(false);
   const gateway = data.gateway;
 
   if (!gateway) {
     return (
-      <BaseNode id={id} data={data} selected={selected} showHandles={false}>
-        <div className="w-12 h-12 bg-yellow-300 transform rotate-45" />
-      </BaseNode>
+      <div className="w-12 h-12 bg-yellow-100 border-2 border-yellow-600 rotate-45 flex items-center justify-center">
+        <Diamond className="w-5 h-5 text-yellow-600 -rotate-45" />
+      </div>
     );
   }
 
+  // Get gateway symbol based on type
   const getGatewaySymbol = () => {
     switch (gateway.gatewayType) {
       case 'exclusive':
-        return (
-          <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path d="M6 6 L18 18 M18 6 L6 18" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        );
+        return <X className="w-6 h-6 text-yellow-700 font-bold stroke-[3]" />;
       case 'parallel':
-        return (
-          <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path d="M12 6 L12 18 M6 12 L18 12" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        );
+        return <Plus className="w-6 h-6 text-blue-700 font-bold stroke-[3]" />;
       case 'inclusive':
-        return (
-          <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <circle cx="12" cy="12" r="6" strokeWidth="2" />
-          </svg>
-        );
+        return <Circle className="w-6 h-6 text-purple-700 font-bold stroke-[3]" />;
       case 'eventBased':
         return (
-          <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <circle cx="12" cy="12" r="6" strokeWidth="2" />
-            <circle cx="12" cy="12" r="3" strokeWidth="2" />
-          </svg>
+          <div className="relative">
+            <Circle className="w-6 h-6 text-orange-700 stroke-[2]" />
+            <Circle className="w-4 h-4 text-orange-700 stroke-[2] absolute top-1 left-1" />
+          </div>
         );
       default:
-        return null;
+        return <X className="w-6 h-6 text-gray-700" />;
     }
   };
 
+  // Get gateway color based on type
   const getGatewayColor = () => {
     switch (gateway.gatewayType) {
       case 'exclusive':
-        return 'text-yellow-600';
+        return 'bg-yellow-100 border-yellow-600';
       case 'parallel':
-        return 'text-blue-600';
+        return 'bg-blue-100 border-blue-600';
       case 'inclusive':
-        return 'text-green-600';
+        return 'bg-purple-100 border-purple-600';
       case 'eventBased':
-        return 'text-purple-600';
+        return 'bg-orange-100 border-orange-600';
       default:
-        return 'text-gray-600';
+        return 'bg-gray-100 border-gray-600';
     }
   };
 
   return (
-    <BaseNode 
-      id={id} 
-      data={data} 
-      selected={selected}
-      className="!border-0 !shadow-none !bg-transparent"
-      showHandles={false}
+    <div
+      className={clsx(
+        'relative transition-all duration-200',
+        selected && 'ring-2 ring-blue-500 ring-offset-2'
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <div className="relative">
-        <div className={clsx(
-          'w-14 h-14 bg-yellow-100 border-4 border-yellow-500 transform rotate-45 flex items-center justify-center',
-          selected && 'border-blue-500'
-        )}>
-          <div className={clsx('transform -rotate-45', getGatewayColor())}>
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="w-3 h-3 !bg-gray-400 border-2 border-white"
+      />
+
+      <div className="flex flex-col items-center">
+        {/* Gateway Diamond */}
+        <div
+          className={clsx(
+            'w-14 h-14 border-2 rotate-45 flex items-center justify-center transition-all',
+            getGatewayColor(),
+            isHovered && 'shadow-md scale-110'
+          )}
+        >
+          <div className="-rotate-45">
             {getGatewaySymbol()}
           </div>
         </div>
-        
+
+        {/* Gateway Label */}
         {gateway.name && (
-          <div className="absolute -bottom-6 left-1/2 transform -translate-x-1/2 whitespace-nowrap text-xs text-gray-600 bg-white px-2 py-1 rounded shadow-sm">
+          <div className="mt-2 text-xs text-gray-600 text-center max-w-[100px] break-words">
             {gateway.name}
           </div>
         )}
       </div>
-    </BaseNode>
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="w-3 h-3 !bg-gray-400 border-2 border-white"
+      />
+    </div>
   );
 });
 

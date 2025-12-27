@@ -1,100 +1,93 @@
+# backend/app/graph/client.py
 """
 FalkorDB Graph Database Client
-Compatible with FalkorDB 1.2.2+
+Manages connections and operations with FalkorDB graph database
 """
-
 from typing import Any, Dict, List, Optional
-from functools import lru_cache
+from falkordb import FalkorDB, Graph
+from app.core.config import get_settings
 import structlog
-from falkordb import FalkorDB
 
-from app.core.config import settings
-
-logger = structlog.get_logger(__name__)
+logger = structlog.get_logger()
+settings = get_settings()
 
 
 class GraphClient:
-    """
-    Wrapper for FalkorDB operations
-    Compatible with FalkorDB 1.2.2 and redis-py 7.1+
-    """
+    """FalkorDB client for managing semantic models"""
     
     def __init__(self):
-        """Initialize FalkorDB connection"""
-        self.host = settings.FALKORDB_HOST
-        self.port = settings.FALKORDB_PORT
-        self.graph_name = settings.FALKORDB_GRAPH
-        self.password = settings.FALKORDB_PASSWORD
+        self._client: Optional[FalkorDB] = None
+        self._graphs: Dict[str, Graph] = {}
         
-        self._client = None
-        self._graph = None
-    
     def connect(self) -> None:
         """Establish connection to FalkorDB"""
         try:
-            # Create FalkorDB client with password if provided
-            connection_params = {
-                'host': self.host,
-                'port': self.port,
-            }
-            
-            if self.password:
-                connection_params['password'] = self.password
-            
-            self._client = FalkorDB(**connection_params)
-            
-            # Select graph
-            self._graph = self._client.select_graph(self.graph_name)
-            
+            self._client = FalkorDB(
+                host=settings.FALKORDB_HOST,
+                port=settings.FALKORDB_PORT,
+                password=settings.FALKORDB_PASSWORD
+            )
             logger.info(
                 "Connected to FalkorDB",
-                host=self.host,
-                port=self.port,
-                graph=self.graph_name,
+                host=settings.FALKORDB_HOST,
+                port=settings.FALKORDB_PORT
             )
         except Exception as e:
             logger.error("Failed to connect to FalkorDB", error=str(e))
             raise
     
-    def query(
+    def get_graph(self, graph_name: str) -> Graph:
+        """
+        Get or create a graph by name
+        
+        Args:
+            graph_name: Name of the graph (typically user_id_model_id)
+            
+        Returns:
+            Graph instance
+        """
+        if not self._client:
+            self.connect()
+            
+        if graph_name not in self._graphs:
+            self._graphs[graph_name] = self._client.select_graph(graph_name)
+            logger.info("Graph selected", graph_name=graph_name)
+            
+        return self._graphs[graph_name]
+    
+    def execute_query(
         self,
-        cypher_query: str,
-        params: Optional[Dict[str, Any]] = None,
+        graph_name: str,
+        query: str,
+        params: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Execute a Cypher query
         
         Args:
-            cypher_query: Cypher query string
+            graph_name: Name of the graph
+            query: Cypher query string
             params: Query parameters
             
         Returns:
-            List of result records as dictionaries
+            List of result records
         """
-        if not self._graph:
-            self.connect()
+        graph = self.get_graph(graph_name)
         
         try:
-            # Execute query
-            result = self._graph.query(cypher_query, params or {})
+            result = graph.query(query, params or {})
             
             # Convert result to list of dictionaries
             records = []
             if result.result_set:
                 for record in result.result_set:
-                    record_dict = {}
-                    for i, value in enumerate(record):
-                        # Get column name from result header
-                        if i < len(result.header):
-                            column_name = result.header[i][1]
-                            record_dict[column_name] = self._serialize_value(value)
-                    records.append(record_dict)
+                    records.append(dict(zip(result.header, record)))
             
             logger.debug(
                 "Query executed",
-                query=cypher_query[:100],
-                params=params,
-                result_count=len(records),
+                graph=graph_name,
+                query=query,
+                records_count=len(records)
             )
             
             return records
@@ -102,81 +95,234 @@ class GraphClient:
         except Exception as e:
             logger.error(
                 "Query execution failed",
-                query=cypher_query,
-                error=str(e),
+                graph=graph_name,
+                query=query,
+                error=str(e)
             )
             raise
     
-    def execute(
+    def create_concept(
         self,
-        cypher_query: str,
-        params: Optional[Dict[str, Any]] = None,
+        graph_name: str,
+        concept_id: str,
+        concept_type: str,
+        properties: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
-        Execute a write query (CREATE, UPDATE, DELETE)
+        Create a semantic concept node
         
+        Args:
+            graph_name: Name of the graph
+            concept_id: Unique identifier for the concept
+            concept_type: Type of concept (Entity, Class, Task, etc.)
+            properties: Node properties
+            
         Returns:
-            Statistics about the execution
+            Created concept data
         """
-        if not self._graph:
-            self.connect()
+        query = f"""
+        CREATE (c:Concept:{concept_type} {{
+            id: $id,
+            type: $type,
+            properties: $properties,
+            created_at: timestamp()
+        }})
+        RETURN c
+        """
+        
+        params = {
+            "id": concept_id,
+            "type": concept_type,
+            "properties": properties
+        }
+        
+        result = self.execute_query(graph_name, query, params)
+        return result[0] if result else {}
+    
+    def update_concept(
+        self,
+        graph_name: str,
+        concept_id: str,
+        properties: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update concept properties"""
+        query = """
+        MATCH (c:Concept {id: $id})
+        SET c.properties = $properties,
+            c.updated_at = timestamp()
+        RETURN c
+        """
+        
+        params = {
+            "id": concept_id,
+            "properties": properties
+        }
+        
+        result = self.execute_query(graph_name, query, params)
+        return result[0] if result else {}
+    
+    def create_relationship(
+        self,
+        graph_name: str,
+        source_id: str,
+        target_id: str,
+        relationship_type: str,
+        properties: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a relationship between concepts
+        
+        Args:
+            graph_name: Name of the graph
+            source_id: Source concept ID
+            target_id: Target concept ID
+            relationship_type: Type of relationship
+            properties: Relationship properties
+            
+        Returns:
+            Created relationship data
+        """
+        query = f"""
+        MATCH (source:Concept {{id: $source_id}})
+        MATCH (target:Concept {{id: $target_id}})
+        CREATE (source)-[r:{relationship_type} $properties]->(target)
+        RETURN r
+        """
+        
+        params = {
+            "source_id": source_id,
+            "target_id": target_id,
+            "properties": properties or {}
+        }
+        
+        result = self.execute_query(graph_name, query, params)
+        return result[0] if result else {}
+    
+    def get_lineage(
+        self,
+        graph_name: str,
+        concept_id: str,
+        direction: str = "both",
+        depth: int = 3
+    ) -> List[Dict[str, Any]]:
+        """
+        Get lineage (upstream and downstream) for a concept
+        
+        Args:
+            graph_name: Name of the graph
+            concept_id: Concept to trace
+            direction: 'upstream', 'downstream', or 'both'
+            depth: Maximum depth to traverse
+            
+        Returns:
+            List of related concepts
+        """
+        if direction == "upstream":
+            query = f"""
+            MATCH path = (c:Concept {{id: $id}})<-[*1..{depth}]-(related:Concept)
+            RETURN DISTINCT related, length(path) as depth
+            ORDER BY depth
+            """
+        elif direction == "downstream":
+            query = f"""
+            MATCH path = (c:Concept {{id: $id}})-[*1..{depth}]->(related:Concept)
+            RETURN DISTINCT related, length(path) as depth
+            ORDER BY depth
+            """
+        else:  # both
+            query = f"""
+            MATCH path = (c:Concept {{id: $id}})-[*1..{depth}]-(related:Concept)
+            RETURN DISTINCT related, length(path) as depth
+            ORDER BY depth
+            """
+        
+        params = {"id": concept_id}
+        return self.execute_query(graph_name, query, params)
+    
+    def get_impact_analysis(
+        self,
+        graph_name: str,
+        concept_id: str
+    ) -> Dict[str, Any]:
+        """
+        Analyze impact of changes to a concept
+        
+        Returns counts of affected downstream concepts by type
+        """
+        query = """
+        MATCH (c:Concept {id: $id})-[*1..5]->(affected:Concept)
+        RETURN affected.type as concept_type, count(DISTINCT affected) as count
+        """
+        
+        params = {"id": concept_id}
+        results = self.execute_query(graph_name, query, params)
+        
+        impact = {
+            "total_affected": 0,
+            "by_type": {}
+        }
+        
+        for record in results:
+            concept_type = record.get("concept_type", "Unknown")
+            count = record.get("count", 0)
+            impact["by_type"][concept_type] = count
+            impact["total_affected"] += count
+        
+        return impact
+    
+    def delete_concept(
+        self,
+        graph_name: str,
+        concept_id: str
+    ) -> bool:
+        """Delete a concept and its relationships"""
+        query = """
+        MATCH (c:Concept {id: $id})
+        DETACH DELETE c
+        """
+        
+        params = {"id": concept_id}
         
         try:
-            result = self._graph.query(cypher_query, params or {})
-            
-            stats = {
-                "nodes_created": result.nodes_created,
-                "nodes_deleted": result.nodes_deleted,
-                "relationships_created": result.relationships_created,
-                "relationships_deleted": result.relationships_deleted,
-                "properties_set": result.properties_set,
-            }
-            
-            logger.debug(
-                "Write query executed",
-                query=cypher_query[:100],
-                stats=stats,
-            )
-            
-            return stats
-            
+            self.execute_query(graph_name, query, params)
+            return True
         except Exception as e:
-            logger.error(
-                "Write query failed",
-                query=cypher_query,
-                error=str(e),
-            )
-            raise
+            logger.error("Failed to delete concept", concept_id=concept_id, error=str(e))
+            return False
     
-    def _serialize_value(self, value: Any) -> Any:
-        """
-        Serialize graph values to JSON-compatible types
-        """
-        if hasattr(value, '__dict__'):
-            # Node or Relationship object
-            result = dict(value.__dict__)
-            # Remove internal attributes
-            result = {k: v for k, v in result.items() if not k.startswith('_')}
-            return result
-        elif isinstance(value, (list, tuple)):
-            return [self._serialize_value(v) for v in value]
-        elif isinstance(value, dict):
-            return {k: self._serialize_value(v) for k, v in value.items()}
-        else:
-            return value
+    def delete_graph(self, graph_name: str) -> bool:
+        """Delete an entire graph"""
+        try:
+            if graph_name in self._graphs:
+                del self._graphs[graph_name]
+            
+            if self._client:
+                self._client.delete(graph_name)
+                logger.info("Graph deleted", graph_name=graph_name)
+            
+            return True
+        except Exception as e:
+            logger.error("Failed to delete graph", graph_name=graph_name, error=str(e))
+            return False
     
     def close(self) -> None:
-        """Close connection to FalkorDB"""
+        """Close all connections"""
         if self._client:
-            self._client.close()
-            logger.info("FalkorDB connection closed")
+            self._graphs.clear()
+            self._client = None
+            logger.info("FalkorDB connections closed")
 
 
-@lru_cache()
+# Global graph client instance
+_graph_client: Optional[GraphClient] = None
+
+
 def get_graph_client() -> GraphClient:
-    """
-    Get singleton graph client instance
-    """
-    client = GraphClient()
-    client.connect()
-    return client
+    """Get or create global graph client instance"""
+    global _graph_client
+    
+    if _graph_client is None:
+        _graph_client = GraphClient()
+        _graph_client.connect()
+    
+    return _graph_client

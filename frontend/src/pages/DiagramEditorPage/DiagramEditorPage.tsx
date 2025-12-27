@@ -1,29 +1,93 @@
+// frontend/src/pages/DiagramEditorPage/DiagramEditorPage.tsx
 import { useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { DiagramCanvas } from '../../components/diagram/DiagramCanvas/DiagramCanvas';
 import { useDiagramStore } from '../../store/diagramStore';
 import { DiagramType } from '../../types/diagram.types';
+import { ArrowLeft, Save, Download, Share2, History } from 'lucide-react';
 
 export const DiagramEditorPage: React.FC = () => {
-  const { diagramId } = useParams<{ diagramId: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { loadDiagram, setDiagram, isLoading, error } = useDiagramStore();
+  const { 
+    loadDiagram, 
+    setDiagram, 
+    setDiagramType,
+    isLoading, 
+    error,
+    nodes,
+    edges,
+    diagramName,
+    saveDiagram,
+    isSaving
+  } = useDiagramStore();
 
   useEffect(() => {
-    if (diagramId) {
+    // Get diagram type and name from URL params
+    const type = searchParams.get('type') || 'UML_CLASS';
+    const name = searchParams.get('name') || 'Untitled Diagram';
+    const id = searchParams.get('id');
+    
+    // Map string to DiagramType enum
+    let diagramTypeEnum: DiagramType = DiagramType.UML_CLASS;
+    
+    switch (type) {
+      case 'ER':
+        diagramTypeEnum = DiagramType.ER;
+        break;
+      case 'UML_CLASS':
+        diagramTypeEnum = DiagramType.UML_CLASS;
+        break;
+      case 'UML_SEQUENCE':
+        diagramTypeEnum = DiagramType.UML_SEQUENCE;
+        break;
+      case 'UML_ACTIVITY':
+        diagramTypeEnum = DiagramType.UML_ACTIVITY;
+        break;
+      case 'UML_STATE':
+        diagramTypeEnum = DiagramType.UML_STATE;
+        break;
+      case 'BPMN':
+        diagramTypeEnum = DiagramType.BPMN;
+        break;
+      default:
+        diagramTypeEnum = DiagramType.UML_CLASS;
+    }
+
+    if (id) {
       // Load existing diagram
-      loadDiagram(diagramId);
+      loadDiagram(id);
     } else {
       // Create new diagram
       setDiagram({
         diagramId: `diagram_${Date.now()}`,
-        diagramName: 'Untitled Diagram',
-        diagramType: DiagramType.UML_CLASS,
+        diagramName: name,
+        diagramType: diagramTypeEnum,
         nodes: [],
         edges: [],
       });
+      setDiagramType(diagramTypeEnum);
     }
-  }, [diagramId, loadDiagram, setDiagram]);
+  }, [searchParams, loadDiagram, setDiagram, setDiagramType]);
+
+  const handleSave = async () => {
+    await saveDiagram();
+  };
+
+  const handleExport = () => {
+    // TODO: Implement export
+    console.log('Export diagram');
+  };
+
+  const handleShare = () => {
+    // TODO: Implement share
+    console.log('Share diagram');
+  };
+
+  const handleViewHistory = () => {
+    // TODO: Implement version history
+    console.log('View history');
+  };
 
   if (isLoading) {
     return (
@@ -48,7 +112,7 @@ export const DiagramEditorPage: React.FC = () => {
           <h2 className="text-xl font-bold text-gray-800 mb-2">Error Loading Diagram</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/')}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
           >
             Go Back
@@ -59,8 +123,70 @@ export const DiagramEditorPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <DiagramCanvas />
+    <div className="h-screen flex flex-col bg-gray-50">
+      {/* Top Navbar */}
+      <div className="bg-white border-b border-gray-200 shadow-sm">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate('/')}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+            
+            <div className="h-6 w-px bg-gray-300" />
+            
+            <div>
+              <h1 className="text-lg font-semibold text-gray-900">{diagramName}</h1>
+              <p className="text-xs text-gray-500">
+                {nodes.length} nodes • {edges.length} connections
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleViewHistory}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <History className="w-4 h-4" />
+              History
+            </button>
+
+            <button
+              onClick={handleShare}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Share2 className="w-4 h-4" />
+              Share
+            </button>
+
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
+
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Save className="w-4 h-4" />
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Diagram Canvas */}
+      <div className="flex-1 overflow-hidden">
+        <DiagramCanvas />
+      </div>
     </div>
   );
 };

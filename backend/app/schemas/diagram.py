@@ -1,84 +1,119 @@
+# backend/app/schemas/diagram.py
 """
-Diagram Pydantic schemas - Matching actual database models
+Diagram Pydantic Schemas
 """
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from enum import Enum
 
 
-class DiagramType(str, Enum):
-    """Diagram type enumeration"""
-    ER = "er"
-    UML_CLASS = "uml_class"
-    UML_SEQUENCE = "uml_sequence"
-    UML_ACTIVITY = "uml_activity"
-    UML_STATE_MACHINE = "uml_state_machine"
-    UML_COMPONENT = "uml_component"
-    UML_DEPLOYMENT = "uml_deployment"
-    UML_PACKAGE = "uml_package"
-    BPMN = "bpmn"
-
-
-class DiagramBase(BaseModel):
-    """Base diagram schema"""
-    name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
-    type: str  # Can be DiagramType enum value
-
-
-class DiagramCreate(DiagramBase):
+class DiagramCreate(BaseModel):
     """Schema for creating a diagram"""
-    workspace_id: str
-    model_id: Optional[str] = None
-    folder_id: Optional[str] = None
-    nodes: List[Dict[str, Any]] = []
-    edges: List[Dict[str, Any]] = []
-    viewport: Dict[str, Any] = Field(default={"x": 0, "y": 0, "zoom": 1})
-    meta_data: Dict[str, Any] = {}
+    name: str = Field(..., min_length=1, max_length=255)
+    type: str = Field(..., description="Diagram type (ER, UML_CLASS, BPMN, etc.)")
+    model_id: str = Field(..., description="ID of the parent model")
+    description: Optional[str] = None
 
 
 class DiagramUpdate(BaseModel):
     """Schema for updating a diagram"""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    model_id: Optional[str] = None
-    folder_id: Optional[str] = None
     nodes: Optional[List[Dict[str, Any]]] = None
     edges: Optional[List[Dict[str, Any]]] = None
     viewport: Optional[Dict[str, Any]] = None
-    meta_data: Optional[Dict[str, Any]] = None
 
 
-class DiagramResponse(DiagramBase):
-    """Diagram response schema"""
+class DiagramSaveRequest(BaseModel):
+    """Schema for saving diagram state"""
+    nodes: List[Dict[str, Any]] = Field(..., description="List of diagram nodes")
+    edges: List[Dict[str, Any]] = Field(..., description="List of diagram edges")
+    viewport: Optional[Dict[str, Any]] = Field(
+        default={"x": 0, "y": 0, "zoom": 1},
+        description="Viewport state"
+    )
+
+
+class DiagramResponse(BaseModel):
+    """Schema for diagram response"""
     id: str
-    workspace_id: str
-    model_id: Optional[str] = None
-    folder_id: Optional[str] = None
-    nodes: List[Dict[str, Any]]
-    edges: List[Dict[str, Any]]
-    viewport: Dict[str, Any]
-    meta_data: Dict[str, Any]
+    name: str
+    type: str
+    model_id: str
+    description: Optional[str] = None
+    nodes: List[Dict[str, Any]] = Field(default_factory=list)
+    edges: List[Dict[str, Any]] = Field(default_factory=list)
+    viewport: Dict[str, Any] = Field(default_factory=lambda: {"x": 0, "y": 0, "zoom": 1})
     created_by: str
+    updated_by: Optional[str] = None
     created_at: datetime
-    updated_at: datetime
-    updated_by: str
-    deleted_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = {"from_attributes": True}
 
 
-class DiagramWithLayouts(DiagramResponse):
-    """Diagram response with available layouts"""
-    available_layouts: List[str] = []
-    
-    model_config = ConfigDict(from_attributes=True)
+class DiagramLineageRequest(BaseModel):
+    """Schema for lineage request"""
+    node_id: str = Field(..., description="Node ID to get lineage for")
+    direction: str = Field(
+        default="both",
+        description="Lineage direction: 'upstream', 'downstream', or 'both'"
+    )
+    depth: int = Field(default=3, ge=1, le=10, description="Maximum traversal depth")
 
 
-class DiagramDuplicate(BaseModel):
-    """Schema for duplicating a diagram"""
-    name: str = Field(..., min_length=1, max_length=255)
-    workspace_id: Optional[str] = None
-    model_id: Optional[str] = None
-    folder_id: Optional[str] = None
+class DiagramLineageResponse(BaseModel):
+    """Schema for lineage response"""
+    node_id: str
+    direction: str
+    lineage: List[Dict[str, Any]]
+
+
+class NodeData(BaseModel):
+    """Base node data schema"""
+    label: str
+    description: Optional[str] = None
+
+
+class EREntityData(NodeData):
+    """ER Entity node data"""
+    entity: Optional[Dict[str, Any]] = None
+
+
+class UMLClassData(NodeData):
+    """UML Class node data"""
+    class_: Optional[Dict[str, Any]] = Field(None, alias="class")
+    is_abstract: bool = False
+    stereotype: Optional[str] = None
+
+
+class BPMNTaskData(NodeData):
+    """BPMN Task node data"""
+    task: Optional[Dict[str, Any]] = None
+
+
+class BPMNEventData(NodeData):
+    """BPMN Event node data"""
+    event: Optional[Dict[str, Any]] = None
+
+
+class BPMNGatewayData(NodeData):
+    """BPMN Gateway node data"""
+    gateway: Optional[Dict[str, Any]] = None
+
+
+class DiagramNode(BaseModel):
+    """Schema for diagram node"""
+    id: str
+    type: str
+    data: Dict[str, Any]
+    position: Dict[str, float]
+
+
+class DiagramEdge(BaseModel):
+    """Schema for diagram edge"""
+    id: str
+    type: str
+    source: str
+    target: str
+    data: Optional[Dict[str, Any]] = None
