@@ -1,220 +1,145 @@
 """
-Enterprise Modeling Platform - Backend API
-Main application entry point
+Main FastAPI Application
 """
-
+import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
-import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.config import settings
 from app.api.v1.router import api_router
-from app.core.config import settings
-from app.db.session import engine, init_db
-from app.middleware.auth_middleware import AuthMiddleware
-from app.middleware.logging_middleware import LoggingMiddleware
-from app.middleware.error_middleware import ErrorHandlerMiddleware
+from app.db.session import engine
+from app.db.base import Base
+from app.utils.logger import get_logger
 
-# Initialize structured logger
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator:
+async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events
     """
     # Startup
-    logger.info("Starting Enterprise Modeling Platform API", version=settings.VERSION)
+    logger.info("Starting up application...")
     
+    # Create database tables
     try:
-        # Initialize database
-        await init_db()
-        logger.info("Database initialized successfully")
-        
-        # Initialize graph database connection
-        # Graph client initialization happens in dependencies
-        logger.info("Graph database connection ready")
-        
-        # Initialize Redis connection
-        # Redis client initialization happens in dependencies
-        logger.info("Redis connection ready")
-        
-        logger.info("API startup complete", port=settings.PORT)
-        
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
     except Exception as e:
-        logger.error("Failed to start API", error=str(e))
-        raise
+        logger.error(f"Error creating database tables: {str(e)}")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down Enterprise Modeling Platform API")
-    
-    try:
-        # Close database connections
-        await engine.dispose()
-        logger.info("Database connections closed")
-        
-        # Close Redis connections
-        # Handled by dependency cleanup
-        
-        logger.info("API shutdown complete")
-        
-    except Exception as e:
-        logger.error("Error during shutdown", error=str(e))
+    logger.info("Shutting down application...")
 
 
 # Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    description="""
-    Enterprise Modeling Platform API
-    
-    An open-source, web-native, enterprise-grade modeling platform supporting:
-    - ER Modeling, SQL, and Cypher
-    - Full UML (all major diagram types)
-    - Full BPMN 2.x
-    - Graph-native lineage and impact analysis
-    - Multi-workspace collaboration with governance
-    - User-controlled, pluggable layout engines
-    """,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc",
+    description="Enterprise Modeling Platform API - ER, UML, and BPMN diagrams",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
 
-# Configure CORS
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=settings.BACKEND_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
-    max_age=3600,
 )
 
-# Add compression
+
+# GZip Middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Add custom middleware
-app.add_middleware(ErrorHandlerMiddleware)
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(AuthMiddleware)
+
+# Request Logging Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all requests"""
+    logger.info(f"Request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code}")
+    return response
 
 
-# Health check endpoint
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """
-    Health check endpoint for container orchestration
-    """
-    return {
-        "status": "healthy",
-        "version": settings.VERSION,
-        "environment": settings.ENVIRONMENT,
-    }
-
-
-# Readiness check endpoint
-@app.get("/ready", tags=["Health"])
-async def readiness_check():
-    """
-    Readiness check endpoint - verifies all dependencies are available
-    """
-    from app.db.session import SessionLocal
-    from app.cache.redis_client import get_redis_client
-    from app.graph.client import get_graph_client
-    
-    checks = {
-        "database": False,
-        "redis": False,
-        "graph_db": False,
-    }
-    
-    try:
-        # Check PostgreSQL
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
-        checks["database"] = True
-    except Exception as e:
-        logger.error("Database health check failed", error=str(e))
-    
-    try:
-        # Check Redis
-        redis = get_redis_client()
-        await redis.ping()
-        checks["redis"] = True
-    except Exception as e:
-        logger.error("Redis health check failed", error=str(e))
-    
-    try:
-        # Check FalkorDB
-        graph = get_graph_client()
-        graph.query("RETURN 1")
-        checks["graph_db"] = True
-    except Exception as e:
-        logger.error("Graph DB health check failed", error=str(e))
-    
-    all_healthy = all(checks.values())
-    status_code = 200 if all_healthy else 503
-    
+# Exception Handlers
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions"""
     return JSONResponse(
-        status_code=status_code,
+        status_code=exc.status_code,
         content={
-            "status": "ready" if all_healthy else "not_ready",
-            "checks": checks,
-        }
-    )
-
-
-# Include API router
-app.include_router(api_router, prefix=settings.API_V1_STR)
-
-
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    """
-    Global exception handler for unhandled exceptions
-    """
-    logger.exception(
-        "Unhandled exception",
-        path=request.url.path,
-        method=request.method,
-        error=str(exc),
-    )
-    
-    return JSONResponse(
-        status_code=500,
-        content={
-            "detail": "Internal server error",
-            "type": "internal_error",
+            "detail": exc.detail,
+            "status_code": exc.status_code,
         },
     )
 
 
-# Root endpoint
-@app.get("/", tags=["Root"])
-async def root():
-    """
-    Root endpoint - API information
-    """
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle validation errors"""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": exc.errors(),
+            "body": exc.body,
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle general exceptions"""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "Internal server error",
+            "message": str(exc) if settings.DEBUG else "An error occurred",
+        },
+    )
+
+
+# Health Check
+@app.get("/health", tags=["health"])
+async def health_check():
+    """Health check endpoint"""
     return {
-        "name": settings.PROJECT_NAME,
-        "version": settings.VERSION,
-        "description": "Enterprise Modeling Platform API",
-        "documentation": f"{settings.API_V1_STR}/docs",
+        "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": "1.0.0",
     }
+
+
+# Root Endpoint
+@app.get("/", tags=["root"])
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "Enterprise Modeling Platform API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health",
+    }
+
+
+# Include API Router
+app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
 
 if __name__ == "__main__":
@@ -222,8 +147,8 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "app.main:app",
-        host=settings.HOST,
-        port=settings.PORT,
+        host="0.0.0.0",
+        port=8000,
         reload=settings.DEBUG,
         log_level=settings.LOG_LEVEL.lower(),
     )

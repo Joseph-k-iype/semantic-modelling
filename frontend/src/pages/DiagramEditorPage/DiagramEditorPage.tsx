@@ -1,108 +1,68 @@
-// frontend/src/pages/DiagramEditorPage/DiagramEditorPage.tsx
+import React, { useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { DiagramCanvas } from '../../components/diagram/DiagramCanvas/DiagramCanvas';
+import { useDiagramStore } from '../../store/diagramStore';
+import { DiagramType } from '../../types/diagram.types';
 
-import React from 'react';
-import { useParams } from 'react-router-dom';
-
-const DiagramEditorPage: React.FC = () => {
+export const DiagramEditorPage: React.FC = () => {
   const { diagramId } = useParams<{ diagramId: string }>();
+  const navigate = useNavigate();
+  const { loadDiagram, setDiagram, isLoading, error } = useDiagramStore();
+
+  useEffect(() => {
+    if (diagramId) {
+      // Load existing diagram
+      loadDiagram(diagramId);
+    } else {
+      // Create new diagram
+      setDiagram({
+        id: `diagram_${Date.now()}`,
+        name: 'Untitled Diagram',
+        type: DiagramType.UML_CLASS,
+        modelId: 'model_1', // TODO: Get from route or context
+        workspaceId: 'workspace_1', // TODO: Get from route or context
+        nodes: [],
+        edges: [],
+      });
+    }
+  }, [diagramId]);
+
+  if (isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading diagram...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center max-w-md">
+          <div className="text-red-600 mb-4">
+            <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">Error Loading Diagram</h2>
+          <p className="text-gray-600 mb-4">{error}</p>
+          <button
+            onClick={() => navigate(-1)}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          >
+            Go Back
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-lg font-semibold text-gray-900">
-            Diagram Editor
-          </h1>
-          <span className="text-sm text-gray-500">ID: {diagramId}</span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <button className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50">
-            Save
-          </button>
-          <button className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700">
-            Publish
-          </button>
-        </div>
-      </header>
-
-      <div className="flex-1 flex overflow-hidden">
-        <aside className="w-16 bg-white border-r border-gray-200 flex flex-col items-center py-4 space-y-4">
-          <button className="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-md">
-            <span>🔲</span>
-          </button>
-          <button className="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-md">
-            <span>⚡</span>
-          </button>
-          <button className="w-10 h-10 flex items-center justify-center text-gray-600 hover:bg-gray-100 rounded-md">
-            <span>📝</span>
-          </button>
-        </aside>
-
-        <main className="flex-1 bg-white overflow-hidden">
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center">
-              <div className="text-6xl mb-4">🎨</div>
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                Diagram Canvas
-              </h3>
-              <p className="text-gray-600">
-                Start creating your diagram here
-              </p>
-            </div>
-          </div>
-        </main>
-
-        <aside className="w-80 bg-white border-l border-gray-200 overflow-y-auto">
-          <div className="p-4">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">
-              Properties
-            </h2>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Diagram Type
-                </label>
-                <select className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option>ER Diagram</option>
-                  <option>UML Class</option>
-                  <option>UML Sequence</option>
-                  <option>BPMN Process</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">
-                  Layout
-                </label>
-                <select className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option>Manual</option>
-                  <option>Layered</option>
-                  <option>Force-Directed</option>
-                  <option>Hierarchical</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="flex items-center">
-                  <input type="checkbox" className="mr-2" />
-                  <span className="text-sm text-gray-700">Show Grid</span>
-                </label>
-              </div>
-
-              <div>
-                <label className="flex items-center">
-                  <input type="checkbox" className="mr-2" />
-                  <span className="text-sm text-gray-700">Snap to Grid</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </aside>
-      </div>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <DiagramCanvas />
     </div>
   );
 };
-
-export default DiagramEditorPage;

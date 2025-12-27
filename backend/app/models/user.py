@@ -1,60 +1,38 @@
 """
-User SQLAlchemy model
+User Database Model
 """
-
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import Boolean, String, DateTime, JSON
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, String, DateTime, Boolean
 import uuid
 
-from app.db.session import Base
+from app.db.base import Base
 
 
 class User(Base):
-    """User account model"""
+    """User model"""
     
     __tablename__ = "users"
     
-    # Primary key
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    id = Column(
+        String(36),
         primary_key=True,
-        default=uuid.uuid4,
+        default=lambda: str(uuid.uuid4()),
+        index=True,
     )
     
-    # Authentication
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    username = Column(String(100), unique=True, nullable=True, index=True)
+    full_name = Column(String(255), nullable=True)
     
-    # Profile
-    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    hashed_password = Column(String(255), nullable=False)
     
-    # Status
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    is_superuser = Column(Boolean, default=False, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)
     
-    # Preferences
-    preferences: Mapped[dict] = mapped_column(JSON, default={}, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
     
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
-    )
-    last_login_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
-    
-    def __repr__(self) -> str:
-        return f"<User {self.email}>"
+    def __repr__(self):
+        return f"<User(id={self.id}, email={self.email})>"

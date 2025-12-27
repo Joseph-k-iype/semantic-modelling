@@ -1,58 +1,69 @@
 """
-Diagram Pydantic schemas
+Diagram Schemas - Pydantic models for diagram API
 """
-
+from typing import List, Dict, Any, Optional
 from datetime import datetime
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, UUID4, ConfigDict
+from pydantic import BaseModel, Field
+
+
+class DiagramNodeBase(BaseModel):
+    """Base schema for diagram nodes"""
+    id: str
+    type: str
+    position: Dict[str, float]
+    data: Dict[str, Any]
+
+
+class DiagramEdgeBase(BaseModel):
+    """Base schema for diagram edges"""
+    id: str
+    source: str
+    target: str
+    type: str
+    data: Optional[Dict[str, Any]] = None
 
 
 class DiagramBase(BaseModel):
-    """Base diagram schema"""
-    name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    """Base schema for diagrams"""
+    name: str
+    type: str
+    model_id: str
+    workspace_id: str
 
 
 class DiagramCreate(DiagramBase):
     """Schema for creating a diagram"""
-    model_id: UUID4
-    notation_type: str = Field(..., max_length=50)
-    content: Dict[str, Any] = {}
-    metadata: Dict[str, Any] = {}
+    nodes: Optional[List[Dict[str, Any]]] = []
+    edges: Optional[List[Dict[str, Any]]] = []
+    viewport: Optional[Dict[str, Any]] = None
 
 
 class DiagramUpdate(BaseModel):
     """Schema for updating a diagram"""
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    content: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+    nodes: Optional[List[Dict[str, Any]]] = None
+    edges: Optional[List[Dict[str, Any]]] = None
+    viewport: Optional[Dict[str, Any]] = None
 
 
 class DiagramResponse(DiagramBase):
-    """Diagram response schema"""
-    id: UUID4
-    model_id: UUID4
-    notation_type: str
-    content: Dict[str, Any]
-    metadata: Dict[str, Any]
-    version: int
-    created_by: UUID4
+    """Schema for diagram response"""
+    id: str
     created_at: datetime
     updated_at: datetime
-    last_edited_by: Optional[UUID4] = None
+    created_by: str
+    updated_by: str
     
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
-class DiagramWithLayouts(DiagramResponse):
-    """Diagram response with layouts"""
-    layouts: List[Any] = []  # Will be replaced with LayoutResponse when available
+class DiagramDetailResponse(DiagramResponse):
+    """Schema for detailed diagram response"""
+    nodes: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    viewport: Dict[str, Any]
     
-    model_config = ConfigDict(from_attributes=True)
-
-
-class DiagramDuplicate(BaseModel):
-    """Schema for duplicating a diagram"""
-    name: str = Field(..., min_length=1, max_length=255)
-    model_id: Optional[UUID4] = None
+    class Config:
+        from_attributes = True
