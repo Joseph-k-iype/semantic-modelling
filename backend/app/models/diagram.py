@@ -3,7 +3,6 @@ Diagram Database Model
 """
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, JSON, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 from app.db.base import Base
@@ -32,13 +31,13 @@ class Diagram(Base):
     workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False, index=True)
     folder_id = Column(String(36), ForeignKey("folders.id"), nullable=True, index=True)
     
-    # Diagram Data (stored as JSON)
-    nodes = Column(JSON, nullable=False, default=list)
-    edges = Column(JSON, nullable=False, default=list)
-    viewport = Column(JSON, nullable=False, default={"x": 0, "y": 0, "zoom": 1})
+    # Diagram Data (stored as JSON) - Use lambda to return new instances
+    nodes = Column(JSON, nullable=False, default=lambda: [])
+    edges = Column(JSON, nullable=False, default=lambda: [])
+    viewport = Column(JSON, nullable=False, default=lambda: {"x": 0, "y": 0, "zoom": 1})
     
-    # Metadata
-    metadata = Column(JSON, nullable=True, default=dict)
+    # Metadata - RENAMED from 'metadata' to 'meta_data' (metadata is reserved by SQLAlchemy)
+    meta_data = Column('metadata', JSON, nullable=True, default=lambda: {})
     
     # Audit Fields
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

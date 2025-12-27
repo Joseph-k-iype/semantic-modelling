@@ -35,7 +35,7 @@ class DiagramCreate(DiagramBase):
     nodes: List[Dict[str, Any]] = []
     edges: List[Dict[str, Any]] = []
     viewport: Dict[str, Any] = Field(default={"x": 0, "y": 0, "zoom": 1})
-    metadata: Dict[str, Any] = {}
+    meta_data: Dict[str, Any] = {}
 
 
 class DiagramUpdate(BaseModel):
@@ -47,7 +47,7 @@ class DiagramUpdate(BaseModel):
     nodes: Optional[List[Dict[str, Any]]] = None
     edges: Optional[List[Dict[str, Any]]] = None
     viewport: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
+    meta_data: Optional[Dict[str, Any]] = None
 
 
 class DiagramResponse(DiagramBase):
@@ -59,7 +59,7 @@ class DiagramResponse(DiagramBase):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
     viewport: Dict[str, Any]
-    metadata: Dict[str, Any]
+    meta_data: Dict[str, Any]
     created_by: str
     created_at: datetime
     updated_at: datetime

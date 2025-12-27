@@ -77,8 +77,8 @@ class Model(Base):
     workspace_id = Column(String(36), ForeignKey("workspaces.id"), nullable=False, index=True)
     folder_id = Column(String(36), ForeignKey("folders.id"), nullable=True, index=True)
     
-    # Model metadata
-    metadata = Column(JSON, nullable=True, default=dict)
+    # Model metadata - RENAMED from 'metadata' to 'meta_data' (metadata is reserved by SQLAlchemy)
+    meta_data = Column('metadata', JSON, nullable=True, default=lambda: {})
     
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)

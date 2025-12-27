@@ -2,7 +2,7 @@
 Model Pydantic schemas - Matching actual database models
 """
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
@@ -31,7 +31,7 @@ class ModelCreate(ModelBase):
     """Schema for creating a model"""
     workspace_id: str
     folder_id: Optional[str] = None
-    metadata: dict = {}
+    meta_data: Dict[str, Any] = {}
 
 
 class ModelUpdate(BaseModel):
@@ -39,7 +39,7 @@ class ModelUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     folder_id: Optional[str] = None
-    metadata: Optional[dict] = None
+    meta_data: Optional[Dict[str, Any]] = None
 
 
 class ModelResponse(ModelBase):
@@ -47,7 +47,7 @@ class ModelResponse(ModelBase):
     id: str
     workspace_id: str
     folder_id: Optional[str] = None
-    metadata: dict
+    meta_data: Dict[str, Any]
     created_by: str
     created_at: datetime
     updated_at: datetime

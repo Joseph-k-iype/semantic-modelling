@@ -61,10 +61,10 @@ async def create_model(
     model = Model(
         name=model_in.name,
         description=model_in.description,
-        type=model_in.type.value,
-        workspace_id=str(model_in.workspace_id),
-        folder_id=str(model_in.folder_id) if model_in.folder_id else None,
-        metadata=model_in.metadata or {},
+        type=model_in.type.value if hasattr(model_in.type, 'value') else str(model_in.type),
+        workspace_id=model_in.workspace_id,
+        folder_id=model_in.folder_id if model_in.folder_id else None,
+        meta_data=model_in.meta_data or {},
         created_by=mock_user_id,
         updated_by=mock_user_id,
     )
@@ -119,16 +119,6 @@ async def update_model(
         )
     
     update_data = model_in.model_dump(exclude_unset=True)
-    
-    # Handle folder_id separately
-    if "folder_id" in update_data:
-        folder_id = update_data.pop("folder_id")
-        model.folder_id = str(folder_id) if folder_id else None
-    
-    # Handle status separately (enum to string)
-    if "status" in update_data:
-        model.status = update_data.pop("status").value
-    
     for field, value in update_data.items():
         setattr(model, field, value)
     

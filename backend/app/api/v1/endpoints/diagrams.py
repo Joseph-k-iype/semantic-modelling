@@ -61,14 +61,14 @@ async def create_diagram(
     diagram = Diagram(
         name=diagram_in.name,
         description=diagram_in.description,
-        type=diagram_in.type.value,
-        workspace_id=str(diagram_in.workspace_id),
-        model_id=str(diagram_in.model_id) if diagram_in.model_id else None,
-        folder_id=str(diagram_in.folder_id) if diagram_in.folder_id else None,
+        type=diagram_in.type,
+        workspace_id=diagram_in.workspace_id,
+        model_id=diagram_in.model_id if diagram_in.model_id else None,
+        folder_id=diagram_in.folder_id if diagram_in.folder_id else None,
         nodes=diagram_in.nodes or [],
         edges=diagram_in.edges or [],
         viewport=diagram_in.viewport or {"x": 0, "y": 0, "zoom": 1},
-        metadata=diagram_in.metadata or {},
+        meta_data=diagram_in.meta_data or {},
         created_by=mock_user_id,
         updated_by=mock_user_id,
     )
@@ -129,16 +129,6 @@ async def update_diagram(
         )
     
     update_data = diagram_in.model_dump(exclude_unset=True)
-    
-    # Handle optional fields
-    if "model_id" in update_data:
-        model_id = update_data.pop("model_id")
-        diagram.model_id = str(model_id) if model_id else None
-    
-    if "folder_id" in update_data:
-        folder_id = update_data.pop("folder_id")
-        diagram.folder_id = str(folder_id) if folder_id else None
-    
     for field, value in update_data.items():
         setattr(diagram, field, value)
     
