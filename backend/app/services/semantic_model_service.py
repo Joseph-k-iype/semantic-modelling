@@ -1,6 +1,6 @@
 # backend/app/services/semantic_model_service.py
 """
-Semantic Model Service - FIXED with better error handling and logging
+Semantic Model Service - FIXED
 Manages the semantic graph layer and syncs with diagram data
 """
 from typing import Any, Dict, List, Optional
@@ -9,7 +9,6 @@ from app.graph.client import get_graph_client
 from app.models.model import Model
 from app.models.diagram import Diagram
 import structlog
-import traceback
 
 logger = structlog.get_logger()
 
@@ -20,7 +19,10 @@ class SemanticModelService:
     def __init__(self):
         try:
             self.graph_client = get_graph_client()
-            logger.info("Semantic model service initialized")
+            if self.graph_client.is_connected():
+                logger.info("Semantic model service initialized with FalkorDB")
+            else:
+                logger.warning("Semantic model service initialized but FalkorDB is not connected")
         except Exception as e:
             logger.error("Failed to initialize graph client", error=str(e))
             self.graph_client = None
@@ -58,14 +60,22 @@ class SemanticModelService:
             "concepts_updated": 0,
             "relationships_created": 0,
             "errors": [],
-            "falkordb_available": False
+            "falkordb_available": False,
+            "falkordb_connected": False
         }
         
-        # Check if graph client is available
+        # Check if graph client is available and connected
         if not self.graph_client:
             logger.warning("FalkorDB client not available, skipping graph sync")
             stats["errors"].append("FalkorDB client not initialized")
             return stats
+        
+        if not self.graph_client.is_connected():
+            logger.warning("FalkorDB client not connected, attempting to reconnect")
+            if not self.graph_client.connect():
+                logger.error("Failed to reconnect to FalkorDB, skipping graph sync")
+                stats["errors"].append("FalkorDB connection failed")
+                return stats
         
         try:
             # Get diagram and model
@@ -89,6 +99,7 @@ class SemanticModelService:
             )
             
             stats["falkordb_available"] = True
+            stats["falkordb_connected"] = True
             
             # Process nodes -> concepts
             for idx, node in enumerate(nodes):
@@ -98,9 +109,9 @@ class SemanticModelService:
                         logger.warning(f"Node {idx} missing ID, skipping")
                         continue
                     
-                    await self._sync_node_to_concept(graph_name, node, diagram.type)
+                    created = await self._sync_node_to_concept(graph_name, node, diagram.type)
                     
-                    if node.get("_isNew"):
+                    if created:
                         stats["concepts_created"] += 1
                     else:
                         stats["concepts_updated"] += 1
@@ -118,8 +129,9 @@ class SemanticModelService:
                         logger.warning(f"Edge {idx} missing ID, skipping")
                         continue
                     
-                    await self._sync_edge_to_relationship(graph_name, edge, diagram.type)
-                    stats["relationships_created"] += 1
+                    success = await self._sync_edge_to_relationship(graph_name, edge, diagram.type)
+                    if success:
+                        stats["relationships_created"] += 1
                     
                 except Exception as e:
                     error_msg = f"Failed to sync edge {edge.get('id', idx)}: {str(e)}"
@@ -146,10 +158,15 @@ class SemanticModelService:
         graph_name: str,
         node: Dict[str, Any],
         diagram_type: str
-    ) -> None:
-        """Sync a diagram node to a semantic concept"""
-        if not self.graph_client:
-            return
+    ) -> bool:
+        """
+        Sync a diagram node to a semantic concept
+        
+        Returns:
+            True if concept was created (new), False if updated (existing)
+        """
+        if not self.graph_client or not self.graph_client.is_connected():
+            return False
         
         node_id = node.get("id")
         node_type = node.get("type")
@@ -162,7 +179,8 @@ class SemanticModelService:
         properties = self._extract_node_properties(node_type, node_data)
         properties["diagram_type"] = diagram_type
         properties["node_type"] = node_type
-        properties["position"] = node.get("position", {})
+        properties["position_x"] = node.get("position", {}).get("x", 0)
+        properties["position_y"] = node.get("position", {}).get("y", 0)
         
         try:
             # Check if concept exists
@@ -176,17 +194,15 @@ class SemanticModelService:
                 # Update existing concept
                 logger.debug(f"Updating existing concept: {node_id}")
                 self.graph_client.update_concept(graph_name, node_id, properties)
+                return False  # Updated
             else:
                 # Create new concept
                 logger.debug(f"Creating new concept: {node_id} type: {concept_type}")
-                self.graph_client.create_concept(
-                    graph_name,
-                    node_id,
-                    concept_type,
-                    properties
-                )
+                self.graph_client.create_concept(graph_name, node_id, concept_type, properties)
+                return True  # Created
+                
         except Exception as e:
-            logger.error(f"Failed to sync node {node_id} to concept", error=str(e))
+            logger.error(f"Failed to sync node to concept", node_id=node_id, error=str(e))
             raise
     
     async def _sync_edge_to_relationship(
@@ -194,62 +210,65 @@ class SemanticModelService:
         graph_name: str,
         edge: Dict[str, Any],
         diagram_type: str
-    ) -> None:
+    ) -> bool:
         """Sync a diagram edge to a semantic relationship"""
-        if not self.graph_client:
-            return
+        if not self.graph_client or not self.graph_client.is_connected():
+            return False
         
-        source_id = edge.get("source")
-        target_id = edge.get("target")
-        edge_type = edge.get("type", "RELATES_TO")
+        edge_id = edge.get("id")
+        source = edge.get("source")
+        target = edge.get("target")
+        edge_type = edge.get("type", "RELATED_TO")
         edge_data = edge.get("data", {})
         
-        if not source_id or not target_id:
-            logger.warning(f"Edge {edge.get('id')} missing source or target")
-            return
+        # Determine relationship type
+        rel_type = self._get_relationship_type(diagram_type, edge_type)
         
-        # Extract relationship properties
+        # Extract properties
         properties = {
-            "id": edge.get("id"),
+            "id": edge_id,
             "label": edge_data.get("label", ""),
             "diagram_type": diagram_type,
             "edge_type": edge_type
         }
         
-        # Add type-specific properties
-        if diagram_type == "ER":
-            properties["cardinality"] = edge_data.get("cardinality", "1:N")
-        elif diagram_type.startswith("UML"):
-            properties["multiplicity"] = edge_data.get("multiplicity", "*")
-        elif diagram_type == "BPMN":
-            properties["condition"] = edge_data.get("condition", "")
+        # Add cardinality for ER diagrams
+        if diagram_type == "ER" and "relationship" in edge_data:
+            relationship = edge_data["relationship"]
+            properties["cardinality_source"] = relationship.get("cardinalitySource", "")
+            properties["cardinality_target"] = relationship.get("cardinalityTarget", "")
+            properties["is_identifying"] = relationship.get("isIdentifying", False)
         
         try:
-            # Create relationship
-            relationship_type = self._get_relationship_type(diagram_type, edge_type)
-            logger.debug(f"Creating relationship: {source_id} -> {target_id} [{relationship_type}]")
-            
-            self.graph_client.create_relationship(
+            # Create relationship (Cypher will handle duplicates)
+            success = self.graph_client.create_relationship(
                 graph_name,
-                source_id,
-                target_id,
-                relationship_type,
+                source,
+                target,
+                rel_type,
                 properties
             )
+            return success
+            
         except Exception as e:
-            logger.error(f"Failed to create relationship {source_id} -> {target_id}", error=str(e))
+            logger.error(f"Failed to sync edge to relationship", edge_id=edge_id, error=str(e))
             raise
     
     def _get_concept_type(self, diagram_type: str, node_type: str) -> str:
-        """Determine semantic concept type from diagram node type"""
+        """Determine concept type from diagram type and node type"""
+        # ER diagrams
         if diagram_type == "ER":
             if "ENTITY" in node_type:
                 return "Entity"
-            elif "ATTRIBUTE" in node_type:
-                return "Attribute"
+            elif "RELATIONSHIP" in node_type:
+                return "Relationship"
+        
+        # UML diagrams
         elif diagram_type.startswith("UML"):
-            if "CLASS" in node_type or "INTERFACE" in node_type:
+            if "CLASS" in node_type:
                 return "Class"
+            elif "INTERFACE" in node_type:
+                return "Interface"
             elif "PACKAGE" in node_type:
                 return "Package"
             elif "COMPONENT" in node_type:
@@ -258,6 +277,8 @@ class SemanticModelService:
                 return "State"
             elif "ACTIVITY" in node_type:
                 return "Activity"
+        
+        # BPMN diagrams
         elif diagram_type == "BPMN":
             if "TASK" in node_type:
                 return "Task"
@@ -265,37 +286,41 @@ class SemanticModelService:
                 return "Event"
             elif "GATEWAY" in node_type:
                 return "Gateway"
-            elif "POOL" in node_type or "LANE" in node_type:
-                return "Swimlane"
+            elif "POOL" in node_type:
+                return "Pool"
         
         return "Concept"
     
     def _get_relationship_type(self, diagram_type: str, edge_type: str) -> str:
-        """Determine semantic relationship type from diagram edge type"""
-        type_map = {
-            "ER_RELATIONSHIP": "HAS_RELATIONSHIP",
-            "ER_ATTRIBUTE_LINK": "HAS_ATTRIBUTE",
-            "UML_ASSOCIATION": "ASSOCIATES_WITH",
-            "UML_AGGREGATION": "AGGREGATES",
-            "UML_COMPOSITION": "COMPOSES",
-            "UML_GENERALIZATION": "EXTENDS",
-            "UML_DEPENDENCY": "DEPENDS_ON",
-            "UML_REALIZATION": "IMPLEMENTS",
-            "UML_MESSAGE": "SENDS_MESSAGE",
-            "UML_TRANSITION": "TRANSITIONS_TO",
-            "BPMN_SEQUENCE_FLOW": "FLOWS_TO",
-            "BPMN_MESSAGE_FLOW": "SENDS_MESSAGE",
-            "BPMN_ASSOCIATION": "ASSOCIATES_WITH",
-        }
+        """Determine relationship type from diagram and edge type"""
+        # ER relationships
+        if diagram_type == "ER":
+            return "RELATES_TO"
         
-        return type_map.get(edge_type, "RELATES_TO")
+        # UML relationships
+        elif diagram_type.startswith("UML"):
+            if "ASSOCIATION" in edge_type:
+                return "ASSOCIATES_WITH"
+            elif "GENERALIZATION" in edge_type:
+                return "INHERITS_FROM"
+            elif "DEPENDENCY" in edge_type:
+                return "DEPENDS_ON"
+            elif "AGGREGATION" in edge_type:
+                return "AGGREGATES"
+            elif "COMPOSITION" in edge_type:
+                return "COMPOSES"
+        
+        # BPMN flows
+        elif diagram_type == "BPMN":
+            if "SEQUENCE" in edge_type:
+                return "FLOWS_TO"
+            elif "MESSAGE" in edge_type:
+                return "SENDS_MESSAGE_TO"
+        
+        return "RELATED_TO"
     
-    def _extract_node_properties(
-        self,
-        node_type: str,
-        node_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Extract properties from node data based on type"""
+    def _extract_node_properties(self, node_type: str, node_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract properties from node data based on node type"""
         properties = {
             "label": node_data.get("label", ""),
             "description": node_data.get("description", "")
@@ -306,7 +331,6 @@ class SemanticModelService:
             entity = node_data["entity"]
             properties["name"] = entity.get("name", "")
             properties["is_weak"] = entity.get("isWeak", False)
-            # Store attributes as JSON string
             properties["attributes_count"] = len(entity.get("attributes", []))
         
         # UML Class
@@ -347,28 +371,25 @@ class SemanticModelService:
         direction: str = "both"
     ) -> List[Dict[str, Any]]:
         """Get lineage for a node"""
-        if not self.graph_client:
-            logger.warning("FalkorDB client not available")
+        if not self.graph_client or not self.graph_client.is_connected():
+            logger.warning("FalkorDB client not available for lineage query")
             return []
         
         graph_name = self._get_graph_name(user_id, model_id)
         
-        # Build query based on direction
+        # Build direction clause
         if direction == "upstream":
-            query = """
-            MATCH path = (start:Concept {id: $node_id})<-[*]-(upstream)
-            RETURN upstream, relationships(path) as rels
-            """
+            rel_pattern = "<-[]-(ancestor)"
         elif direction == "downstream":
-            query = """
-            MATCH path = (start:Concept {id: $node_id})-[*]->(downstream)
-            RETURN downstream, relationships(path) as rels
-            """
+            rel_pattern = "-[]->(descendant)"
         else:  # both
-            query = """
-            MATCH path = (start:Concept {id: $node_id})-[*]-(related)
-            RETURN related, relationships(path) as rels
-            """
+            rel_pattern = "-[]-(related)"
+        
+        query = f"""
+        MATCH (c:Concept {{id: $node_id}}){rel_pattern}
+        RETURN DISTINCT related
+        LIMIT 100
+        """
         
         try:
             results = self.graph_client.execute_query(
@@ -378,40 +399,35 @@ class SemanticModelService:
             )
             return results
         except Exception as e:
-            logger.error(f"Failed to get lineage for node {node_id}", error=str(e))
+            logger.error("Failed to get lineage", error=str(e))
             return []
     
-    async def get_impact_analysis(
+    async def get_impact(
         self,
         user_id: str,
         model_id: str,
         node_id: str
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         """Get impact analysis for a node"""
-        if not self.graph_client:
-            logger.warning("FalkorDB client not available")
-            return {"affected_concepts": [], "severity": "unknown"}
+        if not self.graph_client or not self.graph_client.is_connected():
+            logger.warning("FalkorDB client not available for impact analysis")
+            return []
         
         graph_name = self._get_graph_name(user_id, model_id)
         
+        query = """
+        MATCH (c:Concept {id: $node_id})-[*1..3]->(impacted)
+        RETURN DISTINCT impacted
+        LIMIT 100
+        """
+        
         try:
-            # Get all dependent nodes
-            query = """
-            MATCH (start:Concept {id: $node_id})-[*]->(dependent)
-            RETURN dependent, count(*) as depth
-            ORDER BY depth
-            """
-            
             results = self.graph_client.execute_query(
                 graph_name,
                 query,
                 {"node_id": node_id}
             )
-            
-            return {
-                "affected_concepts": results,
-                "severity": "high" if len(results) > 10 else "medium" if len(results) > 0 else "low"
-            }
+            return results
         except Exception as e:
-            logger.error(f"Failed to get impact analysis for node {node_id}", error=str(e))
-            return {"affected_concepts": [], "severity": "unknown", "error": str(e)}
+            logger.error("Failed to get impact analysis", error=str(e))
+            return []

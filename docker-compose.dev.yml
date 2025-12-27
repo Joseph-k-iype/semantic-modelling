@@ -1,33 +1,27 @@
+# docker-compose.dev.yml
 version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:15-alpine
     container_name: modeling-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: modeling
-      POSTGRES_PASSWORD: modeling_dev
-      POSTGRES_DB: postgres
-      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: modeling_platform
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./database/postgres/init:/docker-entrypoint-initdb.d
     networks:
       - modeling-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U modeling"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 10s
-    command: >
-      postgres
-      -c shared_preload_libraries=pg_stat_statements
-      -c pg_stat_statements.track=all
-      -c max_connections=200
+      retries: 5
 
   falkordb:
     image: falkordb/falkordb:edge-alpine
@@ -41,22 +35,20 @@ services:
     networks:
       - modeling-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 10s
+      retries: 5
+    command: >
+      sh -c "
+        falkordb-server --protected-mode no --appendonly yes &&
+        echo 'FalkorDB started successfully'
+      "
 
   redis:
     image: redis:7-alpine
     container_name: modeling-redis
     restart: unless-stopped
-    command: >
-      redis-server
-      --appendonly yes
-      --port 6379
-      --maxmemory 256mb
-      --maxmemory-policy allkeys-lru
     ports:
       - "6380:6379"
     volumes:
@@ -64,11 +56,11 @@ services:
     networks:
       - modeling-network
     healthcheck:
-      test: ["CMD", "redis-cli", "PING"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 5s
+      retries: 5
+    command: redis-server --appendonly yes
 
   backend:
     build:
@@ -78,28 +70,35 @@ services:
     container_name: modeling-backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://modeling:modeling_dev@postgres:5432/modeling
-      POSTGRES_USER: modeling
-      POSTGRES_PASSWORD: modeling_dev
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: modeling
-      FALKORDB_HOST: falkordb
-      FALKORDB_PORT: 6379
-      FALKORDB_GRAPH: modeling_graph
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_DB: 0
-      SECRET_KEY: dev-secret-key-change-in-production
-      ACCESS_TOKEN_EXPIRE_MINUTES: 480
-      REFRESH_TOKEN_EXPIRE_DAYS: 7
-      PROJECT_NAME: Enterprise Modeling Platform
-      VERSION: 1.0.0
+      # Application
       ENVIRONMENT: development
       DEBUG: "true"
       LOG_LEVEL: INFO
-      CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173
-      WS_HEARTBEAT_INTERVAL: 30
+      
+      # API
+      HOST: 0.0.0.0
+      PORT: 8000
+      API_V1_STR: /api/v1
+      
+      # Database
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: modeling_platform
+      
+      # FalkorDB
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: 6379
+      FALKORDB_PASSWORD: ""
+      
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      
+      # CORS
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
     ports:
       - "8000:8000"
     volumes:
@@ -137,7 +136,8 @@ services:
     container_name: modeling-frontend
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://localhost:8000
+      # ✅ FIXED: Added /api/v1 to the API URL
+      - VITE_API_URL=http://localhost:8000/api/v1
       - VITE_WS_URL=ws://localhost:8000
       - VITE_FALKORDB_UI=http://localhost:3000
     ports:

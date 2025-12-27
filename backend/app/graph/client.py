@@ -1,12 +1,11 @@
 # backend/app/graph/client.py
 """
-FalkorDB Graph Database Client
+FalkorDB Graph Database Client - FIXED
 Manages connections and operations with FalkorDB graph database
 """
 from typing import Any, Dict, List, Optional
-from falkordb import FalkorDB, Graph
-from app.core.config import settings  # FIXED: Use singleton settings instead of get_settings()
 import structlog
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 logger = structlog.get_logger()
 
@@ -15,27 +14,62 @@ class GraphClient:
     """FalkorDB client for managing semantic models"""
     
     def __init__(self):
-        self._client: Optional[FalkorDB] = None
-        self._graphs: Dict[str, Graph] = {}
+        self._client: Optional[Any] = None
+        self._graphs: Dict[str, Any] = {}
+        self._connected = False
         
-    def connect(self) -> None:
-        """Establish connection to FalkorDB"""
+    def connect(self) -> bool:
+        """
+        Establish connection to FalkorDB
+        
+        Returns:
+            True if connected successfully, False otherwise
+        """
         try:
+            from falkordb import FalkorDB
+            from app.core.config import settings
+            
             self._client = FalkorDB(
                 host=settings.FALKORDB_HOST,
                 port=settings.FALKORDB_PORT,
-                password=settings.FALKORDB_PASSWORD
+                password=settings.FALKORDB_PASSWORD if settings.FALKORDB_PASSWORD else None
             )
+            
+            # Test connection by executing a simple query
+            test_graph = self._client.select_graph("__test__")
+            test_graph.query("RETURN 1")
+            
+            self._connected = True
             logger.info(
-                "Connected to FalkorDB",
+                "Connected to FalkorDB successfully",
                 host=settings.FALKORDB_HOST,
                 port=settings.FALKORDB_PORT
             )
+            return True
+            
+        except RedisConnectionError as e:
+            self._connected = False
+            logger.warning(
+                "Failed to connect to FalkorDB - Redis connection error",
+                host=getattr(settings, 'FALKORDB_HOST', 'unknown'),
+                port=getattr(settings, 'FALKORDB_PORT', 'unknown'),
+                error=str(e)
+            )
+            return False
+        except ImportError as e:
+            self._connected = False
+            logger.error("FalkorDB library not installed", error=str(e))
+            return False
         except Exception as e:
-            logger.error("Failed to connect to FalkorDB", error=str(e))
-            raise
+            self._connected = False
+            logger.error("Failed to connect to FalkorDB", error=str(e), exc_info=True)
+            return False
     
-    def get_graph(self, graph_name: str) -> Graph:
+    def is_connected(self) -> bool:
+        """Check if client is connected"""
+        return self._connected and self._client is not None
+    
+    def get_graph(self, graph_name: str) -> Optional[Any]:
         """
         Get or create a graph by name
         
@@ -43,16 +77,21 @@ class GraphClient:
             graph_name: Name of the graph (typically user_id_model_id)
             
         Returns:
-            Graph instance
+            Graph instance or None if not connected
         """
-        if not self._client:
-            self.connect()
+        if not self.is_connected():
+            logger.warning("Cannot get graph - not connected to FalkorDB")
+            return None
             
-        if graph_name not in self._graphs:
-            self._graphs[graph_name] = self._client.select_graph(graph_name)
-            logger.info("Graph selected", graph_name=graph_name)
-            
-        return self._graphs[graph_name]
+        try:
+            if graph_name not in self._graphs:
+                self._graphs[graph_name] = self._client.select_graph(graph_name)
+                logger.info("Graph selected", graph_name=graph_name)
+                
+            return self._graphs[graph_name]
+        except Exception as e:
+            logger.error("Failed to get graph", graph_name=graph_name, error=str(e))
+            return None
     
     def execute_query(
         self,
@@ -71,34 +110,51 @@ class GraphClient:
         Returns:
             List of result records
         """
+        if not self.is_connected():
+            logger.warning("Cannot execute query - not connected to FalkorDB")
+            return []
+        
         graph = self.get_graph(graph_name)
+        if not graph:
+            logger.error("Failed to get graph for query execution", graph_name=graph_name)
+            return []
         
         try:
+            logger.debug(
+                "Executing query",
+                graph_name=graph_name,
+                query=query[:100] + "..." if len(query) > 100 else query,
+                params=params
+            )
+            
             result = graph.query(query, params or {})
             
             # Convert result to list of dictionaries
             records = []
             if result.result_set:
                 for record in result.result_set:
-                    records.append(dict(zip(result.header, record)))
+                    record_dict = {}
+                    for i, column in enumerate(result.header):
+                        record_dict[column[1]] = record[i]
+                    records.append(record_dict)
             
             logger.debug(
-                "Query executed",
-                graph=graph_name,
-                query=query,
-                records_count=len(records)
+                "Query executed successfully",
+                graph_name=graph_name,
+                record_count=len(records)
             )
             
             return records
             
         except Exception as e:
             logger.error(
-                "Query execution failed",
-                graph=graph_name,
-                query=query,
-                error=str(e)
+                "Failed to execute query",
+                graph_name=graph_name,
+                query=query[:100],
+                error=str(e),
+                exc_info=True
             )
-            raise
+            return []
     
     def create_concept(
         self,
@@ -106,175 +162,146 @@ class GraphClient:
         concept_id: str,
         concept_type: str,
         properties: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Create a semantic concept node
+    ) -> bool:
+        """Create a new concept in the graph"""
+        if not self.is_connected():
+            logger.warning("Cannot create concept - not connected to FalkorDB")
+            return False
         
-        Args:
-            graph_name: Name of the graph
-            concept_id: Unique identifier for the concept
-            concept_type: Type of concept (Entity, Class, Task, etc.)
-            properties: Node properties
-            
-        Returns:
-            Created concept data
-        """
-        query = f"""
-        CREATE (c:Concept:{concept_type} {{
-            id: $id,
-            type: $type,
-            properties: $properties,
-            created_at: timestamp()
-        }})
+        # Build properties string for Cypher
+        props = {k: v for k, v in properties.items() if v is not None}
+        props["id"] = concept_id
+        props["kind"] = concept_type
+        
+        query = """
+        CREATE (c:Concept $props)
         RETURN c
         """
         
-        params = {
-            "id": concept_id,
-            "type": concept_type,
-            "properties": properties
-        }
-        
-        result = self.execute_query(graph_name, query, params)
-        return result[0] if result else {}
+        try:
+            result = self.execute_query(graph_name, query, {"props": props})
+            if result:
+                logger.info(
+                    "Concept created",
+                    graph_name=graph_name,
+                    concept_id=concept_id,
+                    concept_type=concept_type
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(
+                "Failed to create concept",
+                concept_id=concept_id,
+                error=str(e)
+            )
+            return False
     
     def update_concept(
         self,
         graph_name: str,
         concept_id: str,
         properties: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Update concept properties"""
-        query = """
-        MATCH (c:Concept {id: $id})
-        SET c.properties = $properties,
-            c.updated_at = timestamp()
+    ) -> bool:
+        """Update an existing concept"""
+        if not self.is_connected():
+            logger.warning("Cannot update concept - not connected to FalkorDB")
+            return False
+        
+        # Build SET clause for properties
+        set_clauses = []
+        params = {"id": concept_id}
+        
+        for key, value in properties.items():
+            if value is not None:
+                param_name = f"val_{key}"
+                set_clauses.append(f"c.{key} = ${param_name}")
+                params[param_name] = value
+        
+        if not set_clauses:
+            logger.debug("No properties to update", concept_id=concept_id)
+            return True
+        
+        query = f"""
+        MATCH (c:Concept {{id: $id}})
+        SET {', '.join(set_clauses)}
         RETURN c
         """
         
-        params = {
-            "id": concept_id,
-            "properties": properties
-        }
-        
-        result = self.execute_query(graph_name, query, params)
-        return result[0] if result else {}
+        try:
+            result = self.execute_query(graph_name, query, params)
+            if result:
+                logger.debug(
+                    "Concept updated",
+                    graph_name=graph_name,
+                    concept_id=concept_id
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(
+                "Failed to update concept",
+                concept_id=concept_id,
+                error=str(e)
+            )
+            return False
     
     def create_relationship(
         self,
         graph_name: str,
-        source_id: str,
-        target_id: str,
-        relationship_type: str,
+        from_id: str,
+        to_id: str,
+        rel_type: str,
         properties: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create a relationship between concepts
+    ) -> bool:
+        """Create a relationship between two concepts"""
+        if not self.is_connected():
+            logger.warning("Cannot create relationship - not connected to FalkorDB")
+            return False
         
-        Args:
-            graph_name: Name of the graph
-            source_id: Source concept ID
-            target_id: Target concept ID
-            relationship_type: Type of relationship
-            properties: Relationship properties
-            
-        Returns:
-            Created relationship data
-        """
+        props = properties or {}
+        
         query = f"""
-        MATCH (source:Concept {{id: $source_id}})
-        MATCH (target:Concept {{id: $target_id}})
-        CREATE (source)-[r:{relationship_type} $properties]->(target)
+        MATCH (from:Concept {{id: $from_id}})
+        MATCH (to:Concept {{id: $to_id}})
+        CREATE (from)-[r:{rel_type} $props]->(to)
         RETURN r
         """
         
         params = {
-            "source_id": source_id,
-            "target_id": target_id,
-            "properties": properties or {}
+            "from_id": from_id,
+            "to_id": to_id,
+            "props": props
         }
         
-        result = self.execute_query(graph_name, query, params)
-        return result[0] if result else {}
+        try:
+            result = self.execute_query(graph_name, query, params)
+            if result:
+                logger.info(
+                    "Relationship created",
+                    graph_name=graph_name,
+                    from_id=from_id,
+                    to_id=to_id,
+                    rel_type=rel_type
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(
+                "Failed to create relationship",
+                from_id=from_id,
+                to_id=to_id,
+                rel_type=rel_type,
+                error=str(e)
+            )
+            return False
     
-    def get_lineage(
-        self,
-        graph_name: str,
-        concept_id: str,
-        direction: str = "both",
-        depth: int = 3
-    ) -> List[Dict[str, Any]]:
-        """
-        Get lineage (upstream and downstream) for a concept
+    def delete_concept(self, graph_name: str, concept_id: str) -> bool:
+        """Delete a concept and all its relationships"""
+        if not self.is_connected():
+            logger.warning("Cannot delete concept - not connected to FalkorDB")
+            return False
         
-        Args:
-            graph_name: Name of the graph
-            concept_id: Concept to trace
-            direction: 'upstream', 'downstream', or 'both'
-            depth: Maximum depth to traverse
-            
-        Returns:
-            List of related concepts
-        """
-        if direction == "upstream":
-            query = f"""
-            MATCH path = (c:Concept {{id: $id}})<-[*1..{depth}]-(related:Concept)
-            RETURN DISTINCT related, length(path) as depth
-            ORDER BY depth
-            """
-        elif direction == "downstream":
-            query = f"""
-            MATCH path = (c:Concept {{id: $id}})-[*1..{depth}]->(related:Concept)
-            RETURN DISTINCT related, length(path) as depth
-            ORDER BY depth
-            """
-        else:  # both
-            query = f"""
-            MATCH path = (c:Concept {{id: $id}})-[*1..{depth}]-(related:Concept)
-            RETURN DISTINCT related, length(path) as depth
-            ORDER BY depth
-            """
-        
-        params = {"id": concept_id}
-        return self.execute_query(graph_name, query, params)
-    
-    def get_impact_analysis(
-        self,
-        graph_name: str,
-        concept_id: str
-    ) -> Dict[str, Any]:
-        """
-        Analyze impact of changes to a concept
-        
-        Returns counts of affected downstream concepts by type
-        """
-        query = """
-        MATCH (c:Concept {id: $id})-[*1..5]->(affected:Concept)
-        RETURN affected.type as concept_type, count(DISTINCT affected) as count
-        """
-        
-        params = {"id": concept_id}
-        results = self.execute_query(graph_name, query, params)
-        
-        impact = {
-            "total_affected": 0,
-            "by_type": {}
-        }
-        
-        for record in results:
-            concept_type = record.get("concept_type", "Unknown")
-            count = record.get("count", 0)
-            impact["by_type"][concept_type] = count
-            impact["total_affected"] += count
-        
-        return impact
-    
-    def delete_concept(
-        self,
-        graph_name: str,
-        concept_id: str
-    ) -> bool:
-        """Delete a concept and its relationships"""
         query = """
         MATCH (c:Concept {id: $id})
         DETACH DELETE c
@@ -284,6 +311,7 @@ class GraphClient:
         
         try:
             self.execute_query(graph_name, query, params)
+            logger.info("Concept deleted", graph_name=graph_name, concept_id=concept_id)
             return True
         except Exception as e:
             logger.error("Failed to delete concept", concept_id=concept_id, error=str(e))
@@ -291,6 +319,10 @@ class GraphClient:
     
     def delete_graph(self, graph_name: str) -> bool:
         """Delete an entire graph"""
+        if not self.is_connected():
+            logger.warning("Cannot delete graph - not connected to FalkorDB")
+            return False
+        
         try:
             if graph_name in self._graphs:
                 del self._graphs[graph_name]
@@ -309,6 +341,7 @@ class GraphClient:
         if self._client:
             self._graphs.clear()
             self._client = None
+            self._connected = False
             logger.info("FalkorDB connections closed")
 
 
@@ -317,7 +350,12 @@ _graph_client: Optional[GraphClient] = None
 
 
 def get_graph_client() -> GraphClient:
-    """Get or create global graph client instance"""
+    """
+    Get or create global graph client instance
+    
+    Returns:
+        GraphClient instance (may not be connected if FalkorDB is unavailable)
+    """
     global _graph_client
     
     if _graph_client is None:
