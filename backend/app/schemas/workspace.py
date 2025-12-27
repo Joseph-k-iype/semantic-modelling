@@ -1,10 +1,9 @@
 """
-Workspace Pydantic schemas
+Workspace Pydantic schemas - Matching actual database models
 """
-
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, UUID4, ConfigDict
+from typing import Optional
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -31,17 +30,12 @@ class WorkspaceUpdate(BaseModel):
     """Schema for updating a workspace"""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    is_active: Optional[bool] = None
-    settings: Optional[dict] = None
 
 
 class WorkspaceResponse(WorkspaceBase):
     """Workspace response schema"""
-    id: UUID4
-    slug: str
-    is_active: bool
-    settings: dict
-    created_by: UUID4
+    id: str
+    created_by: str
     created_at: datetime
     updated_at: datetime
     
@@ -58,7 +52,7 @@ class WorkspaceMemberRole(str, Enum):
 
 class WorkspaceMemberBase(BaseModel):
     """Base workspace member schema"""
-    user_id: UUID4
+    user_id: str
     role: WorkspaceMemberRole
 
 
@@ -74,8 +68,8 @@ class WorkspaceMemberUpdate(BaseModel):
 
 class WorkspaceMemberResponse(WorkspaceMemberBase):
     """Workspace member response schema"""
-    id: UUID4
-    workspace_id: UUID4
+    id: str
+    workspace_id: str
     created_at: datetime
     updated_at: datetime
     
@@ -84,7 +78,7 @@ class WorkspaceMemberResponse(WorkspaceMemberBase):
 
 class WorkspaceWithMembers(WorkspaceResponse):
     """Workspace response with members"""
-    members: List[WorkspaceMemberResponse] = []
+    members: list = []
     member_count: int = 0
     
     model_config = ConfigDict(from_attributes=True)

@@ -1,10 +1,9 @@
 """
-Model Pydantic schemas
+Model Pydantic schemas - Matching actual database models
 """
-
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, UUID4, ConfigDict
+from typing import Optional
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -21,14 +20,6 @@ class ModelType(str, Enum):
     BPMN = "bpmn"
 
 
-class ModelStatus(str, Enum):
-    """Model status enumeration"""
-    DRAFT = "draft"
-    IN_REVIEW = "in_review"
-    PUBLISHED = "published"
-    ARCHIVED = "archived"
-
-
 class ModelBase(BaseModel):
     """Base model schema"""
     name: str = Field(..., min_length=1, max_length=255)
@@ -38,9 +29,8 @@ class ModelBase(BaseModel):
 
 class ModelCreate(ModelBase):
     """Schema for creating a model"""
-    workspace_id: UUID4
-    folder_id: Optional[UUID4] = None
-    tags: List[str] = []
+    workspace_id: str
+    folder_id: Optional[str] = None
     metadata: dict = {}
 
 
@@ -48,26 +38,20 @@ class ModelUpdate(BaseModel):
     """Schema for updating a model"""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    folder_id: Optional[UUID4] = None
-    status: Optional[ModelStatus] = None
-    tags: Optional[List[str]] = None
+    folder_id: Optional[str] = None
     metadata: Optional[dict] = None
 
 
 class ModelResponse(ModelBase):
     """Model response schema"""
-    id: UUID4
-    workspace_id: UUID4
-    folder_id: Optional[UUID4] = None
-    slug: str
-    status: ModelStatus
-    version: int
-    tags: List[str] = []
-    metadata: dict = {}
-    created_by: UUID4
+    id: str
+    workspace_id: str
+    folder_id: Optional[str] = None
+    metadata: dict
+    created_by: str
     created_at: datetime
     updated_at: datetime
-    last_edited_by: Optional[UUID4] = None
+    updated_by: str
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -75,20 +59,21 @@ class ModelResponse(ModelBase):
 class ModelWithStats(ModelResponse):
     """Model response with statistics"""
     diagram_count: int = 0
-    version_count: int = 0
-    comment_count: int = 0
-    is_favorited: bool = False
     
     model_config = ConfigDict(from_attributes=True)
 
 
 class ModelMove(BaseModel):
     """Schema for moving a model to different folder"""
-    folder_id: Optional[UUID4] = None
+    folder_id: Optional[str] = None
 
 
 class ModelDuplicate(BaseModel):
     """Schema for duplicating a model"""
     name: str = Field(..., min_length=1, max_length=255)
-    workspace_id: Optional[UUID4] = None
-    folder_id: Optional[UUID4] = None
+    workspace_id: Optional[str] = None
+    folder_id: Optional[str] = None
+
+
+# For backwards compatibility with existing imports
+ModelStatus = str  # Not used in current models

@@ -1,329 +1,218 @@
 """
-Diagram API endpoints
+Diagram management endpoints
 """
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from typing import Any, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import structlog
+import uuid
+from datetime import datetime
 
 from app.db.session import get_db
-from app.core.auth import get_current_user
-from app.models.user import User
 from app.models.diagram import Diagram
-from app.services.diagram_service import DiagramService
-from app.services.semantic_model_service import SemanticModelService
-from app.schemas.diagram import (
-    DiagramCreate,
-    DiagramUpdate,
-    DiagramResponse,
-    DiagramDetailResponse,
-)
+from app.schemas.diagram import DiagramCreate, DiagramUpdate, DiagramResponse
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
 
 @router.get("/", response_model=List[DiagramResponse])
 async def list_diagrams(
-    model_id: Optional[str] = None,
-    workspace_id: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 100,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    List all diagrams for a model or workspace
-    """
-    diagram_service = DiagramService(db)
+    workspace_id: str = Query(None, description="Filter by workspace"),
+    model_id: str = Query(None, description="Filter by model"),
+    diagram_type: str = Query(None, description="Filter by diagram type"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List diagrams with optional filters"""
+    query = select(Diagram).where(Diagram.deleted_at.is_(None))
+    
+    if workspace_id:
+        query = query.where(Diagram.workspace_id == workspace_id)
     
     if model_id:
-        diagrams = diagram_service.get_diagrams_by_model(
-            model_id=model_id,
-            skip=skip,
-            limit=limit
-        )
-    elif workspace_id:
-        diagrams = diagram_service.get_diagrams_by_workspace(
-            workspace_id=workspace_id,
-            skip=skip,
-            limit=limit
-        )
-    else:
-        diagrams = diagram_service.get_user_diagrams(
-            user_id=current_user.id,
-            skip=skip,
-            limit=limit
-        )
+        query = query.where(Diagram.model_id == model_id)
+    
+    if diagram_type:
+        query = query.where(Diagram.type == diagram_type)
+    
+    query = query.offset(skip).limit(limit).order_by(Diagram.updated_at.desc())
+    
+    result = await db.execute(query)
+    diagrams = result.scalars().all()
+    
+    logger.info("Diagrams listed", count=len(diagrams))
     
     return diagrams
 
 
-@router.post("/", response_model=DiagramDetailResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=DiagramResponse, status_code=status.HTTP_201_CREATED)
 async def create_diagram(
-    diagram_data: DiagramCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Create a new diagram
-    """
-    diagram_service = DiagramService(db)
-    semantic_service = SemanticModelService(db)
+    diagram_in: DiagramCreate,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Create new diagram"""
+    # Mock user ID - replace with actual authenticated user
+    mock_user_id = str(uuid.uuid4())
     
-    # Create diagram in PostgreSQL
-    diagram = diagram_service.create_diagram(
-        data=diagram_data,
-        user_id=current_user.id
+    diagram = Diagram(
+        name=diagram_in.name,
+        description=diagram_in.description,
+        type=diagram_in.type.value,
+        workspace_id=str(diagram_in.workspace_id),
+        model_id=str(diagram_in.model_id) if diagram_in.model_id else None,
+        folder_id=str(diagram_in.folder_id) if diagram_in.folder_id else None,
+        nodes=diagram_in.nodes or [],
+        edges=diagram_in.edges or [],
+        viewport=diagram_in.viewport or {"x": 0, "y": 0, "zoom": 1},
+        metadata=diagram_in.metadata or {},
+        created_by=mock_user_id,
+        updated_by=mock_user_id,
     )
     
-    # Sync to graph database (semantic model)
-    try:
-        semantic_service.sync_diagram_to_graph(diagram)
-    except Exception as e:
-        # Log error but don't fail the request
-        print(f"Error syncing to graph: {str(e)}")
+    db.add(diagram)
+    await db.commit()
+    await db.refresh(diagram)
+    
+    logger.info("Diagram created", diagram_id=str(diagram.id), name=diagram.name)
     
     return diagram
 
 
-@router.get("/{diagram_id}", response_model=DiagramDetailResponse)
+@router.get("/{diagram_id}", response_model=DiagramResponse)
 async def get_diagram(
     diagram_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Get a specific diagram by ID
-    """
-    diagram_service = DiagramService(db)
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Get diagram by ID"""
+    result = await db.execute(
+        select(Diagram).where(
+            Diagram.id == diagram_id,
+            Diagram.deleted_at.is_(None)
+        )
+    )
+    diagram = result.scalar_one_or_none()
     
-    diagram = diagram_service.get_diagram(diagram_id)
     if not diagram:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Diagram not found"
         )
     
-    # Check access permissions
-    # TODO: Implement proper permission checking
+    logger.info("Diagram retrieved", diagram_id=diagram_id)
     
     return diagram
 
 
-@router.put("/{diagram_id}", response_model=DiagramDetailResponse)
+@router.put("/{diagram_id}", response_model=DiagramResponse)
 async def update_diagram(
     diagram_id: str,
-    diagram_data: DiagramUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Update a diagram
-    """
-    diagram_service = DiagramService(db)
-    semantic_service = SemanticModelService(db)
+    diagram_in: DiagramUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Update diagram"""
+    result = await db.execute(
+        select(Diagram).where(
+            Diagram.id == diagram_id,
+            Diagram.deleted_at.is_(None)
+        )
+    )
+    diagram = result.scalar_one_or_none()
     
-    diagram = diagram_service.get_diagram(diagram_id)
     if not diagram:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Diagram not found"
         )
     
-    # Update diagram
-    updated_diagram = diagram_service.update_diagram(
-        diagram_id=diagram_id,
-        data=diagram_data,
-        user_id=current_user.id
-    )
+    update_data = diagram_in.model_dump(exclude_unset=True)
     
-    # Sync to graph database
-    try:
-        semantic_service.sync_diagram_to_graph(updated_diagram)
-    except Exception as e:
-        print(f"Error syncing to graph: {str(e)}")
+    # Handle optional fields
+    if "model_id" in update_data:
+        model_id = update_data.pop("model_id")
+        diagram.model_id = str(model_id) if model_id else None
     
-    return updated_diagram
+    if "folder_id" in update_data:
+        folder_id = update_data.pop("folder_id")
+        diagram.folder_id = str(folder_id) if folder_id else None
+    
+    for field, value in update_data.items():
+        setattr(diagram, field, value)
+    
+    # Mock user ID for updated_by
+    diagram.updated_by = str(uuid.uuid4())
+    diagram.updated_at = datetime.utcnow()
+    
+    await db.commit()
+    await db.refresh(diagram)
+    
+    logger.info("Diagram updated", diagram_id=diagram_id)
+    
+    return diagram
 
 
-@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{diagram_id}")
 async def delete_diagram(
     diagram_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Delete a diagram
-    """
-    diagram_service = DiagramService(db)
-    semantic_service = SemanticModelService(db)
+    hard_delete: bool = Query(False, description="Permanent delete"),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Delete diagram (soft delete by default)"""
+    result = await db.execute(
+        select(Diagram).where(Diagram.id == diagram_id)
+    )
+    diagram = result.scalar_one_or_none()
     
-    diagram = diagram_service.get_diagram(diagram_id)
     if not diagram:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Diagram not found"
         )
     
-    # Delete from graph database first
-    try:
-        semantic_service.delete_diagram_from_graph(diagram_id)
-    except Exception as e:
-        print(f"Error deleting from graph: {str(e)}")
+    if hard_delete:
+        # Permanent deletion
+        await db.delete(diagram)
+        logger.info("Diagram permanently deleted", diagram_id=diagram_id)
+    else:
+        # Soft deletion
+        diagram.deleted_at = datetime.utcnow()
+        logger.info("Diagram soft deleted", diagram_id=diagram_id)
     
-    # Delete from PostgreSQL
-    diagram_service.delete_diagram(diagram_id)
+    await db.commit()
     
-    return None
+    return {"message": f"Diagram {diagram_id} deleted successfully"}
 
 
-@router.post("/{diagram_id}/convert-to-sql")
-async def convert_diagram_to_sql(
+@router.post("/{diagram_id}/restore")
+async def restore_diagram(
     diagram_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Convert ER diagram to SQL DDL statements
-    """
-    diagram_service = DiagramService(db)
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """Restore a soft-deleted diagram"""
+    result = await db.execute(
+        select(Diagram).where(Diagram.id == diagram_id)
+    )
+    diagram = result.scalar_one_or_none()
     
-    diagram = diagram_service.get_diagram(diagram_id)
     if not diagram:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Diagram not found"
         )
     
-    if diagram.type != "ER":
+    if diagram.deleted_at is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only ER diagrams can be converted to SQL"
+            detail="Diagram is not deleted"
         )
     
-    sql_statements = diagram_service.convert_to_sql(diagram)
+    diagram.deleted_at = None
+    await db.commit()
+    await db.refresh(diagram)
     
-    return {
-        "diagram_id": diagram_id,
-        "diagram_name": diagram.name,
-        "sql": sql_statements
-    }
-
-
-@router.post("/{diagram_id}/convert-to-cypher")
-async def convert_diagram_to_cypher(
-    diagram_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Convert diagram to Cypher (graph query language)
-    """
-    diagram_service = DiagramService(db)
+    logger.info("Diagram restored", diagram_id=diagram_id)
     
-    diagram = diagram_service.get_diagram(diagram_id)
-    if not diagram:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
-        )
-    
-    cypher_statements = diagram_service.convert_to_cypher(diagram)
-    
-    return {
-        "diagram_id": diagram_id,
-        "diagram_name": diagram.name,
-        "cypher": cypher_statements
-    }
-
-
-@router.post("/{diagram_id}/validate")
-async def validate_diagram(
-    diagram_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Validate diagram according to notation rules
-    """
-    diagram_service = DiagramService(db)
-    
-    diagram = diagram_service.get_diagram(diagram_id)
-    if not diagram:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
-        )
-    
-    validation_results = diagram_service.validate_diagram(diagram)
-    
-    return {
-        "diagram_id": diagram_id,
-        "is_valid": validation_results["is_valid"],
-        "errors": validation_results.get("errors", []),
-        "warnings": validation_results.get("warnings", [])
-    }
-
-
-@router.post("/{diagram_id}/auto-layout")
-async def auto_layout_diagram(
-    diagram_id: str,
-    algorithm: str = "layered",
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Apply automatic layout to diagram
-    """
-    diagram_service = DiagramService(db)
-    
-    diagram = diagram_service.get_diagram(diagram_id)
-    if not diagram:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
-        )
-    
-    laid_out_diagram = diagram_service.apply_auto_layout(
-        diagram=diagram,
-        algorithm=algorithm
-    )
-    
-    return laid_out_diagram
-
-
-@router.get("/{diagram_id}/export/{format}")
-async def export_diagram(
-    diagram_id: str,
-    format: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Export diagram to various formats (SVG, PNG, PDF, etc.)
-    """
-    diagram_service = DiagramService(db)
-    
-    diagram = diagram_service.get_diagram(diagram_id)
-    if not diagram:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
-        )
-    
-    if format not in ["svg", "png", "pdf", "json", "xmi"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported export format: {format}"
-        )
-    
-    exported_data = diagram_service.export_diagram(
-        diagram=diagram,
-        format=format
-    )
-    
-    return {
-        "diagram_id": diagram_id,
-        "format": format,
-        "data": exported_data
-    }
+    return diagram

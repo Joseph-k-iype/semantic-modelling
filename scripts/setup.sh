@@ -197,4 +197,4 @@ echo "  2. Change default admin password"
 echo "  3. Start developing!"
 echo ""
 
-print_info "Happy coding! 🚀"
+print_info "Happy coding! 🚀"x`

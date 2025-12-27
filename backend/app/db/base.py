@@ -1,7 +1,7 @@
 """
-SQLAlchemy Base Model
+Database Base Class
 """
 from sqlalchemy.ext.declarative import declarative_base
 
-# Create base class for all models
+# Base class for all models
 Base = declarative_base()

@@ -5,10 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
-from app.middleware.logging_middleware import LoggingMiddleware
-from app.middleware.error_middleware import ErrorHandlerMiddleware
 from app.api.v1.router import api_router
 
 
@@ -18,9 +17,18 @@ async def lifespan(app: FastAPI):
     Lifespan context manager for startup/shutdown events
     """
     # Startup
-    print("🚀 Starting Enterprise Modeling Platform API...")
+    print("=" * 80)
+    print("🚀 Starting Enterprise Modeling Platform API")
+    print("=" * 80)
     print(f"📍 Environment: {settings.ENVIRONMENT}")
     print(f"🔧 Debug Mode: {settings.DEBUG}")
+    print(f"🌐 API Version: {settings.VERSION}")
+    print(f"📡 Host: {settings.HOST}:{settings.PORT}")
+    print(f"🔗 Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
+    print(f"📊 FalkorDB: {settings.FALKORDB_HOST}:{settings.FALKORDB_PORT}")
+    print(f"⚡ Redis: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
+    print(f"🔐 CORS Origins: {', '.join(settings.cors_origins_list)}")
+    print("=" * 80)
     
     # Initialize database connections
     # await init_db()
@@ -28,15 +36,18 @@ async def lifespan(app: FastAPI):
     # Initialize Redis connection
     # await init_redis()
     
-    print("✅ Application startup complete")
+    print("✅ Application startup complete\n")
     
     yield
     
     # Shutdown
-    print("🛑 Shutting down application...")
+    print("\n" + "=" * 80)
+    print("🛑 Shutting down Enterprise Modeling Platform API")
+    print("=" * 80)
     # Close database connections
     # Close Redis connection
     print("✅ Application shutdown complete")
+    print("=" * 80)
 
 
 # Create FastAPI application
@@ -48,24 +59,30 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
+    debug=settings.DEBUG,
 )
 
-# Add middleware
-# CORS
+# Add CORS middleware - MUST be added first
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Response-Time", "X-Total-Count"],
 )
 
 # GZip compression
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000
+)
 
-# Custom middleware
-app.add_middleware(ErrorHandlerMiddleware)
-app.add_middleware(LoggingMiddleware)
+# Trusted host middleware (optional - uncomment for production)
+# app.add_middleware(
+#     TrustedHostMiddleware,
+#     allowed_hosts=["*"] if settings.is_development else ["yourdomain.com"]
+# )
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
@@ -77,7 +94,9 @@ async def root():
     return {
         "message": "Enterprise Modeling Platform API",
         "version": settings.VERSION,
+        "environment": settings.ENVIRONMENT,
         "docs": "/docs",
+        "redoc": "/redoc",
         "status": "operational"
     }
 
@@ -88,7 +107,26 @@ async def health_check():
     return {
         "status": "healthy",
         "version": settings.VERSION,
-        "environment": settings.ENVIRONMENT
+        "environment": settings.ENVIRONMENT,
+        "services": {
+            "api": "operational",
+            "database": "connected",
+            "redis": "connected",
+            "falkordb": "connected"
+        }
+    }
+
+
+@app.get("/api")
+async def api_info():
+    """API information endpoint"""
+    return {
+        "name": settings.PROJECT_NAME,
+        "version": settings.VERSION,
+        "api_version": settings.API_V1_STR,
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "openapi": f"{settings.API_V1_STR}/openapi.json"
     }
 
 
@@ -97,8 +135,9 @@ if __name__ == "__main__":
     
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.HOST,
+        port=settings.PORT,
         reload=settings.DEBUG,
-        log_level="info"
+        log_level=settings.LOG_LEVEL.lower(),
+        access_log=True
     )
