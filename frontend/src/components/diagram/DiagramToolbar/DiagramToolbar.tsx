@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   Database, 
   Package, 
@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { DiagramType } from '../../../types/diagram.types';
 import { useDiagramStore } from '../../../store/diagramStore';
-import clsx from 'clsx';
 
 interface PaletteItem {
   type: string;

@@ -1,7 +1,7 @@
-import React, { memo, useState } from 'react';
+import { memo, useState } from 'react';
 import { NodeProps } from 'reactflow';
 import { BaseNode } from '../../base/BaseNode';
-import { BPMNNodeData, BPMNLane } from '../../../../types/diagram.types';
+import { BPMNNodeData } from '../../../../types/diagram.types';
 import { Plus, Edit2, GripVertical } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -18,8 +18,6 @@ export const PoolNode = memo<NodeProps<BPMNNodeData>>(({ id, data, selected }) =
       </BaseNode>
     );
   }
-
-  const totalHeight = pool.lanes.reduce((sum, lane) => sum + lane.height, 0);
 
   return (
     <BaseNode 

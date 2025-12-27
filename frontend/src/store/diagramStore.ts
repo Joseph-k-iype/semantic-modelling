@@ -1,119 +1,153 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { 
-  Node, 
-  Edge, 
-  addEdge, 
-  applyNodeChanges, 
-  applyEdgeChanges,
+import {
+  Edge,
   Connection,
+  applyNodeChanges,
+  applyEdgeChanges,
   NodeChange,
   EdgeChange,
-  XYPosition
+  addEdge,
 } from 'reactflow';
-import { DiagramType, DiagramNode, DiagramEdge } from '../types/diagram.types';
+import { DiagramNode, DiagramType } from '../types/diagram.types';
 import { createDefaultNodeData } from '../features/diagram-engine/NodeFactory';
 
-interface DiagramState {
-  // Current diagram
-  diagramId: string | null;
+interface DiagramStore {
+  // State
+  diagramId: string;
   diagramName: string;
   diagramType: DiagramType;
-  modelId: string | null;
-  workspaceId: string | null;
-
-  // Nodes and edges
   nodes: DiagramNode[];
-  edges: DiagramEdge[];
-
-  // Selection
+  edges: Edge[];
   selectedNodeIds: string[];
   selectedEdgeIds: string[];
-
-  // Viewport
   viewport: { x: number; y: number; zoom: number };
-
-  // UI State
-  isLoading: boolean;
-  isSaving: boolean;
-  error: string | null;
   isDirty: boolean;
+  isSaving: boolean;
+  isLoading: boolean;
+  error: string | null;
 
   // Actions
-  setDiagram: (diagram: {
-    id: string;
-    name: string;
-    type: DiagramType;
-    modelId: string;
-    workspaceId: string;
-    nodes: DiagramNode[];
-    edges: DiagramEdge[];
-    viewport?: { x: number; y: number; zoom: number };
-  }) => void;
-  
+  setDiagram: (diagram: Partial<DiagramStore>) => void;
+  loadDiagram: (diagramId: string) => Promise<void>;
+  saveDiagram: () => Promise<void>;
   setDiagramType: (type: DiagramType) => void;
   
-  // Node operations
-  addNode: (nodeType: string, position: XYPosition) => void;
-  updateNode: (nodeId: string, data: Partial<any>) => void;
+  // Node actions
+  addNode: (nodeType: string, position: { x: number; y: number }) => void;
+  updateNode: (nodeId: string, data: any) => void;
   deleteNode: (nodeId: string) => void;
   onNodesChange: (changes: NodeChange[]) => void;
-
-  // Edge operations
+  
+  // Edge actions
   addEdge: (connection: Connection) => void;
-  updateEdge: (edgeId: string, data: Partial<any>) => void;
+  updateEdge: (edgeId: string, data: any) => void;
   deleteEdge: (edgeId: string) => void;
   onEdgesChange: (changes: EdgeChange[]) => void;
-
-  // Selection operations
+  
+  // Selection actions
   setSelectedNodes: (nodeIds: string[]) => void;
   setSelectedEdges: (edgeIds: string[]) => void;
-  clearSelection: () => void;
-
-  // Viewport operations
-  setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
-
-  // Persistence operations
-  saveDiagram: () => Promise<void>;
-  loadDiagram: (diagramId: string) => Promise<void>;
   
-  // Reset
-  resetDiagram: () => void;
+  // Viewport actions
+  setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
 }
 
-const initialState = {
-  diagramId: null,
-  diagramName: 'Untitled Diagram',
-  diagramType: DiagramType.UML_CLASS,
-  modelId: null,
-  workspaceId: null,
-  nodes: [],
-  edges: [],
-  selectedNodeIds: [],
-  selectedEdgeIds: [],
-  viewport: { x: 0, y: 0, zoom: 1 },
-  isLoading: false,
-  isSaving: false,
-  error: null,
-  isDirty: false,
-};
-
-export const useDiagramStore = create<DiagramState>()(
+export const useDiagramStore = create<DiagramStore>()(
   immer((set, get) => ({
-    ...initialState,
+    // Initial state
+    diagramId: '',
+    diagramName: 'Untitled Diagram',
+    diagramType: DiagramType.UML_CLASS,
+    nodes: [],
+    edges: [],
+    selectedNodeIds: [],
+    selectedEdgeIds: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    isDirty: false,
+    isSaving: false,
+    isLoading: false,
+    error: null,
 
+    // Actions
     setDiagram: (diagram) => {
       set((state) => {
-        state.diagramId = diagram.id;
-        state.diagramName = diagram.name;
-        state.diagramType = diagram.type;
-        state.modelId = diagram.modelId;
-        state.workspaceId = diagram.workspaceId;
-        state.nodes = diagram.nodes;
-        state.edges = diagram.edges;
-        state.viewport = diagram.viewport || initialState.viewport;
-        state.isDirty = false;
+        Object.assign(state, diagram);
       });
+    },
+
+    loadDiagram: async (diagramId) => {
+      set((state) => {
+        state.isLoading = true;
+        state.error = null;
+      });
+
+      try {
+        // TODO: Replace with actual API call
+        // const response = await fetch(`/api/diagrams/${diagramId}`);
+        // const data = await response.json();
+        
+        // Mock data for now
+        const mockData = {
+          id: diagramId,
+          name: 'Sample Diagram',
+          type: DiagramType.UML_CLASS,
+          nodes: [],
+          edges: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+        };
+
+        set((state) => {
+          state.diagramId = mockData.id;
+          state.diagramName = mockData.name;
+          state.diagramType = mockData.type;
+          state.nodes = mockData.nodes;
+          state.edges = mockData.edges;
+          state.viewport = mockData.viewport;
+          state.isLoading = false;
+          state.isDirty = false;
+        });
+      } catch (error) {
+        set((state) => {
+          state.error = error instanceof Error ? error.message : 'Failed to load diagram';
+          state.isLoading = false;
+        });
+      }
+    },
+
+    saveDiagram: async () => {
+      set((state) => {
+        state.isSaving = true;
+        state.error = null;
+      });
+
+      try {
+        // TODO: Replace with actual API call
+        // const response = await fetch(`/api/diagrams/${currentState.diagramId}`, {
+        //   method: 'PUT',
+        //   headers: { 'Content-Type': 'application/json' },
+        //   body: JSON.stringify({
+        //     name: currentState.diagramName,
+        //     type: currentState.diagramType,
+        //     nodes: currentState.nodes,
+        //     edges: currentState.edges,
+        //     viewport: currentState.viewport,
+        //   }),
+        // });
+
+        // Simulate API delay
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        set((state) => {
+          state.isDirty = false;
+          state.isSaving = false;
+        });
+      } catch (error) {
+        set((state) => {
+          state.error = error instanceof Error ? error.message : 'Failed to save diagram';
+          state.isSaving = false;
+        });
+      }
     },
 
     setDiagramType: (type) => {
@@ -228,76 +262,10 @@ export const useDiagramStore = create<DiagramState>()(
       });
     },
 
-    clearSelection: () => {
-      set((state) => {
-        state.selectedNodeIds = [];
-        state.selectedEdgeIds = [];
-      });
-    },
-
     setViewport: (viewport) => {
       set((state) => {
         state.viewport = viewport;
       });
-    },
-
-    saveDiagram: async () => {
-      set((state) => {
-        state.isSaving = true;
-        state.error = null;
-      });
-
-      try {
-        const state = get();
-        const diagramData = {
-          id: state.diagramId,
-          name: state.diagramName,
-          type: state.diagramType,
-          modelId: state.modelId,
-          workspaceId: state.workspaceId,
-          nodes: state.nodes,
-          edges: state.edges,
-          viewport: state.viewport,
-        };
-
-        // TODO: Call API to save diagram
-        console.log('Saving diagram:', diagramData);
-
-        set((state) => {
-          state.isDirty = false;
-          state.isSaving = false;
-        });
-      } catch (error) {
-        set((state) => {
-          state.error = error instanceof Error ? error.message : 'Failed to save diagram';
-          state.isSaving = false;
-        });
-      }
-    },
-
-    loadDiagram: async (diagramId) => {
-      set((state) => {
-        state.isLoading = true;
-        state.error = null;
-      });
-
-      try {
-        // TODO: Call API to load diagram
-        console.log('Loading diagram:', diagramId);
-
-        set((state) => {
-          state.isLoading = false;
-        });
-      } catch (error) {
-        set((state) => {
-          state.error = error instanceof Error ? error.message : 'Failed to load diagram';
-          state.isLoading = false;
-        });
-      }
-    },
-
-    resetDiagram: () => {
-      set(initialState);
     },
   }))
 );

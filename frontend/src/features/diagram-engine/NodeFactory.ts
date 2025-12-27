@@ -1,4 +1,5 @@
-import { NodeTypes, EdgeTypes } from 'reactflow';
+import { ComponentType } from 'react';
+import { NodeTypes, EdgeTypes, EdgeProps } from 'reactflow';
 
 // Import node components
 import { EntityNode } from '../../components/nodes/er/EntityNode/EntityNode';
@@ -52,27 +53,27 @@ export const nodeTypes: NodeTypes = {
   BPMN_LANE: PoolNode,
 };
 
-// Edge type registry
+// Edge type registry with proper typing
 export const edgeTypes: EdgeTypes = {
   // ER Edges
-  ER_RELATIONSHIP: BaseEdge,
-  ER_ATTRIBUTE_LINK: BaseEdge,
+  ER_RELATIONSHIP: BaseEdge as ComponentType<EdgeProps>,
+  ER_ATTRIBUTE_LINK: BaseEdge as ComponentType<EdgeProps>,
 
   // UML Edges
-  UML_ASSOCIATION: AssociationEdge,
-  UML_AGGREGATION: AggregationEdge,
-  UML_COMPOSITION: CompositionEdge,
-  UML_GENERALIZATION: GeneralizationEdge,
-  UML_DEPENDENCY: DependencyEdge,
-  UML_REALIZATION: RealizationEdge,
-  UML_MESSAGE: MessageEdge,
-  UML_TRANSITION: TransitionEdge,
+  UML_ASSOCIATION: AssociationEdge as ComponentType<EdgeProps>,
+  UML_AGGREGATION: AggregationEdge as ComponentType<EdgeProps>,
+  UML_COMPOSITION: CompositionEdge as ComponentType<EdgeProps>,
+  UML_GENERALIZATION: GeneralizationEdge as ComponentType<EdgeProps>,
+  UML_DEPENDENCY: DependencyEdge as ComponentType<EdgeProps>,
+  UML_REALIZATION: RealizationEdge as ComponentType<EdgeProps>,
+  UML_MESSAGE: MessageEdge as ComponentType<EdgeProps>,
+  UML_TRANSITION: TransitionEdge as ComponentType<EdgeProps>,
 
   // BPMN Edges
-  BPMN_SEQUENCE_FLOW: BaseEdge,
-  BPMN_MESSAGE_FLOW: MessageEdge,
-  BPMN_ASSOCIATION: BaseEdge,
-  BPMN_DATA_ASSOCIATION: BaseEdge,
+  BPMN_SEQUENCE_FLOW: BaseEdge as ComponentType<EdgeProps>,
+  BPMN_MESSAGE_FLOW: MessageEdge as ComponentType<EdgeProps>,
+  BPMN_ASSOCIATION: BaseEdge as ComponentType<EdgeProps>,
+  BPMN_DATA_ASSOCIATION: BaseEdge as ComponentType<EdgeProps>,
 };
 
 // Helper function to create default node data based on type

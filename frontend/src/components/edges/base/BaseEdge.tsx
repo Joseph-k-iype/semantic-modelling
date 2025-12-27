@@ -1,7 +1,7 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { EdgeProps, getBezierPath, EdgeLabelRenderer, BaseEdge as RFBaseEdge } from 'reactflow';
 
-export interface CustomEdgeProps extends EdgeProps {
+export interface CustomEdgeProps extends Omit<EdgeProps, 'label'> {
   label?: string;
   markerEnd?: string;
   markerStart?: string;
@@ -23,7 +23,6 @@ export const BaseEdge = memo<CustomEdgeProps>(({
   markerStart,
   strokeWidth = 2,
   strokeDasharray,
-  animated = false,
   selected,
   style = {},
 }) => {
@@ -49,7 +48,6 @@ export const BaseEdge = memo<CustomEdgeProps>(({
           stroke: selected ? '#3b82f6' : (style.stroke || '#6b7280'),
           strokeDasharray,
         }}
-        className={animated ? 'animated' : ''}
       />
       
       {label && (

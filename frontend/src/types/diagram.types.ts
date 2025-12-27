@@ -1,4 +1,4 @@
-import { Node, Edge, XYPosition } from 'reactflow';
+import { Node, Edge } from 'reactflow';
 
 // Diagram Types
 export enum DiagramType {
@@ -233,9 +233,9 @@ export interface LayoutOptions {
   algorithm: 'manual' | 'layered' | 'force' | 'swimlane' | 'sequence';
   direction?: 'TB' | 'BT' | 'LR' | 'RL';
   spacing?: {
-    node: number;
-    rank: number;
-    edge: number;
+    nodeSpacing?: number;
+    rankSpacing?: number;
+    edgeSpacing?: number;
   };
   alignment?: 'UL' | 'UR' | 'DL' | 'DR';
 }

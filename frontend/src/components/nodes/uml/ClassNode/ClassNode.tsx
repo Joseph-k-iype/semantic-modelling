@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import { memo, useState } from 'react';
 import { NodeProps } from 'reactflow';
 import { BaseNode } from '../../base/BaseNode';
 import { UMLNodeData, UMLAttribute, UMLMethod } from '../../../../types/diagram.types';

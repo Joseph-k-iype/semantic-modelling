@@ -1,8 +1,8 @@
-import React, { memo, useState } from 'react';
+import { memo, useState } from 'react';
 import { NodeProps } from 'reactflow';
 import { BaseNode } from '../../base/BaseNode';
 import { ERNodeData, ERAttribute } from '../../../../types/diagram.types';
-import { Key, Lock, Database, Plus, Edit2, Trash2 } from 'lucide-react';
+import { Key, Lock, Database, Plus, Edit2 } from 'lucide-react';
 import clsx from 'clsx';
 
 export const EntityNode = memo<NodeProps<ERNodeData>>(({ id, data, selected }) => {

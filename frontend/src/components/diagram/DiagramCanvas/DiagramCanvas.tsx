@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -14,8 +14,8 @@ import 'reactflow/dist/style.css';
 import { useDiagramStore } from '../../../store/diagramStore';
 import { nodeTypes, edgeTypes } from '../../../features/diagram-engine/NodeFactory';
 import { EdgeMarkers } from '../../../components/edges/uml/UMLEdges';
-import { DiagramToolbar } from '../DiagramToolbar/DiagramToolbar';
-import { DiagramProperties } from '../DiagramProperties/DiagramProperties';
+import { DiagramToolbar } from '../DiagramToolbar';
+import { DiagramProperties } from '../DiagramProperties';
 import { Save, AlertCircle } from 'lucide-react';
 
 const DiagramCanvasContent: React.FC = () => {

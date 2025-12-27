@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { DiagramCanvas } from '../../components/diagram/DiagramCanvas/DiagramCanvas';
 import { useDiagramStore } from '../../store/diagramStore';
@@ -16,16 +16,14 @@ export const DiagramEditorPage: React.FC = () => {
     } else {
       // Create new diagram
       setDiagram({
-        id: `diagram_${Date.now()}`,
-        name: 'Untitled Diagram',
-        type: DiagramType.UML_CLASS,
-        modelId: 'model_1', // TODO: Get from route or context
-        workspaceId: 'workspace_1', // TODO: Get from route or context
+        diagramId: `diagram_${Date.now()}`,
+        diagramName: 'Untitled Diagram',
+        diagramType: DiagramType.UML_CLASS,
         nodes: [],
         edges: [],
       });
     }
-  }, [diagramId]);
+  }, [diagramId, loadDiagram, setDiagram]);
 
   if (isLoading) {
     return (

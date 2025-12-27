@@ -1,0 +1,1 @@
+export { DiagramProperties } from './DiagramProperties';

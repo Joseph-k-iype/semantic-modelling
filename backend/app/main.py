@@ -1,145 +1,95 @@
 """
-Main FastAPI Application
+FastAPI main application entry point
 """
-import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.config import settings
+from app.core.config import settings
+from app.middleware.logging_middleware import LoggingMiddleware
+from app.middleware.error_middleware import ErrorHandlerMiddleware
 from app.api.v1.router import api_router
-from app.db.session import engine
-from app.db.base import Base
-from app.utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context manager for startup and shutdown events
+    Lifespan context manager for startup/shutdown events
     """
     # Startup
-    logger.info("Starting up application...")
+    print("🚀 Starting Enterprise Modeling Platform API...")
+    print(f"📍 Environment: {settings.ENVIRONMENT}")
+    print(f"🔧 Debug Mode: {settings.DEBUG}")
     
-    # Create database tables
-    try:
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created successfully")
-    except Exception as e:
-        logger.error(f"Error creating database tables: {str(e)}")
+    # Initialize database connections
+    # await init_db()
+    
+    # Initialize Redis connection
+    # await init_redis()
+    
+    print("✅ Application startup complete")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down application...")
+    print("🛑 Shutting down application...")
+    # Close database connections
+    # Close Redis connection
+    print("✅ Application shutdown complete")
 
 
 # Create FastAPI application
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Enterprise Modeling Platform API - ER, UML, and BPMN diagrams",
-    version="1.0.0",
+    description="Enterprise Modeling Platform - Visual Paradigm Alternative",
+    version=settings.VERSION,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
-
-# CORS Middleware
+# Add middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
-
-# GZip Middleware
+# GZip compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+# Custom middleware
+app.add_middleware(ErrorHandlerMiddleware)
+app.add_middleware(LoggingMiddleware)
 
-# Request Logging Middleware
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log all requests"""
-    logger.info(f"Request: {request.method} {request.url.path}")
-    response = await call_next(request)
-    logger.info(f"Response: {response.status_code}")
-    return response
+# Include API router
+app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
-# Exception Handlers
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    """Handle HTTP exceptions"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "detail": exc.detail,
-            "status_code": exc.status_code,
-        },
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors"""
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "detail": exc.errors(),
-            "body": exc.body,
-        },
-    )
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle general exceptions"""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "Internal server error",
-            "message": str(exc) if settings.DEBUG else "An error occurred",
-        },
-    )
-
-
-# Health Check
-@app.get("/health", tags=["health"])
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "service": settings.PROJECT_NAME,
-        "version": "1.0.0",
-    }
-
-
-# Root Endpoint
-@app.get("/", tags=["root"])
+@app.get("/")
 async def root():
     """Root endpoint"""
     return {
         "message": "Enterprise Modeling Platform API",
-        "version": "1.0.0",
+        "version": settings.VERSION,
         "docs": "/docs",
-        "health": "/health",
+        "status": "operational"
     }
 
 
-# Include API Router
-app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "version": settings.VERSION,
+        "environment": settings.ENVIRONMENT
+    }
 
 
 if __name__ == "__main__":
@@ -150,5 +100,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=settings.DEBUG,
-        log_level=settings.LOG_LEVEL.lower(),
+        log_level="info"
     )

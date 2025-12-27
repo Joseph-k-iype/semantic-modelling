@@ -1,8 +1,21 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useDiagramStore } from '../../../store/diagramStore';
 import { X, Plus, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
-import { ERAttribute, UMLAttribute, UMLMethod } from '../../../types/diagram.types';
+import { ERAttribute, ERNodeData, UMLAttribute, UMLMethod, UMLNodeData, BPMNNodeData } from '../../../types/diagram.types';
+
+// Type guard functions
+const isERNodeData = (data: any): data is ERNodeData => {
+  return 'entity' in data && data.entity !== undefined;
+};
+
+const isUMLNodeData = (data: any): data is UMLNodeData => {
+  return 'class' in data && data.class !== undefined;
+};
+
+const isBPMNNodeData = (data: any): data is BPMNNodeData => {
+  return 'task' in data || 'event' in data || 'gateway' in data || 'pool' in data;
+};
 
 export const DiagramProperties: React.FC = () => {
   const { nodes, selectedNodeIds, updateNode, deleteNode } = useDiagramStore();
@@ -34,13 +47,9 @@ export const DiagramProperties: React.FC = () => {
     }));
   };
 
-  const handleLabelChange = (value: string) => {
-    updateNode(selectedNode.id, { label: value });
-  };
-
   // ER Entity specific handlers
   const handleEntityNameChange = (value: string) => {
-    if (selectedNode.data.entity) {
+    if (isERNodeData(selectedNode.data) && selectedNode.data.entity) {
       updateNode(selectedNode.id, {
         entity: { ...selectedNode.data.entity, name: value }
       });
@@ -48,7 +57,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const addERAttribute = () => {
-    if (selectedNode.data.entity) {
+    if (isERNodeData(selectedNode.data) && selectedNode.data.entity) {
       const newAttribute: ERAttribute = {
         id: `attr_${Date.now()}`,
         name: 'newAttribute',
@@ -66,7 +75,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const updateERAttribute = (attrId: string, updates: Partial<ERAttribute>) => {
-    if (selectedNode.data.entity) {
+    if (isERNodeData(selectedNode.data) && selectedNode.data.entity) {
       const updatedAttributes = selectedNode.data.entity.attributes.map(attr =>
         attr.id === attrId ? { ...attr, ...updates } : attr
       );
@@ -78,7 +87,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const deleteERAttribute = (attrId: string) => {
-    if (selectedNode.data.entity) {
+    if (isERNodeData(selectedNode.data) && selectedNode.data.entity) {
       const updatedAttributes = selectedNode.data.entity.attributes.filter(
         attr => attr.id !== attrId
       );
@@ -91,7 +100,7 @@ export const DiagramProperties: React.FC = () => {
 
   // UML Class specific handlers
   const handleClassNameChange = (value: string) => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       updateNode(selectedNode.id, {
         class: { ...selectedNode.data.class, name: value }
       });
@@ -99,7 +108,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const addUMLAttribute = () => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const newAttribute: UMLAttribute = {
         id: `attr_${Date.now()}`,
         name: 'newAttribute',
@@ -117,7 +126,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const updateUMLAttribute = (attrId: string, updates: Partial<UMLAttribute>) => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const updatedAttributes = selectedNode.data.class.attributes.map(attr =>
         attr.id === attrId ? { ...attr, ...updates } : attr
       );
@@ -129,7 +138,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const deleteUMLAttribute = (attrId: string) => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const updatedAttributes = selectedNode.data.class.attributes.filter(
         attr => attr.id !== attrId
       );
@@ -141,7 +150,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const addUMLMethod = () => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const newMethod: UMLMethod = {
         id: `method_${Date.now()}`,
         name: 'newMethod',
@@ -160,7 +169,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const updateUMLMethod = (methodId: string, updates: Partial<UMLMethod>) => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const updatedMethods = selectedNode.data.class.methods.map(method =>
         method.id === methodId ? { ...method, ...updates } : method
       );
@@ -172,7 +181,7 @@ export const DiagramProperties: React.FC = () => {
   };
 
   const deleteUMLMethod = (methodId: string) => {
-    if (selectedNode.data.class) {
+    if (isUMLNodeData(selectedNode.data) && selectedNode.data.class) {
       const updatedMethods = selectedNode.data.class.methods.filter(
         method => method.id !== methodId
       );
@@ -186,11 +195,11 @@ export const DiagramProperties: React.FC = () => {
   return (
     <div className="w-80 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-gray-50">
         <h3 className="font-semibold text-gray-800">Properties</h3>
         <button
           onClick={() => deleteNode(selectedNode.id)}
-          className="text-gray-400 hover:text-red-600 transition-colors"
+          className="p-1 hover:bg-red-100 rounded text-red-600 transition-colors"
           title="Delete element"
         >
           <Trash2 className="w-4 h-4" />
@@ -204,8 +213,8 @@ export const DiagramProperties: React.FC = () => {
           className={clsx(
             'flex-1 px-4 py-2 text-sm font-medium transition-colors',
             activeTab === 'properties'
-              ? 'bg-white text-blue-600 border-b-2 border-blue-600'
-              : 'bg-gray-50 text-gray-600 hover:text-gray-800'
+              ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+              : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
           )}
         >
           Properties
@@ -215,8 +224,8 @@ export const DiagramProperties: React.FC = () => {
           className={clsx(
             'flex-1 px-4 py-2 text-sm font-medium transition-colors',
             activeTab === 'styles'
-              ? 'bg-white text-blue-600 border-b-2 border-blue-600'
-              : 'bg-gray-50 text-gray-600 hover:text-gray-800'
+              ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+              : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
           )}
         >
           Styles
@@ -224,9 +233,9 @@ export const DiagramProperties: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto">
         {activeTab === 'properties' && (
-          <>
+          <div className="p-4 space-y-4">
             {/* General Section */}
             <div className="border border-gray-200 rounded">
               <button
@@ -255,7 +264,7 @@ export const DiagramProperties: React.FC = () => {
                     />
                   </div>
 
-                  {selectedNode.data.entity && (
+                  {isERNodeData(selectedNode.data) && selectedNode.data.entity && (
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">
                         Entity Name
@@ -269,7 +278,7 @@ export const DiagramProperties: React.FC = () => {
                     </div>
                   )}
 
-                  {selectedNode.data.class && (
+                  {isUMLNodeData(selectedNode.data) && selectedNode.data.class && (
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">
                         Class Name
@@ -283,103 +292,77 @@ export const DiagramProperties: React.FC = () => {
                     </div>
                   )}
 
-                  {selectedNode.data.task && (
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">
-                        Task Name
-                      </label>
-                      <input
-                        type="text"
-                        value={selectedNode.data.task.name}
-                        onChange={(e) => updateNode(selectedNode.id, {
-                          task: { ...selectedNode.data.task, name: e.target.value }
-                        })}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                  )}
+                  {(() => {
+                    if (!isBPMNNodeData(selectedNode.data)) return null;
+                    const bpmnData = selectedNode.data;
+                    if (!bpmnData.task) return null;
+                    const task = bpmnData.task;
+                    
+                    return (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                          Task Name
+                        </label>
+                        <input
+                          type="text"
+                          value={task.name}
+                          onChange={(e) => {
+                            updateNode(selectedNode.id, {
+                              task: { ...task, name: e.target.value }
+                            });
+                          }}
+                          className="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>
 
             {/* ER Attributes Section */}
-            {selectedNode.data.entity && (
+            {isERNodeData(selectedNode.data) && selectedNode.data.entity && (
               <div className="border border-gray-200 rounded">
                 <button
                   onClick={() => toggleSection('attributes')}
                   className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors"
                 >
                   <span className="font-medium text-sm text-gray-700">Attributes</span>
-                  {expandedSections.attributes ? (
-                    <ChevronDown className="w-4 h-4 text-gray-500" />
-                  ) : (
-                    <ChevronRight className="w-4 h-4 text-gray-500" />
-                  )}
+                  <ChevronDown className="w-4 h-4 text-gray-500" />
                 </button>
                 
-                {expandedSections.attributes && (
-                  <div className="p-3 space-y-2">
-                    {selectedNode.data.entity.attributes.map((attr) => (
-                      <div key={attr.id} className="border border-gray-200 rounded p-2 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={attr.name}
-                            onChange={(e) => updateERAttribute(attr.id, { name: e.target.value })}
-                            className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
-                            placeholder="Attribute name"
-                          />
-                          <button
-                            onClick={() => deleteERAttribute(attr.id)}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                        
-                        <input
-                          type="text"
-                          value={attr.type}
-                          onChange={(e) => updateERAttribute(attr.id, { type: e.target.value })}
-                          className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                          placeholder="Type"
-                        />
-
-                        <div className="flex gap-4 text-xs">
-                          <label className="flex items-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={attr.isPrimary || false}
-                              onChange={(e) => updateERAttribute(attr.id, { isPrimary: e.target.checked })}
-                            />
-                            Primary Key
-                          </label>
-                          <label className="flex items-center gap-1">
-                            <input
-                              type="checkbox"
-                              checked={!attr.isNullable}
-                              onChange={(e) => updateERAttribute(attr.id, { isNullable: !e.target.checked })}
-                            />
-                            Required
-                          </label>
-                        </div>
-                      </div>
-                    ))}
-                    
-                    <button
-                      onClick={addERAttribute}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Attribute
-                    </button>
-                  </div>
-                )}
+                <div className="p-3 space-y-2">
+                  {selectedNode.data.entity.attributes.map((attr: ERAttribute) => (
+                    <div key={attr.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded border border-gray-200">
+                      <input
+                        type="text"
+                        value={attr.name}
+                        onChange={(e) => updateERAttribute(attr.id, { name: e.target.value })}
+                        className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                        placeholder="Attribute name"
+                      />
+                      <button
+                        onClick={() => deleteERAttribute(attr.id)}
+                        className="p-1 text-red-600 hover:bg-red-100 rounded transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  <button
+                    onClick={addERAttribute}
+                    className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors border border-dashed border-blue-300"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Attribute</span>
+                  </button>
+                </div>
               </div>
             )}
 
-            {/* UML Attributes and Methods Sections */}
-            {selectedNode.data.class && (
+            {/* UML Attributes Section */}
+            {isUMLNodeData(selectedNode.data) && selectedNode.data.class && (
               <>
                 <div className="border border-gray-200 rounded">
                   <button
@@ -387,139 +370,117 @@ export const DiagramProperties: React.FC = () => {
                     className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors"
                   >
                     <span className="font-medium text-sm text-gray-700">Attributes</span>
-                    {expandedSections.attributes ? (
-                      <ChevronDown className="w-4 h-4 text-gray-500" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-gray-500" />
-                    )}
+                    <ChevronDown className="w-4 h-4 text-gray-500" />
                   </button>
                   
-                  {expandedSections.attributes && (
-                    <div className="p-3 space-y-2">
-                      {selectedNode.data.class.attributes.map((attr) => (
-                        <div key={attr.id} className="border border-gray-200 rounded p-2 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={attr.visibility}
-                              onChange={(e) => updateUMLAttribute(attr.id, { 
-                                visibility: e.target.value as any 
-                              })}
-                              className="px-2 py-1 text-sm border border-gray-300 rounded"
-                            >
-                              <option value="public">+</option>
-                              <option value="private">-</option>
-                              <option value="protected">#</option>
-                              <option value="package">~</option>
-                            </select>
-                            <input
-                              type="text"
-                              value={attr.name}
-                              onChange={(e) => updateUMLAttribute(attr.id, { name: e.target.value })}
-                              className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
-                              placeholder="name"
-                            />
-                            <button
-                              onClick={() => deleteUMLAttribute(attr.id)}
-                              className="text-red-500 hover:text-red-700"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                          
+                  <div className="p-3 space-y-2">
+                    {selectedNode.data.class.attributes.map((attr: UMLAttribute) => (
+                      <div key={attr.id} className="space-y-2 p-2 bg-gray-50 rounded border border-gray-200">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={attr.visibility}
+                            onChange={(e) => updateUMLAttribute(attr.id, { visibility: e.target.value as any })}
+                            className="px-2 py-1 text-sm border border-gray-300 rounded"
+                          >
+                            <option value="public">+</option>
+                            <option value="private">-</option>
+                            <option value="protected">#</option>
+                            <option value="package">~</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={attr.name}
+                            onChange={(e) => updateUMLAttribute(attr.id, { name: e.target.value })}
+                            className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                            placeholder="name"
+                          />
                           <input
                             type="text"
                             value={attr.type}
                             onChange={(e) => updateUMLAttribute(attr.id, { type: e.target.value })}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                            placeholder="Type"
+                            className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                            placeholder="type"
                           />
+                          <button
+                            onClick={() => deleteUMLAttribute(attr.id)}
+                            className="p-1 text-red-600 hover:bg-red-100 rounded transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
-                      ))}
-                      
-                      <button
-                        onClick={addUMLAttribute}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add Attribute
-                      </button>
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                    
+                    <button
+                      onClick={addUMLAttribute}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors border border-dashed border-blue-300"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Attribute</span>
+                    </button>
+                  </div>
                 </div>
 
+                {/* Methods Section */}
                 <div className="border border-gray-200 rounded">
                   <button
                     onClick={() => toggleSection('methods')}
                     className="w-full flex items-center justify-between px-3 py-2 bg-gray-50 hover:bg-gray-100 transition-colors"
                   >
                     <span className="font-medium text-sm text-gray-700">Methods</span>
-                    {expandedSections.methods ? (
-                      <ChevronDown className="w-4 h-4 text-gray-500" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-gray-500" />
-                    )}
+                    <ChevronDown className="w-4 h-4 text-gray-500" />
                   </button>
                   
-                  {expandedSections.methods && (
-                    <div className="p-3 space-y-2">
-                      {selectedNode.data.class.methods.map((method) => (
-                        <div key={method.id} className="border border-gray-200 rounded p-2 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <select
-                              value={method.visibility}
-                              onChange={(e) => updateUMLMethod(method.id, { 
-                                visibility: e.target.value as any 
-                              })}
-                              className="px-2 py-1 text-sm border border-gray-300 rounded"
-                            >
-                              <option value="public">+</option>
-                              <option value="private">-</option>
-                              <option value="protected">#</option>
-                              <option value="package">~</option>
-                            </select>
-                            <input
-                              type="text"
-                              value={method.name}
-                              onChange={(e) => updateUMLMethod(method.id, { name: e.target.value })}
-                              className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
-                              placeholder="methodName"
-                            />
-                            <button
-                              onClick={() => deleteUMLMethod(method.id)}
-                              className="text-red-500 hover:text-red-700"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                          
+                  <div className="p-3 space-y-2">
+                    {selectedNode.data.class.methods.map((method: UMLMethod) => (
+                      <div key={method.id} className="space-y-2 p-2 bg-gray-50 rounded border border-gray-200">
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={method.visibility}
+                            onChange={(e) => updateUMLMethod(method.id, { visibility: e.target.value as any })}
+                            className="px-2 py-1 text-sm border border-gray-300 rounded"
+                          >
+                            <option value="public">+</option>
+                            <option value="private">-</option>
+                            <option value="protected">#</option>
+                            <option value="package">~</option>
+                          </select>
                           <input
                             type="text"
-                            value={method.returnType}
-                            onChange={(e) => updateUMLMethod(method.id, { returnType: e.target.value })}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
-                            placeholder="Return type"
+                            value={method.name}
+                            onChange={(e) => updateUMLMethod(method.id, { name: e.target.value })}
+                            className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                            placeholder="method name"
                           />
+                          <button
+                            onClick={() => deleteUMLMethod(method.id)}
+                            className="p-1 text-red-600 hover:bg-red-100 rounded transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
                         </div>
-                      ))}
-                      
-                      <button
-                        onClick={addUMLMethod}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 border border-blue-300 rounded hover:bg-blue-50 transition-colors"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add Method
-                      </button>
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                    
+                    <button
+                      onClick={addUMLMethod}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors border border-dashed border-blue-300"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Method</span>
+                    </button>
+                  </div>
                 </div>
               </>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === 'styles' && (
-          <div className="text-sm text-gray-500">
-            Styling options coming soon...
+          <div className="p-4 space-y-4">
+            <div className="text-sm text-gray-500 text-center py-8">
+              Style options coming soon...
+            </div>
           </div>
         )}
       </div>

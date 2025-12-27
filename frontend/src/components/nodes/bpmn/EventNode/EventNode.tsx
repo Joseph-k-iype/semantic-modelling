@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { NodeProps } from 'reactflow';
 import { BaseNode } from '../../base/BaseNode';
 import { BPMNNodeData } from '../../../../types/diagram.types';
