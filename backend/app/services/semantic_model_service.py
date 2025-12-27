@@ -1,6 +1,6 @@
 # backend/app/services/semantic_model_service.py
 """
-Semantic Model Service
+Semantic Model Service - FIXED with better error handling and logging
 Manages the semantic graph layer and syncs with diagram data
 """
 from typing import Any, Dict, List, Optional
@@ -9,6 +9,7 @@ from app.graph.client import get_graph_client
 from app.models.model import Model
 from app.models.diagram import Diagram
 import structlog
+import traceback
 
 logger = structlog.get_logger()
 
@@ -17,11 +18,19 @@ class SemanticModelService:
     """Service for managing semantic models in FalkorDB"""
     
     def __init__(self):
-        self.graph_client = get_graph_client()
+        try:
+            self.graph_client = get_graph_client()
+            logger.info("Semantic model service initialized")
+        except Exception as e:
+            logger.error("Failed to initialize graph client", error=str(e))
+            self.graph_client = None
     
     def _get_graph_name(self, user_id: str, model_id: str) -> str:
         """Generate unique graph name for user and model"""
-        return f"user_{user_id}_model_{model_id}"
+        # Sanitize IDs to be valid graph names
+        safe_user_id = user_id.replace("-", "_")
+        safe_model_id = model_id.replace("-", "_")
+        return f"user_{safe_user_id}_model_{safe_model_id}"
     
     async def sync_diagram_to_graph(
         self,
@@ -44,56 +53,91 @@ class SemanticModelService:
         Returns:
             Sync result with statistics
         """
-        # Get diagram and model
-        from app.repositories.diagram_repository import DiagramRepository
-        diagram_repo = DiagramRepository(db)
-        diagram = await diagram_repo.get(diagram_id)
-        
-        if not diagram:
-            raise ValueError(f"Diagram {diagram_id} not found")
-        
-        graph_name = self._get_graph_name(user_id, diagram.model_id)
-        
         stats = {
             "concepts_created": 0,
             "concepts_updated": 0,
             "relationships_created": 0,
-            "errors": []
+            "errors": [],
+            "falkordb_available": False
         }
         
-        # Process nodes -> concepts
-        for node in nodes:
-            try:
-                await self._sync_node_to_concept(graph_name, node, diagram.type)
-                if node.get("_isNew"):
-                    stats["concepts_created"] += 1
-                else:
-                    stats["concepts_updated"] += 1
-            except Exception as e:
-                logger.error("Failed to sync node", node_id=node.get("id"), error=str(e))
-                stats["errors"].append({
-                    "node_id": node.get("id"),
-                    "error": str(e)
-                })
+        # Check if graph client is available
+        if not self.graph_client:
+            logger.warning("FalkorDB client not available, skipping graph sync")
+            stats["errors"].append("FalkorDB client not initialized")
+            return stats
         
-        # Process edges -> relationships
-        for edge in edges:
-            try:
-                await self._sync_edge_to_relationship(graph_name, edge, diagram.type)
-                stats["relationships_created"] += 1
-            except Exception as e:
-                logger.error("Failed to sync edge", edge_id=edge.get("id"), error=str(e))
-                stats["errors"].append({
-                    "edge_id": edge.get("id"),
-                    "error": str(e)
-                })
-        
-        logger.info(
-            "Diagram synced to graph",
-            diagram_id=diagram_id,
-            graph_name=graph_name,
-            stats=stats
-        )
+        try:
+            # Get diagram and model
+            from app.repositories.diagram_repository import DiagramRepository
+            diagram_repo = DiagramRepository(db)
+            diagram = await diagram_repo.get(diagram_id)
+            
+            if not diagram:
+                error_msg = f"Diagram {diagram_id} not found"
+                logger.error(error_msg)
+                stats["errors"].append(error_msg)
+                return stats
+            
+            graph_name = self._get_graph_name(user_id, diagram.model_id)
+            logger.info(
+                "Syncing diagram to graph",
+                diagram_id=diagram_id,
+                graph_name=graph_name,
+                node_count=len(nodes),
+                edge_count=len(edges)
+            )
+            
+            stats["falkordb_available"] = True
+            
+            # Process nodes -> concepts
+            for idx, node in enumerate(nodes):
+                try:
+                    node_id = node.get("id")
+                    if not node_id:
+                        logger.warning(f"Node {idx} missing ID, skipping")
+                        continue
+                    
+                    await self._sync_node_to_concept(graph_name, node, diagram.type)
+                    
+                    if node.get("_isNew"):
+                        stats["concepts_created"] += 1
+                    else:
+                        stats["concepts_updated"] += 1
+                        
+                except Exception as e:
+                    error_msg = f"Failed to sync node {node.get('id', idx)}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    stats["errors"].append(error_msg)
+            
+            # Process edges -> relationships
+            for idx, edge in enumerate(edges):
+                try:
+                    edge_id = edge.get("id")
+                    if not edge_id:
+                        logger.warning(f"Edge {idx} missing ID, skipping")
+                        continue
+                    
+                    await self._sync_edge_to_relationship(graph_name, edge, diagram.type)
+                    stats["relationships_created"] += 1
+                    
+                except Exception as e:
+                    error_msg = f"Failed to sync edge {edge.get('id', idx)}: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                    stats["errors"].append(error_msg)
+            
+            logger.info(
+                "Diagram synced to graph successfully",
+                diagram_id=diagram_id,
+                graph_name=graph_name,
+                stats=stats
+            )
+            
+        except Exception as e:
+            error_msg = f"Failed to sync diagram to graph: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            stats["errors"].append(error_msg)
+            stats["falkordb_available"] = False
         
         return stats
     
@@ -104,6 +148,9 @@ class SemanticModelService:
         diagram_type: str
     ) -> None:
         """Sync a diagram node to a semantic concept"""
+        if not self.graph_client:
+            return
+        
         node_id = node.get("id")
         node_type = node.get("type")
         node_data = node.get("data", {})
@@ -114,26 +161,33 @@ class SemanticModelService:
         # Extract properties based on node type
         properties = self._extract_node_properties(node_type, node_data)
         properties["diagram_type"] = diagram_type
+        properties["node_type"] = node_type
         properties["position"] = node.get("position", {})
         
-        # Check if concept exists
-        existing = self.graph_client.execute_query(
-            graph_name,
-            "MATCH (c:Concept {id: $id}) RETURN c",
-            {"id": node_id}
-        )
-        
-        if existing:
-            # Update existing concept
-            self.graph_client.update_concept(graph_name, node_id, properties)
-        else:
-            # Create new concept
-            self.graph_client.create_concept(
+        try:
+            # Check if concept exists
+            existing = self.graph_client.execute_query(
                 graph_name,
-                node_id,
-                concept_type,
-                properties
+                "MATCH (c:Concept {id: $id}) RETURN c",
+                {"id": node_id}
             )
+            
+            if existing and len(existing) > 0:
+                # Update existing concept
+                logger.debug(f"Updating existing concept: {node_id}")
+                self.graph_client.update_concept(graph_name, node_id, properties)
+            else:
+                # Create new concept
+                logger.debug(f"Creating new concept: {node_id} type: {concept_type}")
+                self.graph_client.create_concept(
+                    graph_name,
+                    node_id,
+                    concept_type,
+                    properties
+                )
+        except Exception as e:
+            logger.error(f"Failed to sync node {node_id} to concept", error=str(e))
+            raise
     
     async def _sync_edge_to_relationship(
         self,
@@ -142,16 +196,24 @@ class SemanticModelService:
         diagram_type: str
     ) -> None:
         """Sync a diagram edge to a semantic relationship"""
+        if not self.graph_client:
+            return
+        
         source_id = edge.get("source")
         target_id = edge.get("target")
         edge_type = edge.get("type", "RELATES_TO")
         edge_data = edge.get("data", {})
         
+        if not source_id or not target_id:
+            logger.warning(f"Edge {edge.get('id')} missing source or target")
+            return
+        
         # Extract relationship properties
         properties = {
             "id": edge.get("id"),
             "label": edge_data.get("label", ""),
-            "diagram_type": diagram_type
+            "diagram_type": diagram_type,
+            "edge_type": edge_type
         }
         
         # Add type-specific properties
@@ -162,15 +224,21 @@ class SemanticModelService:
         elif diagram_type == "BPMN":
             properties["condition"] = edge_data.get("condition", "")
         
-        # Create relationship
-        relationship_type = self._get_relationship_type(diagram_type, edge_type)
-        self.graph_client.create_relationship(
-            graph_name,
-            source_id,
-            target_id,
-            relationship_type,
-            properties
-        )
+        try:
+            # Create relationship
+            relationship_type = self._get_relationship_type(diagram_type, edge_type)
+            logger.debug(f"Creating relationship: {source_id} -> {target_id} [{relationship_type}]")
+            
+            self.graph_client.create_relationship(
+                graph_name,
+                source_id,
+                target_id,
+                relationship_type,
+                properties
+            )
+        except Exception as e:
+            logger.error(f"Failed to create relationship {source_id} -> {target_id}", error=str(e))
+            raise
     
     def _get_concept_type(self, diagram_type: str, node_type: str) -> str:
         """Determine semantic concept type from diagram node type"""
@@ -204,7 +272,6 @@ class SemanticModelService:
     
     def _get_relationship_type(self, diagram_type: str, edge_type: str) -> str:
         """Determine semantic relationship type from diagram edge type"""
-        # Map edge types to semantic relationships
         type_map = {
             "ER_RELATIONSHIP": "HAS_RELATIONSHIP",
             "ER_ATTRIBUTE_LINK": "HAS_ATTRIBUTE",
@@ -238,8 +305,9 @@ class SemanticModelService:
         if "entity" in node_data and node_data["entity"]:
             entity = node_data["entity"]
             properties["name"] = entity.get("name", "")
-            properties["attributes"] = entity.get("attributes", [])
             properties["is_weak"] = entity.get("isWeak", False)
+            # Store attributes as JSON string
+            properties["attributes_count"] = len(entity.get("attributes", []))
         
         # UML Class
         elif "class" in node_data and node_data["class"]:
@@ -247,8 +315,8 @@ class SemanticModelService:
             properties["name"] = uml_class.get("name", "")
             properties["is_abstract"] = uml_class.get("isAbstract", False)
             properties["stereotype"] = node_data.get("stereotype", "")
-            properties["attributes"] = uml_class.get("attributes", [])
-            properties["methods"] = uml_class.get("methods", [])
+            properties["attributes_count"] = len(uml_class.get("attributes", []))
+            properties["methods_count"] = len(uml_class.get("methods", []))
         
         # BPMN Task
         elif "task" in node_data and node_data["task"]:
@@ -256,26 +324,18 @@ class SemanticModelService:
             properties["name"] = task.get("name", "")
             properties["task_type"] = task.get("type", "task")
             properties["assignee"] = task.get("assignee", "")
-            properties["documentation"] = task.get("documentation", "")
         
         # BPMN Event
         elif "event" in node_data and node_data["event"]:
             event = node_data["event"]
             properties["name"] = event.get("name", "")
-            properties["event_type"] = event.get("eventType", "")
-            properties["event_definition"] = event.get("eventDefinition", "")
+            properties["event_type"] = event.get("type", "start")
         
         # BPMN Gateway
         elif "gateway" in node_data and node_data["gateway"]:
             gateway = node_data["gateway"]
             properties["name"] = gateway.get("name", "")
-            properties["gateway_type"] = gateway.get("gatewayType", "")
-        
-        # BPMN Pool/Lane
-        elif "pool" in node_data and node_data["pool"]:
-            pool = node_data["pool"]
-            properties["name"] = pool.get("name", "")
-            properties["lanes"] = pool.get("lanes", [])
+            properties["gateway_type"] = gateway.get("type", "exclusive")
         
         return properties
     
@@ -283,40 +343,75 @@ class SemanticModelService:
         self,
         user_id: str,
         model_id: str,
-        concept_id: str,
-        direction: str = "both",
-        depth: int = 3
+        node_id: str,
+        direction: str = "both"
     ) -> List[Dict[str, Any]]:
-        """Get lineage for a concept"""
+        """Get lineage for a node"""
+        if not self.graph_client:
+            logger.warning("FalkorDB client not available")
+            return []
+        
         graph_name = self._get_graph_name(user_id, model_id)
-        return self.graph_client.get_lineage(graph_name, concept_id, direction, depth)
+        
+        # Build query based on direction
+        if direction == "upstream":
+            query = """
+            MATCH path = (start:Concept {id: $node_id})<-[*]-(upstream)
+            RETURN upstream, relationships(path) as rels
+            """
+        elif direction == "downstream":
+            query = """
+            MATCH path = (start:Concept {id: $node_id})-[*]->(downstream)
+            RETURN downstream, relationships(path) as rels
+            """
+        else:  # both
+            query = """
+            MATCH path = (start:Concept {id: $node_id})-[*]-(related)
+            RETURN related, relationships(path) as rels
+            """
+        
+        try:
+            results = self.graph_client.execute_query(
+                graph_name,
+                query,
+                {"node_id": node_id}
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Failed to get lineage for node {node_id}", error=str(e))
+            return []
     
     async def get_impact_analysis(
         self,
         user_id: str,
         model_id: str,
-        concept_id: str
+        node_id: str
     ) -> Dict[str, Any]:
-        """Get impact analysis for a concept"""
+        """Get impact analysis for a node"""
+        if not self.graph_client:
+            logger.warning("FalkorDB client not available")
+            return {"affected_concepts": [], "severity": "unknown"}
+        
         graph_name = self._get_graph_name(user_id, model_id)
-        return self.graph_client.get_impact_analysis(graph_name, concept_id)
-    
-    async def delete_model_graph(
-        self,
-        user_id: str,
-        model_id: str
-    ) -> bool:
-        """Delete entire graph for a model"""
-        graph_name = self._get_graph_name(user_id, model_id)
-        return self.graph_client.delete_graph(graph_name)
-    
-    async def query_semantic_model(
-        self,
-        user_id: str,
-        model_id: str,
-        cypher_query: str,
-        params: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Execute custom Cypher query on semantic model"""
-        graph_name = self._get_graph_name(user_id, model_id)
-        return self.graph_client.execute_query(graph_name, cypher_query, params)
+        
+        try:
+            # Get all dependent nodes
+            query = """
+            MATCH (start:Concept {id: $node_id})-[*]->(dependent)
+            RETURN dependent, count(*) as depth
+            ORDER BY depth
+            """
+            
+            results = self.graph_client.execute_query(
+                graph_name,
+                query,
+                {"node_id": node_id}
+            )
+            
+            return {
+                "affected_concepts": results,
+                "severity": "high" if len(results) > 10 else "medium" if len(results) > 0 else "low"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get impact analysis for node {node_id}", error=str(e))
+            return {"affected_concepts": [], "severity": "unknown", "error": str(e)}
