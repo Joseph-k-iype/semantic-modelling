@@ -120,7 +120,7 @@ export function createEdge(
 }
 
 // Helper to get default node data based on type
-export function getDefaultNodeData(type: string): any {
+export function getDefaultNodeData(type: string, _position?: { x: number; y: number }): any {
   if (type.startsWith('ER_') || type === 'entityNode') {
     return {
       label: 'Entity',

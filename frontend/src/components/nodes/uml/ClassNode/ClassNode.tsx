@@ -2,7 +2,7 @@
 
 import React, { memo, useState, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { Plus, Trash2, Lock, Eye, EyeOff, X, Check } from 'lucide-react';
+import { Plus, Trash2, X, Check } from 'lucide-react';
 
 export type Visibility = 'public' | 'private' | 'protected' | 'package';
 

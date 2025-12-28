@@ -20,8 +20,6 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = memo(({
   sourceY,
   targetX,
   targetY,
-  sourcePosition,
-  targetPosition,
   data,
   selected
 }) => {

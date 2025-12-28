@@ -1,7 +1,7 @@
 // frontend/src/pages/HomePage/HomePage.tsx
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Database, Package, Activity, Plus, Folder, Users, LogIn } from 'lucide-react';
+import { Database, Package, Activity, Folder, Users, LogIn } from 'lucide-react';
 import clsx from 'clsx';
 
 interface DiagramType {
