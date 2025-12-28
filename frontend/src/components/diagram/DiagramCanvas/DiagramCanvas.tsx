@@ -1,207 +1,608 @@
 // frontend/src/components/diagram/DiagramCanvas/DiagramCanvas.tsx
-import { useCallback, useRef, useEffect } from 'react';
+
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  ReactFlowProvider,
-  BackgroundVariant,
+  Node,
+  Edge,
+  Connection,
+  addEdge,
+  useNodesState,
+  useEdgesState,
   Panel,
-  useReactFlow,
-  SelectionMode,
+  NodeTypes,
+  EdgeTypes,
+  MarkerType
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-import { useDiagramStore } from '../../../store/diagramStore';
-import { nodeTypes, edgeTypes } from '../../../features/diagram-engine/NodeFactory';
-import { DiagramToolbar } from '../DiagramToolbar';
-import { DiagramProperties } from '../DiagramProperties';
-import { Save, AlertCircle } from 'lucide-react';
+// Import node components
+import EntityNode from '../../nodes/er/EntityNode/EntityNode';
+import ClassNode from '../../nodes/uml/ClassNode/ClassNode';
+import LifelineNode from '../../nodes/uml/LifelineNode/LifelineNode';
+import TaskNode from '../../nodes/bpmn/TaskNode/TaskNode';
+import EventNode from '../../nodes/bpmn/EventNode/EventNode';
+import GatewayNode from '../../nodes/bpmn/GatewayNode/GatewayNode';
+import PoolNode from '../../nodes/bpmn/PoolNode/PoolNode';
 
-const DiagramCanvasContent: React.FC = () => {
-  const reactFlowInstance = useReactFlow();
-  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+// Import edge components
+import RelationshipEdge from '../../edges/er/RelationshipEdge/RelationshipEdge';
+import AssociationEdge from '../../edges/uml/AssociationEdge/AssociationEdge';
+import MessageEdge from '../../edges/uml/MessageEdge/MessageEdge';
+import SequenceFlowEdge from '../../edges/bpmn/SequenceFlowEdge/SequenceFlowEdge';
 
-  // Store state and actions
-  const {
-    nodes,
-    edges,
-    diagramName,
-    isDirty,
-    isSaving,
-    error,
-    onNodesChange,
-    onEdgesChange,
-    addEdge: storeAddEdge,
-    addNode,
-    setViewport,
-    saveDiagram,
-    diagramType,
-  } = useDiagramStore();
+interface DiagramCanvasProps {
+  modelId: string;
+  diagramId: string;
+  notation: 'er' | 'uml-class' | 'uml-sequence' | 'bpmn' | 'uml-interaction';
+}
 
-  // Handle connection between nodes
-  const onConnect = useCallback(
-    (connection: any) => {
-      storeAddEdge(connection);
-    },
-    [storeAddEdge]
-  );
+const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notation }) => {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string; edgeId?: string } | null>(null);
 
-  // Handle drop from palette
-  const onDrop = useCallback(
-    (event: React.DragEvent) => {
-      event.preventDefault();
+  // Define node types
+  const nodeTypes: NodeTypes = useMemo(() => ({
+    entityNode: EntityNode,
+    classNode: ClassNode,
+    lifelineNode: LifelineNode,
+    taskNode: TaskNode,
+    eventNode: EventNode,
+    gatewayNode: GatewayNode,
+    poolNode: PoolNode
+  }), []);
 
-      const type = event.dataTransfer.getData('application/reactflow');
-      if (!type || !reactFlowWrapper.current) return;
+  // Define edge types
+  const edgeTypes: EdgeTypes = useMemo(() => ({
+    relationshipEdge: RelationshipEdge,
+    associationEdge: AssociationEdge,
+    messageEdge: MessageEdge,
+    sequenceFlowEdge: SequenceFlowEdge
+  }), []);
 
-      const reactFlowBounds = reactFlowWrapper.current.getBoundingClientRect();
-      const position = reactFlowInstance.project({
-        x: event.clientX - reactFlowBounds.left,
-        y: event.clientY - reactFlowBounds.top,
-      });
+  // Setup global update functions for nodes and edges
+  useEffect(() => {
+    (window as any).updateNodeData = (nodeId: string, newData: any) => {
+      setNodes(nds => nds.map(node => {
+        if (node.id === nodeId) {
+          const updatedNode = { ...node, data: { ...node.data, ...newData } };
+          syncNodeToGraph(updatedNode);
+          return updatedNode;
+        }
+        return node;
+      }));
+    };
 
-      addNode(type, position);
-    },
-    [reactFlowInstance, addNode]
-  );
+    (window as any).updateEdgeData = (edgeId: string, newData: any) => {
+      setEdges(eds => eds.map(edge => {
+        if (edge.id === edgeId) {
+          const updatedEdge = { ...edge, data: { ...edge.data, ...newData } };
+          syncEdgeToGraph(updatedEdge);
+          return updatedEdge;
+        }
+        return edge;
+      }));
+    };
 
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
+    return () => {
+      delete (window as any).updateNodeData;
+      delete (window as any).updateEdgeData;
+    };
   }, []);
 
-  // Handle keyboard shortcuts
+  // Sync node to graph database
+  const syncNodeToGraph = async (node: Node) => {
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/nodes/${node.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          type: node.type,
+          position: node.position,
+          data: node.data,
+          notation
+        })
+      });
+    } catch (error) {
+      console.error('Failed to sync node to graph:', error);
+    }
+  };
+
+  // Sync edge to graph database
+  const syncEdgeToGraph = async (edge: Edge) => {
+    try {
+      await fetch(`${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/edges/${edge.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          source: edge.source,
+          target: edge.target,
+          type: edge.type,
+          data: edge.data,
+          notation
+        })
+      });
+    } catch (error) {
+      console.error('Failed to sync edge to graph:', error);
+    }
+  };
+
+  // Handle connection
+  const onConnect = useCallback((params: Connection) => {
+    // Determine edge type based on notation
+    let edgeType = 'default';
+    let edgeData: any = {};
+    
+    if (notation === 'er') {
+      edgeType = 'relationshipEdge';
+      edgeData = {
+        label: '',
+        sourceCardinality: '1',
+        targetCardinality: 'N'
+      };
+    } else if (notation === 'uml-class' || notation === 'uml-interaction') {
+      edgeType = 'associationEdge';
+      edgeData = {
+        label: '',
+        associationType: 'association',
+        sourceMultiplicity: '1',
+        targetMultiplicity: '1'
+      };
+    } else if (notation === 'uml-sequence') {
+      edgeType = 'messageEdge';
+      edgeData = {
+        label: 'message()',
+        messageType: 'synchronous'
+      };
+    } else if (notation === 'bpmn') {
+      edgeType = 'sequenceFlowEdge';
+      edgeData = {
+        label: '',
+        flowType: 'sequence',
+        sequenceFlowType: 'normal'
+      };
+    }
+    
+    const newEdge = {
+      ...params,
+      id: `edge-${Date.now()}`,
+      type: edgeType,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+      },
+      data: edgeData
+    };
+    
+    setEdges((eds) => {
+      const updatedEdges = addEdge(newEdge, eds);
+      syncEdgeToGraph(newEdge as Edge);
+      return updatedEdges;
+    });
+  }, [notation, modelId, diagramId]);
+
+  // Handle node selection
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+    setSelectedNode(node);
+    setSelectedEdge(null);
+  }, []);
+
+  // Handle edge selection
+  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+    setSelectedEdge(edge);
+    setSelectedNode(null);
+  }, []);
+
+  // Handle context menu
+  const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      nodeId: node.id
+    });
+  }, []);
+
+  const onEdgeContextMenu = useCallback((event: React.MouseEvent, edge: Edge) => {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      edgeId: edge.id
+    });
+  }, []);
+
+  // Bring to front
+  const bringToFront = useCallback((nodeId?: string, edgeId?: string) => {
+    if (nodeId) {
+      const maxZ = Math.max(...nodes.map(n => n.data?.zIndex || 1), 0);
+      setNodes(nds => nds.map(node => {
+        if (node.id === nodeId) {
+          const updatedNode = { 
+            ...node, 
+            data: { ...node.data, zIndex: maxZ + 1 } 
+          };
+          syncNodeToGraph(updatedNode);
+          return updatedNode;
+        }
+        return node;
+      }));
+    } else if (edgeId) {
+      const maxZ = Math.max(...edges.map(e => e.data?.zIndex || 1), 0);
+      setEdges(eds => eds.map(edge => {
+        if (edge.id === edgeId) {
+          const updatedEdge = { 
+            ...edge, 
+            data: { ...edge.data, zIndex: maxZ + 1 } 
+          };
+          syncEdgeToGraph(updatedEdge);
+          return updatedEdge;
+        }
+        return edge;
+      }));
+    }
+    setContextMenu(null);
+  }, [nodes, edges]);
+
+  // Send to back
+  const sendToBack = useCallback((nodeId?: string, edgeId?: string) => {
+    if (nodeId) {
+      const minZ = Math.min(...nodes.map(n => n.data?.zIndex || 1), 1);
+      setNodes(nds => nds.map(node => {
+        if (node.id === nodeId) {
+          const updatedNode = { 
+            ...node, 
+            data: { ...node.data, zIndex: minZ - 1 } 
+          };
+          syncNodeToGraph(updatedNode);
+          return updatedNode;
+        }
+        return node;
+      }));
+    } else if (edgeId) {
+      const minZ = Math.min(...edges.map(e => e.data?.zIndex || 1), 1);
+      setEdges(eds => eds.map(edge => {
+        if (edge.id === edgeId) {
+          const updatedEdge = { 
+            ...edge, 
+            data: { ...edge.data, zIndex: minZ - 1 } 
+          };
+          syncEdgeToGraph(updatedEdge);
+          return updatedEdge;
+        }
+        return edge;
+      }));
+    }
+    setContextMenu(null);
+  }, [nodes, edges]);
+
+  // Add new node based on notation
+  const addNode = useCallback((type: string) => {
+    const newNode: Node = {
+      id: `node-${Date.now()}`,
+      type,
+      position: { x: 250, y: 250 },
+      data: getDefaultNodeData(type, notation)
+    };
+    
+    setNodes(nds => {
+      syncNodeToGraph(newNode);
+      return [...nds, newNode];
+    });
+  }, [notation, modelId, diagramId]);
+
+  // Get default node data based on type and notation
+  const getDefaultNodeData = (type: string, notation: string) => {
+    switch (type) {
+      case 'entityNode':
+        return {
+          label: 'Entity',
+          attributes: [],
+          isWeak: false,
+          color: '#ffffff',
+          textColor: '#000000'
+        };
+      case 'classNode':
+        return {
+          label: 'Class',
+          classType: 'class',
+          attributes: [],
+          methods: [],
+          color: '#ffffff',
+          textColor: '#000000'
+        };
+      case 'lifelineNode':
+        return {
+          label: 'Object',
+          type: 'object',
+          activations: [],
+          lineHeight: 400,
+          color: '#ffffff',
+          textColor: '#000000'
+        };
+      case 'taskNode':
+        return {
+          label: 'Task',
+          taskType: 'task',
+          color: '#ffffff',
+          textColor: '#000000'
+        };
+      case 'eventNode':
+        return {
+          label: 'Start Event',
+          eventType: 'start',
+          trigger: 'none',
+          color: '#ffffff',
+          textColor: '#000000'
+        };
+      case 'gatewayNode':
+        return {
+          label: 'Gateway',
+          gatewayType: 'exclusive',
+          color: '#ffffcc',
+          textColor: '#000000'
+        };
+      case 'poolNode':
+        return {
+          label: 'Pool',
+          lanes: [{ id: 'lane-1', name: 'Lane 1', height: 150 }],
+          isHorizontal: true,
+          color: '#f0f0f0',
+          textColor: '#000000'
+        };
+      default:
+        return {};
+    }
+  };
+
+  // Update node color
+  const updateNodeColor = useCallback((color: string) => {
+    if (selectedNode) {
+      setNodes(nds => nds.map(node => {
+        if (node.id === selectedNode.id) {
+          const updatedNode = {
+            ...node,
+            data: { ...node.data, color }
+          };
+          syncNodeToGraph(updatedNode);
+          return updatedNode;
+        }
+        return node;
+      }));
+    }
+  }, [selectedNode]);
+
+  // Update edge color
+  const updateEdgeColor = useCallback((color: string) => {
+    if (selectedEdge) {
+      setEdges(eds => eds.map(edge => {
+        if (edge.id === selectedEdge.id) {
+          const updatedEdge = {
+            ...edge,
+            data: { ...edge.data, color }
+          };
+          syncEdgeToGraph(updatedEdge);
+          return updatedEdge;
+        }
+        return edge;
+      }));
+    }
+  }, [selectedEdge]);
+
+  // Load diagram data
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      // Save: Ctrl/Cmd + S
-      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-        event.preventDefault();
-        saveDiagram();
+    const loadDiagram = async () => {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            }
+          }
+        );
+        const data = await response.json();
+        setNodes(data.nodes || []);
+        setEdges(data.edges || []);
+      } catch (error) {
+        console.error('Failed to load diagram:', error);
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [saveDiagram]);
-
-  // Sync viewport changes
-  const onMove = useCallback(() => {
-    const viewport = reactFlowInstance.getViewport();
-    setViewport(viewport);
-  }, [reactFlowInstance, setViewport]);
+    loadDiagram();
+  }, [modelId, diagramId]);
 
   return (
-    <div className="w-full h-full flex flex-col">
-      {/* Top Bar */}
-      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200">
-        <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-800">{diagramName}</h2>
-          {isDirty && (
-            <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
-              Unsaved changes
-            </span>
-          )}
-        </div>
+    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        fitView
+      >
+        <Background />
+        <Controls />
+        <MiniMap />
 
-        <div className="flex items-center gap-2">
-          {error && (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 px-3 py-1 rounded">
-              <AlertCircle className="w-4 h-4" />
-              <span>{error}</span>
+        {/* Toolbar Panel */}
+        <Panel position="top-left">
+          <div style={{ 
+            background: 'white', 
+            padding: '12px', 
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            display: 'flex',
+            gap: '8px',
+            flexWrap: 'wrap'
+          }}>
+            {notation === 'er' && (
+              <>
+                <button onClick={() => addNode('entityNode')}>+ Entity</button>
+                <button onClick={() => addNode('entityNode')} 
+                  onDoubleClick={() => {
+                    const node = addNode('entityNode');
+                    // Mark as weak entity
+                  }}>
+                  + Weak Entity
+                </button>
+              </>
+            )}
+            {notation === 'uml-class' && (
+              <>
+                <button onClick={() => addNode('classNode')}>+ Class</button>
+              </>
+            )}
+            {notation === 'uml-sequence' && (
+              <>
+                <button onClick={() => addNode('lifelineNode')}>+ Lifeline</button>
+              </>
+            )}
+            {notation === 'bpmn' && (
+              <>
+                <button onClick={() => addNode('taskNode')}>+ Task</button>
+                <button onClick={() => addNode('eventNode')}>+ Event</button>
+                <button onClick={() => addNode('gatewayNode')}>+ Gateway</button>
+                <button onClick={() => addNode('poolNode')}>+ Pool</button>
+              </>
+            )}
+          </div>
+        </Panel>
+
+        {/* Properties Panel */}
+        {(selectedNode || selectedEdge) && (
+          <Panel position="top-right">
+            <div style={{ 
+              background: 'white', 
+              padding: '16px', 
+              borderRadius: '8px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+              minWidth: '200px'
+            }}>
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>
+                {selectedNode ? 'Node Properties' : 'Edge Properties'}
+              </h3>
+              
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>
+                  Color:
+                </label>
+                <input
+                  type="color"
+                  value={selectedNode?.data?.color || selectedEdge?.data?.color || '#ffffff'}
+                  onChange={(e) => selectedNode ? updateNodeColor(e.target.value) : updateEdgeColor(e.target.value)}
+                  style={{ width: '100%', height: '32px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>
+                  Text Color:
+                </label>
+                <input
+                  type="color"
+                  value={selectedNode?.data?.textColor || '#000000'}
+                  onChange={(e) => {
+                    if (selectedNode) {
+                      setNodes(nds => nds.map(node => {
+                        if (node.id === selectedNode.id) {
+                          const updatedNode = {
+                            ...node,
+                            data: { ...node.data, textColor: e.target.value }
+                          };
+                          syncNodeToGraph(updatedNode);
+                          return updatedNode;
+                        }
+                        return node;
+                      }));
+                    }
+                  }}
+                  style={{ width: '100%', height: '32px' }}
+                />
+              </div>
             </div>
-          )}
-          
+          </Panel>
+        )}
+      </ReactFlow>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          style={{
+            position: 'fixed',
+            top: contextMenu.y,
+            left: contextMenu.x,
+            background: 'white',
+            border: '1px solid #ccc',
+            borderRadius: '4px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            zIndex: 1000
+          }}
+        >
           <button
-            onClick={() => saveDiagram()}
-            disabled={isSaving || !isDirty}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Save className="w-4 h-4" />
-            <span>{isSaving ? 'Saving...' : 'Save'}</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main content */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Toolbar */}
-        <DiagramToolbar />
-
-        {/* Canvas */}
-        <div ref={reactFlowWrapper} className="flex-1 relative">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            onMove={onMove}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            fitView
-            attributionPosition="bottom-left"
-            selectionMode={SelectionMode.Partial}
-            multiSelectionKeyCode="Shift"
-            deleteKeyCode="Delete"
-            selectNodesOnDrag={false}
-            snapToGrid
-            snapGrid={[15, 15]}
-            defaultEdgeOptions={{
-              type: 'default',
-              animated: false,
+            onClick={() => bringToFront(contextMenu.nodeId, contextMenu.edgeId)}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 16px',
+              border: 'none',
+              background: 'none',
+              textAlign: 'left',
+              cursor: 'pointer'
             }}
           >
-            <Background 
-              variant={BackgroundVariant.Dots} 
-              gap={15} 
-              size={1}
-              color="#e5e7eb"
-            />
-            <Controls 
-              showZoom
-              showFitView
-              showInteractive
-              position="bottom-right"
-            />
-            <MiniMap 
-              nodeColor={(node) => {
-                if (node.type?.includes('ER')) return '#3b82f6';
-                if (node.type?.includes('UML')) return '#8b5cf6';
-                if (node.type?.includes('BPMN')) return '#10b981';
-                return '#6b7280';
-              }}
-              maskColor="rgba(0, 0, 0, 0.1)"
-              position="bottom-left"
-              style={{
-                backgroundColor: '#ffffff',
-                border: '1px solid #e5e7eb',
-                borderRadius: '4px',
-              }}
-            />
-            
-            {/* Custom panels */}
-            <Panel position="top-center">
-              <div className="bg-white border border-gray-200 rounded shadow-sm px-3 py-2 text-sm text-gray-600">
-                {diagramType}
-              </div>
-            </Panel>
-          </ReactFlow>
+            Bring to Front
+          </button>
+          <button
+            onClick={() => sendToBack(contextMenu.nodeId, contextMenu.edgeId)}
+            style={{
+              display: 'block',
+              width: '100%',
+              padding: '8px 16px',
+              border: 'none',
+              background: 'none',
+              textAlign: 'left',
+              cursor: 'pointer'
+            }}
+          >
+            Send to Back
+          </button>
         </div>
+      )}
 
-        {/* Properties panel */}
-        <DiagramProperties />
-      </div>
+      {/* Click outside to close context menu */}
+      {contextMenu && (
+        <div
+          onClick={() => setContextMenu(null)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 999
+          }}
+        />
+      )}
     </div>
   );
 };
 
-export const DiagramCanvas: React.FC = () => {
-  return (
-    <ReactFlowProvider>
-      <DiagramCanvasContent />
-    </ReactFlowProvider>
-  );
-};
+export default DiagramCanvas;

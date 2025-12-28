@@ -90,6 +90,8 @@ export interface ERAttribute {
   isUnique?: boolean;
   isNullable?: boolean;
   defaultValue?: string;
+  isPrimaryKey?: boolean;
+  isForeignKey?: boolean;
 }
 
 export interface EREntity {
@@ -105,6 +107,12 @@ export interface ERRelationship {
   cardinality: '1:1' | '1:N' | 'N:1' | 'N:M';
   sourceEntity: string;
   targetEntity: string;
+  sourceCardinality?: string;  // '1', 'N', '0..1', '1..N', '0..N', 'M'
+  targetCardinality?: string;  // '1', 'N', '0..1', '1..N', '0..N', 'M'
+  isIdentifying?: boolean;
+  color?: string;
+  strokeWidth?: number;
+  zIndex?: number;
 }
 
 // UML Class Diagram Specific
@@ -180,12 +188,18 @@ export interface BaseNodeData {
 export interface ERNodeData extends BaseNodeData {
   entity?: EREntity;
   attribute?: ERAttribute;
+  color?: string;
+  textColor?: string;
+  zIndex?: number;
 }
 
 export interface UMLNodeData extends BaseNodeData {
   class?: UMLClass;
   stereotype?: string;
   isAbstract?: boolean;
+  color?: string;
+  textColor?: string;
+  zIndex?: number;
 }
 
 export interface BPMNNodeData extends BaseNodeData {
@@ -194,6 +208,9 @@ export interface BPMNNodeData extends BaseNodeData {
   gateway?: BPMNGateway;
   pool?: BPMNPool;
   lane?: BPMNLane;
+  color?: string;
+  textColor?: string;
+  zIndex?: number;
 }
 
 // Diagram Node and Edge Types

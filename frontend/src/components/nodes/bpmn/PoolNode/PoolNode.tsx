@@ -1,88 +1,228 @@
 // frontend/src/components/nodes/bpmn/PoolNode/PoolNode.tsx
-import { memo, useState } from 'react';
+
+import React, { memo, useState, useCallback } from 'react';
 import { NodeProps } from 'reactflow';
-import { BPMNNodeData } from '../../../../types/diagram.types';
-import { Layers, Edit2 } from 'lucide-react';
-import clsx from 'clsx';
 
-export const PoolNode = memo<NodeProps<BPMNNodeData>>(({ id, data, selected }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const pool = data.pool;
+export interface Lane {
+  id: string;
+  name: string;
+  height: number;
+}
 
-  if (!pool) {
-    return (
-      <div className="min-w-[600px] min-h-[300px] border-2 border-gray-400 bg-white rounded">
-        <div className="h-full flex items-center justify-center text-gray-400">
-          <Layers className="w-8 h-8" />
-        </div>
-      </div>
-    );
-  }
+export interface PoolNodeData {
+  label: string;
+  lanes: Lane[];
+  isHorizontal?: boolean;
+  color?: string;
+  textColor?: string;
+  zIndex?: number;
+}
+
+const PoolNode: React.FC<NodeProps<PoolNodeData>> = ({ data, selected, id }) => {
+  const [isEditingPool, setIsEditingPool] = useState(false);
+  const [poolName, setPoolName] = useState(data.label);
+  const [lanes, setLanes] = useState<Lane[]>(data.lanes || [
+    { id: 'lane-1', name: 'Lane 1', height: 150 }
+  ]);
+  const [editingLaneId, setEditingLaneId] = useState<string | null>(null);
+
+  const handlePoolNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setPoolName(e.target.value);
+  }, []);
+
+  const handlePoolNameBlur = useCallback(() => {
+    setIsEditingPool(false);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: poolName, lanes });
+    }
+  }, [id, poolName, lanes]);
+
+  const handleLaneNameChange = useCallback((laneId: string, newName: string) => {
+    setLanes(prev => prev.map(lane => 
+      lane.id === laneId ? { ...lane, name: newName } : lane
+    ));
+  }, []);
+
+  const handleLaneNameBlur = useCallback(() => {
+    setEditingLaneId(null);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: poolName, lanes });
+    }
+  }, [id, poolName, lanes]);
+
+  const addLane = useCallback(() => {
+    const newLane: Lane = {
+      id: `lane-${Date.now()}`,
+      name: `Lane ${lanes.length + 1}`,
+      height: 150
+    };
+    setLanes(prev => [...prev, newLane]);
+  }, [lanes.length]);
+
+  const backgroundColor = data.color || '#f0f0f0';
+  const textColor = data.textColor || '#000000';
+  const isHorizontal = data.isHorizontal !== false;
+
+  const totalHeight = lanes.reduce((sum, lane) => sum + lane.height, 0);
+  const poolWidth = 800;
+  const headerWidth = 40;
 
   return (
-    <div
-      className={clsx(
-        'relative transition-all duration-200',
-        selected && 'ring-2 ring-blue-500 ring-offset-2'
-      )}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+    <div 
+      className="pool-node"
+      style={{
+        border: `2px solid ${textColor}`,
+        borderRadius: '4px',
+        boxShadow: selected ? '0 0 0 2px #3b82f6' : '0 2px 4px rgba(0,0,0,0.1)',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: isHorizontal ? 'row' : 'column',
+        zIndex: data.zIndex || 1
+      }}
     >
-      <div className="min-w-[600px] border-2 border-gray-600 bg-white rounded flex">
-        {/* Pool Name (Vertical) */}
-        <div className="w-8 bg-blue-100 border-r-2 border-gray-600 flex items-center justify-center rounded-l">
-          <div className="transform -rotate-90 whitespace-nowrap text-sm font-semibold text-gray-800">
-            {pool.name || 'Unnamed Pool'}
-          </div>
-        </div>
-
-        {/* Lanes */}
-        <div className="flex-1 flex flex-col">
-          {pool.lanes && pool.lanes.length > 0 ? (
-            pool.lanes.map((lane, index) => (
-              <div
-                key={lane.id}
-                className={clsx(
-                  'flex border-gray-300',
-                  index > 0 && 'border-t-2'
-                )}
-                style={{ height: `${lane.height}px` }}
-              >
-                {/* Lane Name */}
-                <div className="w-6 bg-blue-50 border-r border-gray-300 flex items-center justify-center">
-                  <div className="transform -rotate-90 whitespace-nowrap text-xs font-medium text-gray-700">
-                    {lane.name || `Lane ${index + 1}`}
-                  </div>
-                </div>
-
-                {/* Lane Content Area */}
-                <div className="flex-1 p-4 bg-white relative">
-                  {/* This is the droppable area for tasks, events, etc. */}
-                  <div className="h-full border border-dashed border-gray-200 rounded flex items-center justify-center text-gray-300 text-xs">
-                    Drop elements here
-                  </div>
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="flex-1 p-4 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <Layers className="w-12 h-12 mx-auto mb-2" />
-                <div className="text-sm">No lanes defined</div>
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Pool Header */}
+      <div
+        style={{
+          width: isHorizontal ? `${headerWidth}px` : `${poolWidth}px`,
+          height: isHorizontal ? `${totalHeight}px` : `${headerWidth}px`,
+          backgroundColor: `${backgroundColor}dd`,
+          borderRight: isHorizontal ? `1px solid ${textColor}` : 'none',
+          borderBottom: !isHorizontal ? `1px solid ${textColor}` : 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          writingMode: isHorizontal ? 'vertical-rl' : 'horizontal-tb',
+          transform: isHorizontal ? 'rotate(180deg)' : 'none',
+          fontWeight: 'bold',
+          fontSize: '14px',
+          color: textColor,
+          cursor: 'text',
+          padding: '8px'
+        }}
+        onDoubleClick={() => setIsEditingPool(true)}
+      >
+        {isEditingPool ? (
+          <input
+            type="text"
+            value={poolName}
+            onChange={handlePoolNameChange}
+            onBlur={handlePoolNameBlur}
+            autoFocus
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: textColor,
+              fontWeight: 'bold',
+              textAlign: 'center',
+              outline: 'none',
+              width: '100%'
+            }}
+          />
+        ) : (
+          poolName
+        )}
       </div>
 
-      {/* Edit button */}
-      {isHovered && (
-        <button className="absolute top-2 right-2 p-2 bg-white rounded shadow-md hover:bg-gray-50 transition-colors">
-          <Edit2 className="w-4 h-4 text-gray-600" />
-        </button>
-      )}
+      {/* Lanes Container */}
+      <div 
+        style={{
+          display: 'flex',
+          flexDirection: isHorizontal ? 'column' : 'row',
+          flex: 1
+        }}
+      >
+        {lanes.map((lane, index) => (
+          <div
+            key={lane.id}
+            style={{
+              width: isHorizontal ? `${poolWidth - headerWidth}px` : 'auto',
+              height: isHorizontal ? `${lane.height}px` : `${totalHeight}px`,
+              borderBottom: isHorizontal && index < lanes.length - 1 ? `1px solid ${textColor}` : 'none',
+              borderRight: !isHorizontal && index < lanes.length - 1 ? `1px solid ${textColor}` : 'none',
+              backgroundColor: index % 2 === 0 ? backgroundColor : `${backgroundColor}cc`,
+              display: 'flex',
+              position: 'relative',
+              minWidth: isHorizontal ? 'auto' : '200px',
+              flex: !isHorizontal ? 1 : 'none'
+            }}
+          >
+            {/* Lane Header */}
+            <div
+              style={{
+                width: isHorizontal ? '30px' : '100%',
+                height: isHorizontal ? '100%' : '30px',
+                borderRight: isHorizontal ? `1px solid ${textColor}33` : 'none',
+                borderBottom: !isHorizontal ? `1px solid ${textColor}33` : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                writingMode: isHorizontal ? 'vertical-rl' : 'horizontal-tb',
+                transform: isHorizontal ? 'rotate(180deg)' : 'none',
+                fontSize: '12px',
+                color: textColor,
+                cursor: 'text',
+                padding: '4px',
+                fontWeight: '500'
+              }}
+              onDoubleClick={() => setEditingLaneId(lane.id)}
+            >
+              {editingLaneId === lane.id ? (
+                <input
+                  type="text"
+                  value={lane.name}
+                  onChange={(e) => handleLaneNameChange(lane.id, e.target.value)}
+                  onBlur={handleLaneNameBlur}
+                  autoFocus
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: textColor,
+                    fontSize: '12px',
+                    textAlign: 'center',
+                    outline: 'none',
+                    width: '100%'
+                  }}
+                />
+              ) : (
+                lane.name
+              )}
+            </div>
+
+            {/* Lane Content Area */}
+            <div 
+              style={{
+                flex: 1,
+                padding: '8px',
+                position: 'relative'
+              }}
+            >
+              {/* Content goes here - tasks, events, etc. */}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Lane Button */}
+      <button
+        onClick={addLane}
+        style={{
+          position: 'absolute',
+          bottom: '8px',
+          right: '8px',
+          padding: '4px 8px',
+          background: 'white',
+          border: `1px solid ${textColor}`,
+          borderRadius: '4px',
+          cursor: 'pointer',
+          fontSize: '11px',
+          color: textColor,
+          opacity: 0.7
+        }}
+      >
+        + Add Lane
+      </button>
     </div>
   );
-});
+};
 
-PoolNode.displayName = 'PoolNode';
+export default memo(PoolNode);
