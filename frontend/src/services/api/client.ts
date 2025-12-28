@@ -1,8 +1,28 @@
 // frontend/src/services/api/client.ts
 import axios from 'axios';
 
-// FIXED: Ensure API_BASE_URL includes /api/v1 prefix
-const API_BASE_URL = import.meta.env?.VITE_API_URL || 'http://localhost:8000/api/v1';
+/**
+ * Get API Base URL with proper validation
+ * Ensures /api/v1 is always present
+ */
+function getApiBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_API_URL;
+  
+  // If environment variable is set, use it
+  if (envUrl) {
+    // Ensure it ends with /api/v1
+    if (envUrl.endsWith('/api/v1')) {
+      return envUrl;
+    }
+    // If it doesn't have /api/v1, add it
+    return `${envUrl.replace(/\/$/, '')}/api/v1`;
+  }
+  
+  // Default fallback
+  return 'http://localhost:8000/api/v1';
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Log the API URL for debugging
 console.log('🔗 API Base URL:', API_BASE_URL);

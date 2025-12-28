@@ -1,6 +1,7 @@
 #!/bin/bash
 # scripts/complete-startup.sh
 # Complete startup with guaranteed initialization - ZERO ERRORS
+# FULL VERSION WITH ALL FEATURES
 
 set -e
 
@@ -64,7 +65,7 @@ print_success "Docker Compose is installed"
 print_header "Step 2: Cleaning Up Old Containers"
 
 print_step "Stopping all existing containers..."
-docker-compose down 2>/dev/null || true
+docker-compose -f docker-compose.dev.yml down 2>/dev/null || true
 print_success "Old containers stopped"
 
 # Step 3: Create necessary directories and files
@@ -148,11 +149,11 @@ fi
 print_header "Step 4: Cleaning Docker Environment"
 
 print_step "Removing old containers and images..."
-docker-compose down -v 2>/dev/null || true
+docker-compose -f docker-compose.dev.yml down -v 2>/dev/null || true
 print_success "Containers removed"
 
 print_step "Removing old images..."
-docker-compose down --rmi all 2>/dev/null || true
+docker-compose -f docker-compose.dev.yml down --rmi all 2>/dev/null || true
 print_success "Images removed"
 
 print_step "Cleaning build cache..."
@@ -234,12 +235,12 @@ echo "Checking for email-validator installation..."
 sleep 10
 
 # Check backend logs for errors
-if docker-compose logs backend | grep -i "email.validator.*not.*installed" > /dev/null; then
+if docker-compose -f docker-compose.dev.yml logs backend | grep -i "email.validator.*not.*installed" > /dev/null; then
     print_error "Backend still missing email-validator!"
     echo ""
     echo "Installing email-validator manually..."
     docker exec modeling-backend pip install email-validator==2.2.0
-    docker-compose restart backend
+    docker-compose -f docker-compose.dev.yml restart backend
     sleep 10
 fi
 
@@ -253,12 +254,26 @@ until curl -f http://localhost:8000/health > /dev/null 2>&1; do
         print_error "Backend failed to start!"
         echo ""
         echo "Backend logs:"
-        docker-compose logs backend | tail -50
+        docker-compose -f docker-compose.dev.yml logs backend | tail -50
         exit 1
     fi
 done
 echo ""
 print_success "Backend is ready!"
+
+# Initialize database
+print_header "Step 7: Initializing Database"
+print_step "Running database initialization script..."
+docker exec modeling-backend python init_database.py
+
+if [ $? -eq 0 ]; then
+    print_success "Database initialized successfully"
+else
+    print_error "Database initialization failed!"
+    echo ""
+    echo "Please check the output above for errors."
+    exit 1
+fi
 
 print_step "Starting Frontend..."
 docker-compose -f docker-compose.dev.yml up -d frontend
@@ -266,11 +281,11 @@ sleep 5
 print_success "Frontend is starting..."
 
 # Step 9: Final verification
-print_header "Step 7: Final Verification"
+print_header "Step 8: Final Verification"
 
 echo ""
 print_step "Checking all services..."
-docker-compose ps
+docker-compose -f docker-compose.dev.yml ps
 
 echo ""
 print_step "Testing service endpoints..."
@@ -304,6 +319,7 @@ else
 fi
 
 # Test Frontend
+sleep 2
 if curl -f http://localhost:5173 > /dev/null 2>&1; then
     print_success "Frontend: ✓ Running"
 else
@@ -321,18 +337,23 @@ echo "  Backend API:          ${BLUE}http://localhost:8000${NC}"
 echo "  API Documentation:    ${BLUE}http://localhost:8000/api/v1/docs${NC}"
 echo "  FalkorDB Browser:     ${BLUE}http://localhost:3000${NC}"
 echo ""
+echo -e "${CYAN}Test Account:${NC}"
+echo "  Email:                test@example.com"
+echo "  Password:             password123"
+echo ""
 echo -e "${CYAN}Database Info:${NC}"
 echo "  PostgreSQL:           localhost:5432"
-echo "  Database:             modeling (and modeling_platform)"
+echo "  Databases:            modeling, modeling_platform"
 echo "  Username:             modeling"
 echo "  Password:             modeling_dev"
 echo ""
 echo -e "${CYAN}Useful Commands:${NC}"
-echo "  View logs:            ${YELLOW}docker-compose logs -f${NC}"
-echo "  View backend logs:    ${YELLOW}docker-compose logs -f backend${NC}"
-echo "  Stop services:        ${YELLOW}docker-compose stop${NC}"
-echo "  Restart services:     ${YELLOW}docker-compose restart${NC}"
-echo "  Stop and remove:      ${YELLOW}docker-compose down${NC}"
+echo "  View logs:            ${YELLOW}docker-compose -f docker-compose.dev.yml logs -f${NC}"
+echo "  View backend logs:    ${YELLOW}docker-compose -f docker-compose.dev.yml logs -f backend${NC}"
+echo "  Stop services:        ${YELLOW}docker-compose -f docker-compose.dev.yml stop${NC}"
+echo "  Restart services:     ${YELLOW}docker-compose -f docker-compose.dev.yml restart${NC}"
+echo "  Stop and remove:      ${YELLOW}docker-compose -f docker-compose.dev.yml down${NC}"
+echo "  Re-initialize DB:     ${YELLOW}docker exec modeling-backend python init_database.py${NC}"
 echo ""
 
 # Ask if user wants to view logs
@@ -341,5 +362,5 @@ echo ""
 
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_step "Starting log viewer (Press Ctrl+C to exit)..."
-    docker-compose logs -f
+    docker-compose -f docker-compose.dev.yml logs -f
 fi

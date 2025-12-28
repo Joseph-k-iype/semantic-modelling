@@ -1,5 +1,6 @@
+# backend/app/api/v1/endpoints/auth.py
 """
-Authentication endpoints
+Authentication endpoints - COMPLETE FIX
 """
 from datetime import datetime, timedelta
 from typing import Any
@@ -28,6 +29,7 @@ from app.schemas.auth import (
     PasswordResetConfirm,
 )
 from app.schemas.user import UserResponse
+from app.api.deps import get_current_user
 
 logger = structlog.get_logger(__name__)
 
@@ -40,6 +42,7 @@ async def register(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Register a new user"""
+    # Check if user already exists
     result = await db.execute(
         select(User).where(User.email == user_data.email)
     )
@@ -51,11 +54,28 @@ async def register(
             detail="Email already registered",
         )
     
+    # Check if username is provided and if it's already taken
+    if user_data.username:
+        result = await db.execute(
+            select(User).where(User.username == user_data.username)
+        )
+        existing_username = result.scalar_one_or_none()
+        
+        if existing_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken",
+            )
+    
+    # Create new user
     hashed_password = get_password_hash(user_data.password)
     user = User(
         email=user_data.email,
+        username=user_data.username if hasattr(user_data, 'username') else None,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
+        is_active=True,
+        is_verified=False
     )
     
     db.add(user)
@@ -73,11 +93,13 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """User login with email and password"""
+    # Find user by email
     result = await db.execute(
         select(User).where(User.email == user_data.email)
     )
     user = result.scalar_one_or_none()
     
+    # Verify user exists and password is correct
     if not user or not verify_password(user_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -85,15 +107,18 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Check if user is active
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
         )
     
+    # Update last login time
     user.last_login = datetime.utcnow()
     await db.commit()
     
+    # Create access and refresh tokens
     access_token = create_access_token(
         subject=str(user.id),
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -120,16 +145,19 @@ async def refresh_token(
 ) -> Any:
     """Refresh access token using refresh token"""
     try:
+        # Decode refresh token
         payload = decode_token(refresh_data.refresh_token)
         user_id = payload.get("sub")
         token_type = payload.get("type")
         
+        # Verify it's a refresh token
         if token_type != "refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type",
             )
         
+        # Get user from database
         result = await db.execute(
             select(User).where(User.id == user_id)
         )
@@ -141,6 +169,7 @@ async def refresh_token(
                 detail="User not found or inactive",
             )
         
+        # Create new tokens
         access_token = create_access_token(
             subject=str(user.id),
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -158,7 +187,9 @@ async def refresh_token(
             "refresh_token": new_refresh_token,
             "token_type": "bearer",
         }
+        
     except Exception as e:
+        logger.error("Token refresh failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
@@ -166,23 +197,69 @@ async def refresh_token(
 
 
 @router.post("/logout")
-async def logout() -> Any:
-    """Logout endpoint"""
+async def logout(
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Logout endpoint
+    
+    Note: Since we're using JWT tokens, actual logout happens client-side
+    by deleting the tokens. This endpoint is here for API consistency
+    and can be used for logging/analytics.
+    """
+    logger.info("User logged out", user_id=str(current_user.id), email=current_user.email)
     return {"message": "Successfully logged out"}
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user() -> Any:
-    """Get current authenticated user"""
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Get current authenticated user information
+    
+    This endpoint requires authentication and returns the current user's profile.
+    """
+    logger.info("User info retrieved", user_id=str(current_user.id), email=current_user.email)
+    return current_user
+
+
+@router.post("/password-reset")
+async def request_password_reset(
+    reset_data: PasswordReset,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Request password reset (sends email with reset token)
+    
+    Note: Email functionality not implemented yet.
+    This is a placeholder for future implementation.
+    """
+    # Find user
+    result = await db.execute(
+        select(User).where(User.email == reset_data.email)
+    )
+    user = result.scalar_one_or_none()
+    
+    # Don't reveal if user exists or not for security
+    logger.info("Password reset requested", email=reset_data.email)
+    
     return {
-        "id": "00000000-0000-0000-0000-000000000000",
-        "email": "user@example.com",
-        "full_name": "Test User",
-        "is_active": True,
-        "is_superuser": False,
-        "avatar_url": None,
-        "preferences": {},
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow(),
-        "last_login_at": None,
+        "message": "If the email exists, a password reset link will be sent",
+        "note": "Email functionality not yet implemented"
+    }
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(
+    reset_data: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """
+    Confirm password reset with token
+    
+    Note: This is a placeholder for future implementation.
+    """
+    return {
+        "message": "Password reset functionality not yet implemented"
     }

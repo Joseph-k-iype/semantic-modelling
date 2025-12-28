@@ -1,6 +1,6 @@
 # backend/app/core/config.py
 """
-Application configuration settings
+Application configuration settings - COMPLETE VERSION
 SINGLE SOURCE OF TRUTH for all configuration
 """
 from typing import List, Optional, Any

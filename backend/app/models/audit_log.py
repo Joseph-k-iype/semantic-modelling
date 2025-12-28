@@ -1,5 +1,6 @@
+# backend/app/models/audit_log.py
 """
-Audit Log Database Model
+Audit Log Database Model - FIXED
 """
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON
@@ -27,7 +28,8 @@ class AuditLog(Base):
     
     # Change details
     changes = Column(JSON, nullable=True, default=lambda: {})
-    metadata = Column(JSON, nullable=True, default=lambda: {})
+    # FIXED: Use meta_data as Python attribute, 'metadata' as DB column name
+    meta_data = Column('metadata', JSON, nullable=True, default=lambda: {})
     
     # Request details
     ip_address = Column(String(45), nullable=True)
