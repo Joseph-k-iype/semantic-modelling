@@ -2,9 +2,9 @@
 
 import React, { memo, useState, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { X, Plus, Circle } from 'lucide-react';
+import { Plus, Circle } from 'lucide-react';
 
-export type GatewayType = 'exclusive' | 'parallel' | 'inclusive' | 'event' | 'complex';
+export type GatewayType = 'exclusive' | 'parallel' | 'inclusive' | 'event-based';
 
 export interface GatewayNodeData {
   label: string;
@@ -14,131 +14,183 @@ export interface GatewayNodeData {
   zIndex?: number;
 }
 
-const GatewayNode: React.FC<NodeProps<GatewayNodeData>> = ({ data, selected, id }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [gatewayName, setGatewayName] = useState(data.label);
+const GatewayNode: React.FC<NodeProps<GatewayNodeData>> = memo(({ id, data, selected }) => {
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [label, setLabel] = useState(data.label || 'Gateway');
 
-  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setGatewayName(e.target.value);
+  const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setLabel(e.target.value);
   }, []);
 
-  const handleNameBlur = useCallback(() => {
-    setIsEditing(false);
+  const handleLabelBlur = useCallback(() => {
+    setIsEditingLabel(false);
     if (window.updateNodeData) {
-      window.updateNodeData(id, { label: gatewayName });
+      window.updateNodeData(id, { label });
     }
-  }, [id, gatewayName]);
+  }, [id, label]);
 
-  const backgroundColor = data.color || '#ffffcc';
-  const textColor = data.textColor || '#000000';
-  const gatewayType = data.gatewayType || 'exclusive';
+  const handleLabelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleLabelBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingLabel(false);
+      setLabel(data.label || 'Gateway');
+    }
+  }, [handleLabelBlur, data.label]);
 
   const getGatewayIcon = () => {
-    switch (gatewayType) {
+    switch (data.gatewayType) {
       case 'exclusive':
-        return <X size={24} color={textColor} strokeWidth={3} />;
+        return <span style={{ fontSize: '24px', fontWeight: 'bold' }}>×</span>;
       case 'parallel':
-        return <Plus size={24} color={textColor} strokeWidth={3} />;
+        return <Plus size={24} strokeWidth={3} />;
       case 'inclusive':
-        return <Circle size={24} color={textColor} strokeWidth={3} />;
-      case 'event':
-        return (
-          <div style={{ position: 'relative' }}>
-            <Circle size={20} color={textColor} strokeWidth={2} />
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              width: '12px',
-              height: '12px',
-              border: `2px solid ${textColor}`,
-              borderRadius: '50%'
-            }} />
-          </div>
-        );
-      case 'complex':
-        return <div style={{ fontSize: '20px', fontWeight: 'bold' }}>*</div>;
+        return <Circle size={20} strokeWidth={3} />;
+      case 'event-based':
+        return <Circle size={16} strokeWidth={2} />;
       default:
-        return <X size={24} color={textColor} />;
+        return null;
     }
   };
 
+  const diamondSize = 60;
+  const borderColor = selected ? '#3b82f6' : '#f59e0b';
+
   return (
-    <div style={{ position: 'relative', zIndex: data.zIndex || 1 }}>
-      <div 
-        className="gateway-node"
+    <div style={{ position: 'relative' }}>
+      {/* Handles */}
+      <Handle
+        type="target"
+        position={Position.Left}
         style={{
-          width: '60px',
-          height: '60px',
-          backgroundColor,
-          border: `2px solid ${textColor}`,
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          left: '0',
+          top: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          right: '0',
+          top: '50%',
+          transform: 'translate(50%, -50%)'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Top}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          top: '0',
+          left: '50%',
+          transform: 'translate(-50%, -50%)'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          bottom: '0',
+          left: '50%',
+          transform: 'translate(-50%, 50%)'
+        }}
+      />
+
+      {/* Diamond Gateway */}
+      <div
+        style={{
+          width: `${diamondSize}px`,
+          height: `${diamondSize}px`,
           transform: 'rotate(45deg)',
-          boxShadow: selected ? '0 0 0 2px #3b82f6' : '0 2px 4px rgba(0,0,0,0.1)',
+          background: data.color || 'white',
+          border: `3px solid ${borderColor}`,
           display: 'flex',
-          justifyContent: 'center',
           alignItems: 'center',
-          position: 'relative'
+          justifyContent: 'center',
+          boxShadow: selected ? `0 0 0 3px ${borderColor}40` : 'none',
+          position: 'relative',
+          zIndex: data.zIndex || 1
         }}
       >
-        <Handle type="target" position={Position.Top} id="top" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="target" position={Position.Left} id="left" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="target" position={Position.Right} id="right" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="target" position={Position.Bottom} id="bottom" style={{ transform: 'rotate(-45deg)' }} />
-        
-        <Handle type="source" position={Position.Top} id="top-source" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="source" position={Position.Left} id="left-source" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="source" position={Position.Right} id="right-source" style={{ transform: 'rotate(-45deg)' }} />
-        <Handle type="source" position={Position.Bottom} id="bottom-source" style={{ transform: 'rotate(-45deg)' }} />
-
-        <div style={{ transform: 'rotate(-45deg)' }}>
+        <div
+          style={{
+            transform: 'rotate(-45deg)',
+            color: data.textColor || '#f59e0b',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
           {getGatewayIcon()}
         </div>
       </div>
 
-      {/* Gateway Label */}
-      <div 
+      {/* Label */}
+      <div
         style={{
           position: 'absolute',
-          top: '70px',
+          top: '75px',
           left: '50%',
           transform: 'translateX(-50%)',
-          minWidth: '100px',
+          whiteSpace: 'nowrap',
           textAlign: 'center',
-          fontSize: '11px',
-          color: textColor,
-          whiteSpace: 'nowrap'
+          minWidth: '100px'
         }}
+        onDoubleClick={() => setIsEditingLabel(true)}
       >
-        {isEditing ? (
+        {isEditingLabel ? (
           <input
             type="text"
-            value={gatewayName}
-            onChange={handleNameChange}
-            onBlur={handleNameBlur}
+            value={label}
+            onChange={handleLabelChange}
+            onBlur={handleLabelBlur}
+            onKeyDown={handleLabelKeyDown}
             autoFocus
             style={{
-              width: '100%',
-              border: 'none',
-              background: 'white',
-              color: textColor,
+              padding: '2px 6px',
               fontSize: '11px',
-              textAlign: 'center',
+              border: '2px solid #3b82f6',
+              borderRadius: '3px',
               outline: 'none',
-              padding: '2px'
+              textAlign: 'center',
+              minWidth: '100px'
             }}
           />
         ) : (
-          <div 
-            onDoubleClick={() => setIsEditing(true)}
-            style={{ cursor: 'text' }}
+          <div
+            style={{
+              padding: '2px 6px',
+              fontSize: '11px',
+              cursor: 'text',
+              color: data.textColor || '#374151',
+              fontWeight: '500'
+            }}
           >
-            {gatewayName || gatewayType}
+            {label}
           </div>
         )}
       </div>
     </div>
   );
-};
+});
 
-export default memo(GatewayNode);
+GatewayNode.displayName = 'GatewayNode';
+
+export default GatewayNode;

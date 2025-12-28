@@ -1,9 +1,8 @@
 // frontend/src/components/edges/er/RelationshipEdge/RelationshipEdge.tsx
-// ENHANCED VERSION - Keeps ALL existing features + adds cardinality selectors
-import { memo, useState, useCallback } from 'react';
+
+import React, { memo, useState, useCallback } from 'react';
 import { EdgeProps, getBezierPath, EdgeLabelRenderer, BaseEdge } from 'reactflow';
 import { Edit2, Check, X } from 'lucide-react';
-import clsx from 'clsx';
 
 export interface ERRelationshipData {
   label?: string;
@@ -12,9 +11,10 @@ export interface ERRelationshipData {
   isIdentifying?: boolean;
   color?: string;
   strokeWidth?: number;
+  zIndex?: number;
 }
 
-export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
+const RelationshipEdge: React.FC<EdgeProps<ERRelationshipData>> = memo(({
   id,
   sourceX,
   sourceY,
@@ -24,7 +24,6 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
   targetPosition,
   data,
   selected,
-  markerEnd
 }) => {
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [tempLabel, setTempLabel] = useState(data?.label || '');
@@ -46,10 +45,15 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
   }, [data?.label]);
 
   const handleSaveLabel = useCallback(() => {
-    // Update would be handled by parent component / store
     setIsEditingLabel(false);
-    // TODO: Emit update event
-  }, []);
+    if (window.updateEdgeData) {
+      window.updateEdgeData(id, { 
+        label: tempLabel,
+        sourceCardinality: sourceCard,
+        targetCardinality: targetCard
+      });
+    }
+  }, [id, tempLabel, sourceCard, targetCard]);
 
   const handleCancelEditLabel = useCallback(() => {
     setIsEditingLabel(false);
@@ -68,13 +72,25 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
 
   const handleSourceCardinalityChange = useCallback((value: string) => {
     setSourceCard(value);
-    // TODO: Emit update event
-  }, []);
+    if (window.updateEdgeData) {
+      window.updateEdgeData(id, { 
+        label: tempLabel,
+        sourceCardinality: value,
+        targetCardinality: targetCard
+      });
+    }
+  }, [id, tempLabel, targetCard]);
 
   const handleTargetCardinalityChange = useCallback((value: string) => {
     setTargetCard(value);
-    // TODO: Emit update event
-  }, []);
+    if (window.updateEdgeData) {
+      window.updateEdgeData(id, { 
+        label: tempLabel,
+        sourceCardinality: sourceCard,
+        targetCardinality: value
+      });
+    }
+  }, [id, tempLabel, sourceCard]);
 
   const edgeColor = data?.color || (selected ? '#3b82f6' : '#6b7280');
   const strokeWidth = data?.strokeWidth || (selected ? 3 : 2);
@@ -111,6 +127,7 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
           stroke: edgeColor,
           strokeWidth: strokeWidth,
           strokeDasharray: data?.isIdentifying ? undefined : '5,5',
+          zIndex: data?.zIndex || 1
         }}
       />
 
@@ -121,17 +138,23 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${sourceCardX}px, ${sourceCardY}px)`,
             pointerEvents: 'all',
+            zIndex: data?.zIndex || 1
           }}
           className="nodrag nopan"
         >
           <select
             value={sourceCard}
             onChange={(e) => handleSourceCardinalityChange(e.target.value)}
-            className={clsx(
-              'px-2 py-1 text-xs font-bold bg-white border rounded shadow-sm',
-              'focus:outline-none focus:ring-2 focus:ring-blue-500',
-              'cursor-pointer'
-            )}
+            style={{
+              padding: '2px 6px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              background: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '3px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              cursor: 'pointer'
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <option value="1">1</option>
@@ -149,46 +172,79 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
             pointerEvents: 'all',
+            zIndex: data?.zIndex || 1
           }}
           className="nodrag nopan"
         >
           {isEditingLabel ? (
-            <div className="flex items-center gap-1 bg-white border border-blue-300 rounded shadow-md p-1">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
               <input
                 type="text"
                 value={tempLabel}
                 onChange={(e) => setTempLabel(e.target.value)}
                 onKeyDown={handleLabelKeyDown}
                 autoFocus
-                className="px-2 py-1 text-xs border-none focus:outline-none w-32"
-                placeholder="relationship"
+                style={{
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  border: '2px solid #3b82f6',
+                  borderRadius: '4px',
+                  outline: 'none',
+                  minWidth: '80px'
+                }}
               />
               <button
                 onClick={handleSaveLabel}
-                className="p-1 text-green-600 hover:bg-green-100 rounded"
+                style={{
+                  padding: '4px',
+                  background: '#10b981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
               >
-                <Check className="w-3 h-3" />
+                <Check size={14} />
               </button>
               <button
                 onClick={handleCancelEditLabel}
-                className="p-1 text-red-600 hover:bg-red-100 rounded"
+                style={{
+                  padding: '4px',
+                  background: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '3px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
               >
-                <X className="w-3 h-3" />
+                <X size={14} />
               </button>
             </div>
           ) : (
             <div
-              onClick={handleStartEditLabel}
-              className={clsx(
-                'px-2 py-1 text-xs font-medium bg-white border rounded shadow-sm cursor-text',
-                'hover:border-blue-300 transition-colors',
-                selected && 'border-blue-500'
-              )}
+              style={{
+                padding: '4px 8px',
+                background: 'white',
+                border: `2px solid ${selected ? '#3b82f6' : '#d1d5db'}`,
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: '500',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                minWidth: '60px',
+                justifyContent: 'center'
+              }}
+              onDoubleClick={handleStartEditLabel}
             >
-              {data?.label || 'relationship'}
-              <button className="ml-1 opacity-0 hover:opacity-100">
-                <Edit2 className="w-3 h-3 inline" />
-              </button>
+              <span>{data?.label || 'relates to'}</span>
+              <Edit2 size={12} style={{ opacity: 0.5 }} />
             </div>
           )}
         </div>
@@ -199,17 +255,23 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${targetCardX}px, ${targetCardY}px)`,
             pointerEvents: 'all',
+            zIndex: data?.zIndex || 1
           }}
           className="nodrag nopan"
         >
           <select
             value={targetCard}
             onChange={(e) => handleTargetCardinalityChange(e.target.value)}
-            className={clsx(
-              'px-2 py-1 text-xs font-bold bg-white border rounded shadow-sm',
-              'focus:outline-none focus:ring-2 focus:ring-blue-500',
-              'cursor-pointer'
-            )}
+            style={{
+              padding: '2px 6px',
+              fontSize: '11px',
+              fontWeight: 'bold',
+              background: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '3px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+              cursor: 'pointer'
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <option value="1">1</option>
@@ -226,3 +288,5 @@ export const RelationshipEdge = memo<EdgeProps<ERRelationshipData>>(({
 });
 
 RelationshipEdge.displayName = 'RelationshipEdge';
+
+export default RelationshipEdge;

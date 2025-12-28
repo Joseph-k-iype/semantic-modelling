@@ -3,7 +3,7 @@
 import React, { memo, useState, useCallback } from 'react';
 import { EdgeProps, getBezierPath, EdgeLabelRenderer, BaseEdge } from 'reactflow';
 
-export type AssociationType = 'association' | 'generalization' | 'dependency' | 'aggregation' | 'composition';
+export type AssociationType = 'association' | 'generalization' | 'dependency' | 'aggregation' | 'composition' | 'realization';
 export type Multiplicity = '1' | '0..1' | '1..*' | '0..*' | '*';
 
 export interface AssociationEdgeData {
@@ -18,7 +18,7 @@ export interface AssociationEdgeData {
   zIndex?: number;
 }
 
-const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
+const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = memo(({
   id,
   sourceX,
   sourceY,
@@ -42,6 +42,16 @@ const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
     targetY,
     targetPosition,
   });
+
+  const associationType = data?.associationType || 'association';
+  const edgeColor = data?.color || (selected ? '#3b82f6' : '#6b7280');
+  const strokeWidth = data?.strokeWidth || 2;
+
+  // Calculate positions for multiplicity labels
+  const sourceMultX = sourceX + (labelX - sourceX) * 0.15;
+  const sourceMultY = sourceY + (labelY - sourceY) * 0.15;
+  const targetMultX = targetX + (labelX - targetX) * 0.15;
+  const targetMultY = targetY + (labelY - targetY) * 0.15;
 
   const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);
@@ -76,38 +86,28 @@ const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
     }
   }, [id, label, sourceMultiplicity, targetMultiplicity, data?.associationType]);
 
-  const edgeColor = data?.color || '#000000';
-  const strokeWidth = data?.strokeWidth || 2;
-  const associationType = data?.associationType || 'association';
-
-  // Calculate positions for multiplicity labels
-  const sourceMultX = sourceX + (labelX - sourceX) * 0.15;
-  const sourceMultY = sourceY + (labelY - sourceY) * 0.15;
-  const targetMultX = targetX + (labelX - targetX) * 0.15;
-  const targetMultY = targetY + (labelY - targetY) * 0.15;
-
-  // Get stroke style based on association type
   const getStrokeStyle = () => {
-    if (associationType === 'dependency') {
-      return '5,5'; // dashed
+    switch (associationType) {
+      case 'dependency':
+        return '5,5';
+      default:
+        return undefined;
     }
-    return undefined;
   };
 
-  // Get marker end based on association type
   const getMarkerEnd = () => {
-    const angle = Math.atan2(targetY - sourceY, targetX - sourceX);
-    const arrowSize = 12;
+    const arrowSize = 10;
     
     switch (associationType) {
       case 'generalization':
-        // Hollow triangle (inheritance)
+      case 'realization':
+        // Filled triangle
         return (
           <marker
             id={`generalization-${id}`}
             markerWidth={arrowSize}
             markerHeight={arrowSize}
-            refX={arrowSize / 2}
+            refX={arrowSize}
             refY={arrowSize / 2}
             orient="auto"
           >
@@ -119,39 +119,39 @@ const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
             />
           </marker>
         );
-      case 'composition':
-        // Filled diamond
-        return (
-          <marker
-            id={`composition-${id}`}
-            markerWidth={arrowSize}
-            markerHeight={arrowSize}
-            refX={arrowSize / 2}
-            refY={arrowSize / 2}
-            orient="auto"
-          >
-            <polygon
-              points={`0,${arrowSize / 2} ${arrowSize / 2},0 ${arrowSize},${arrowSize / 2} ${arrowSize / 2},${arrowSize}`}
-              fill={edgeColor}
-            />
-          </marker>
-        );
       case 'aggregation':
         // Hollow diamond
         return (
           <marker
             id={`aggregation-${id}`}
-            markerWidth={arrowSize}
-            markerHeight={arrowSize}
-            refX={arrowSize / 2}
-            refY={arrowSize / 2}
+            markerWidth={arrowSize * 1.5}
+            markerHeight={arrowSize * 1.5}
+            refX={arrowSize * 1.5}
+            refY={arrowSize * 0.75}
             orient="auto"
           >
             <polygon
-              points={`0,${arrowSize / 2} ${arrowSize / 2},0 ${arrowSize},${arrowSize / 2} ${arrowSize / 2},${arrowSize}`}
+              points={`0,${arrowSize * 0.75} ${arrowSize * 0.75},0 ${arrowSize * 1.5},${arrowSize * 0.75} ${arrowSize * 0.75},${arrowSize * 1.5}`}
               fill="white"
               stroke={edgeColor}
               strokeWidth={strokeWidth}
+            />
+          </marker>
+        );
+      case 'composition':
+        // Filled diamond
+        return (
+          <marker
+            id={`composition-${id}`}
+            markerWidth={arrowSize * 1.5}
+            markerHeight={arrowSize * 1.5}
+            refX={arrowSize * 1.5}
+            refY={arrowSize * 0.75}
+            orient="auto"
+          >
+            <polygon
+              points={`0,${arrowSize * 0.75} ${arrowSize * 0.75},0 ${arrowSize * 1.5},${arrowSize * 0.75} ${arrowSize * 0.75},${arrowSize * 1.5}`}
+              fill={edgeColor}
             />
           </marker>
         );
@@ -262,33 +262,32 @@ const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
               onChange={handleLabelChange}
               onBlur={handleLabelBlur}
               autoFocus
-              placeholder="association name"
               style={{
                 padding: '2px 6px',
                 fontSize: '11px',
-                background: 'white',
-                border: '1px solid #ccc',
+                border: '1px solid #3b82f6',
                 borderRadius: '3px',
-                minWidth: '80px',
-                fontStyle: 'italic'
+                outline: 'none',
+                minWidth: '60px',
+                background: 'white'
               }}
             />
           ) : (
-            label && (
-              <div
-                style={{
-                  padding: '2px 6px',
-                  fontSize: '11px',
-                  background: 'white',
-                  border: '1px solid #ccc',
-                  borderRadius: '3px',
-                  cursor: 'text',
-                  fontStyle: 'italic'
-                }}
-              >
-                {label}
-              </div>
-            )
+            <div
+              style={{
+                padding: '2px 6px',
+                background: 'white',
+                border: `1px solid ${selected ? '#3b82f6' : '#d1d5db'}`,
+                borderRadius: '3px',
+                fontSize: '11px',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                cursor: 'text',
+                minWidth: '40px',
+                textAlign: 'center'
+              }}
+            >
+              {label || ''}
+            </div>
           )}
         </div>
 
@@ -325,6 +324,8 @@ const AssociationEdge: React.FC<EdgeProps<AssociationEdgeData>> = ({
       </EdgeLabelRenderer>
     </>
   );
-};
+});
 
-export default memo(AssociationEdge);
+AssociationEdge.displayName = 'AssociationEdge';
+
+export default AssociationEdge;

@@ -1,680 +1,661 @@
 // frontend/src/components/nodes/uml/ClassNode/ClassNode.tsx
-// COMPLETE ERROR-FREE VERSION - Preserves ALL existing features + adds new ones
-import { memo, useState, useCallback, useRef, useEffect } from 'react';
-import { NodeProps, Handle, Position } from 'reactflow';
-import { UMLNodeData, UMLAttribute, UMLMethod } from '../../../../types/diagram.types';
-import { Lock, Unlock, Shield, Package as PackageIcon, Plus, Edit2, Check, X, Palette } from 'lucide-react';
-import clsx from 'clsx';
-import { useDiagramStore } from '../../../../store/diagramStore';
 
-export const ClassNode = memo<NodeProps<UMLNodeData>>(({ id, data, selected }) => {
-  // State management
-  const [editingClassName, setEditingClassName] = useState(false);
+import React, { memo, useState, useCallback } from 'react';
+import { Handle, Position, NodeProps } from 'reactflow';
+import { Plus, Trash2, Lock, Eye, EyeOff, X, Check } from 'lucide-react';
+
+export type Visibility = 'public' | 'private' | 'protected' | 'package';
+
+export interface ClassAttribute {
+  id: string;
+  name: string;
+  type: string;
+  visibility: Visibility;
+  isStatic: boolean;
+}
+
+export interface ClassMethod {
+  id: string;
+  name: string;
+  returnType: string;
+  parameters: string;
+  visibility: Visibility;
+  isStatic: boolean;
+  isAbstract: boolean;
+}
+
+export interface ClassNodeData {
+  label: string;
+  stereotype?: string;
+  attributes: ClassAttribute[];
+  methods: ClassMethod[];
+  isAbstract?: boolean;
+  isInterface?: boolean;
+  color?: string;
+  textColor?: string;
+  zIndex?: number;
+}
+
+const ClassNode: React.FC<NodeProps<ClassNodeData>> = memo(({ id, data, selected }) => {
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [className, setClassName] = useState(data.label || 'Class');
+  const [isEditingStereotype, setIsEditingStereotype] = useState(false);
+  const [stereotype, setStereotype] = useState(data.stereotype || '');
+  const [attributes, setAttributes] = useState<ClassAttribute[]>(data.attributes || []);
+  const [methods, setMethods] = useState<ClassMethod[]>(data.methods || []);
   const [editingAttrId, setEditingAttrId] = useState<string | null>(null);
   const [editingMethodId, setEditingMethodId] = useState<string | null>(null);
-  const [tempClassName, setTempClassName] = useState('');
   const [tempAttrName, setTempAttrName] = useState('');
   const [tempAttrType, setTempAttrType] = useState('');
   const [tempMethodName, setTempMethodName] = useState('');
   const [tempMethodReturn, setTempMethodReturn] = useState('');
-  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [tempMethodParams, setTempMethodParams] = useState('');
 
-  // Refs for focus management
-  const classNameInputRef = useRef<HTMLInputElement>(null);
-  const attrNameInputRef = useRef<HTMLInputElement>(null);
-  const methodNameInputRef = useRef<HTMLInputElement>(null);
-
-  // Store access
-  const { updateNode } = useDiagramStore();
-
-  // Extract class data safely
-  const umlClass = data.class;
-  
-  // Extract color and z-index with safe defaults
-  const nodeColor = (data as any).color || '#ffffff';
-  const textColor = (data as any).textColor || '#000000';
-  const zIndex = (data as any).zIndex || 0;
-
-  // Focus management
-  useEffect(() => {
-    if (editingClassName && classNameInputRef.current) {
-      classNameInputRef.current.focus();
-      classNameInputRef.current.select();
-    }
-  }, [editingClassName]);
-
-  useEffect(() => {
-    if (editingAttrId && attrNameInputRef.current) {
-      attrNameInputRef.current.focus();
-      attrNameInputRef.current.select();
-    }
-  }, [editingAttrId]);
-
-  useEffect(() => {
-    if (editingMethodId && methodNameInputRef.current) {
-      methodNameInputRef.current.focus();
-      methodNameInputRef.current.select();
-    }
-  }, [editingMethodId]);
-
-  // ============================================================================
-  // Class Name Handlers
-  // ============================================================================
-
-  const handleStartEditClassName = useCallback(() => {
-    if (umlClass) {
-      setTempClassName(umlClass.name);
-      setEditingClassName(true);
-    }
-  }, [umlClass]);
-
-  const handleSaveClassName = useCallback(() => {
-    if (umlClass && tempClassName.trim()) {
-      updateNode(id, {
-        class: { ...umlClass, name: tempClassName.trim() },
-        label: tempClassName.trim()
-      });
-    }
-    setEditingClassName(false);
-  }, [id, umlClass, tempClassName, updateNode]);
-
-  const handleCancelEditClassName = useCallback(() => {
-    setEditingClassName(false);
-    setTempClassName('');
+  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setClassName(e.target.value);
   }, []);
 
-  const handleClassNameKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveClassName();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancelEditClassName();
+  const handleNameBlur = useCallback(() => {
+    setIsEditingName(false);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes, methods });
     }
-  }, [handleSaveClassName, handleCancelEditClassName]);
+  }, [id, className, stereotype, attributes, methods]);
 
-  // ============================================================================
-  // Attribute Handlers
-  // ============================================================================
-
-  const handleStartEditAttribute = useCallback((attr: UMLAttribute) => {
-    setEditingAttrId(attr.id);
-    setTempAttrName(attr.name);
-    setTempAttrType(attr.type);
-  }, []);
-
-  const handleSaveAttribute = useCallback(() => {
-    if (umlClass && editingAttrId && tempAttrName.trim()) {
-      const updatedAttributes = umlClass.attributes.map(attr =>
-        attr.id === editingAttrId
-          ? { ...attr, name: tempAttrName.trim(), type: tempAttrType.trim() }
-          : attr
-      );
-      updateNode(id, {
-        class: { ...umlClass, attributes: updatedAttributes }
-      });
+  const handleStereotypeBlur = useCallback(() => {
+    setIsEditingStereotype(false);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes, methods });
     }
-    setEditingAttrId(null);
-    setTempAttrName('');
-    setTempAttrType('');
-  }, [id, umlClass, editingAttrId, tempAttrName, tempAttrType, updateNode]);
+  }, [id, className, stereotype, attributes, methods]);
 
-  const handleCancelEditAttribute = useCallback(() => {
-    setEditingAttrId(null);
-    setTempAttrName('');
-    setTempAttrType('');
-  }, []);
-
-  const handleAttrKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveAttribute();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancelEditAttribute();
+  const getVisibilitySymbol = (visibility: Visibility): string => {
+    switch (visibility) {
+      case 'public': return '+';
+      case 'private': return '-';
+      case 'protected': return '#';
+      case 'package': return '~';
+      default: return '+';
     }
-  }, [handleSaveAttribute, handleCancelEditAttribute]);
+  };
 
-  const handleDeleteAttribute = useCallback((attrId: string) => {
-    if (umlClass) {
-      const updatedAttributes = umlClass.attributes.filter(attr => attr.id !== attrId);
-      updateNode(id, {
-        class: { ...umlClass, attributes: updatedAttributes }
-      });
-    }
-  }, [id, umlClass, updateNode]);
-
-  // ============================================================================
-  // Method Handlers
-  // ============================================================================
-
-  const handleStartEditMethod = useCallback((method: UMLMethod) => {
-    setEditingMethodId(method.id);
-    setTempMethodName(method.name);
-    setTempMethodReturn(method.returnType);
-  }, []);
-
-  const handleSaveMethod = useCallback(() => {
-    if (umlClass && editingMethodId && tempMethodName.trim()) {
-      const updatedMethods = umlClass.methods.map(method =>
-        method.id === editingMethodId
-          ? { ...method, name: tempMethodName.trim(), returnType: tempMethodReturn.trim() }
-          : method
-      );
-      updateNode(id, {
-        class: { ...umlClass, methods: updatedMethods }
-      });
-    }
-    setEditingMethodId(null);
-    setTempMethodName('');
-    setTempMethodReturn('');
-  }, [id, umlClass, editingMethodId, tempMethodName, tempMethodReturn, updateNode]);
-
-  const handleCancelEditMethod = useCallback(() => {
-    setEditingMethodId(null);
-    setTempMethodName('');
-    setTempMethodReturn('');
-  }, []);
-
-  const handleMethodKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveMethod();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancelEditMethod();
-    }
-  }, [handleSaveMethod, handleCancelEditMethod]);
-
-  const handleDeleteMethod = useCallback((methodId: string) => {
-    if (umlClass) {
-      const updatedMethods = umlClass.methods.filter(method => method.id !== methodId);
-      updateNode(id, {
-        class: { ...umlClass, methods: updatedMethods }
-      });
-    }
-  }, [id, umlClass, updateNode]);
-
-  // ============================================================================
-  // Visibility Toggle Handlers (Existing)
-  // ============================================================================
-
-  const handleToggleAttrVisibility = useCallback((attrId: string) => {
-    if (!umlClass) return;
-    const updatedAttributes = umlClass.attributes.map(attr => {
-      if (attr.id === attrId) {
-        const visibilityOrder = ['private', 'protected', 'public', 'package'];
-        const currentIndex = visibilityOrder.indexOf(attr.visibility);
-        const nextIndex = (currentIndex + 1) % visibilityOrder.length;
-        return { ...attr, visibility: visibilityOrder[nextIndex] as any };
-      }
-      return attr;
-    });
-    updateNode(id, {
-      class: { ...umlClass, attributes: updatedAttributes }
-    });
-  }, [id, umlClass, updateNode]);
-
-  const handleToggleMethodVisibility = useCallback((methodId: string) => {
-    if (!umlClass) return;
-    const updatedMethods = umlClass.methods.map(method => {
-      if (method.id === methodId) {
-        const visibilityOrder = ['private', 'protected', 'public', 'package'];
-        const currentIndex = visibilityOrder.indexOf(method.visibility);
-        const nextIndex = (currentIndex + 1) % visibilityOrder.length;
-        return { ...method, visibility: visibilityOrder[nextIndex] as any };
-      }
-      return method;
-    });
-    updateNode(id, {
-      class: { ...umlClass, methods: updatedMethods }
-    });
-  }, [id, umlClass, updateNode]);
-
-  // ============================================================================
-  // Add Handlers (Existing)
-  // ============================================================================
-
-  const handleAddAttribute = useCallback(() => {
-    if (!umlClass) return;
-    const newAttribute: UMLAttribute = {
-      id: `attr_${Date.now()}`,
+  const addAttribute = useCallback(() => {
+    const newAttr: ClassAttribute = {
+      id: `attr-${Date.now()}`,
       name: 'newAttribute',
-      type: 'String',
+      type: 'string',
       visibility: 'private',
+      isStatic: false
     };
-    updateNode(id, {
-      class: {
-        ...umlClass,
-        attributes: [...umlClass.attributes, newAttribute]
-      }
-    });
-    setTimeout(() => {
-      setEditingAttrId(newAttribute.id);
-      setTempAttrName(newAttribute.name);
-      setTempAttrType(newAttribute.type);
-    }, 10);
-  }, [id, umlClass, updateNode]);
+    const newAttributes = [...attributes, newAttr];
+    setAttributes(newAttributes);
+    setEditingAttrId(newAttr.id);
+    setTempAttrName(newAttr.name);
+    setTempAttrType(newAttr.type);
+  }, [attributes]);
 
-  const handleAddMethod = useCallback(() => {
-    if (!umlClass) return;
-    const newMethod: UMLMethod = {
-      id: `method_${Date.now()}`,
+  const addMethod = useCallback(() => {
+    const newMethod: ClassMethod = {
+      id: `method-${Date.now()}`,
       name: 'newMethod',
       returnType: 'void',
-      parameters: [],
+      parameters: '',
       visibility: 'public',
+      isStatic: false,
+      isAbstract: false
     };
-    updateNode(id, {
-      class: {
-        ...umlClass,
-        methods: [...umlClass.methods, newMethod]
+    const newMethods = [...methods, newMethod];
+    setMethods(newMethods);
+    setEditingMethodId(newMethod.id);
+    setTempMethodName(newMethod.name);
+    setTempMethodReturn(newMethod.returnType);
+    setTempMethodParams(newMethod.parameters);
+  }, [methods]);
+
+  const removeAttribute = useCallback((attrId: string) => {
+    const newAttributes = attributes.filter(a => a.id !== attrId);
+    setAttributes(newAttributes);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes: newAttributes, methods });
+    }
+  }, [attributes, id, className, stereotype, methods]);
+
+  const removeMethod = useCallback((methodId: string) => {
+    const newMethods = methods.filter(m => m.id !== methodId);
+    setMethods(newMethods);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes, methods: newMethods });
+    }
+  }, [methods, id, className, stereotype, attributes]);
+
+  const saveAttributeEdit = useCallback(() => {
+    if (editingAttrId) {
+      const newAttributes = attributes.map(a => 
+        a.id === editingAttrId 
+          ? { ...a, name: tempAttrName, type: tempAttrType }
+          : a
+      );
+      setAttributes(newAttributes);
+      setEditingAttrId(null);
+      if (window.updateNodeData) {
+        window.updateNodeData(id, { label: className, stereotype, attributes: newAttributes, methods });
       }
-    });
-    setTimeout(() => {
-      setEditingMethodId(newMethod.id);
-      setTempMethodName(newMethod.name);
-      setTempMethodReturn(newMethod.returnType);
-    }, 10);
-  }, [id, umlClass, updateNode]);
-
-  // ============================================================================
-  // NEW: Color Customization
-  // ============================================================================
-
-  const handleColorChange = useCallback((color: string) => {
-    updateNode(id, {
-      ...data,
-      color,
-    });
-  }, [id, data, updateNode]);
-
-  const handleTextColorChange = useCallback((color: string) => {
-    updateNode(id, {
-      ...data,
-      textColor: color,
-    });
-  }, [id, data, updateNode]);
-
-  // ============================================================================
-  // Helper Functions
-  // ============================================================================
-
-  const getVisibilityIcon = (visibility: string) => {
-    switch (visibility) {
-      case 'private':
-        return <Lock className="w-3 h-3" />;
-      case 'protected':
-        return <Shield className="w-3 h-3" />;
-      case 'public':
-        return <Unlock className="w-3 h-3" />;
-      case 'package':
-        return <PackageIcon className="w-3 h-3" />;
-      default:
-        return null;
     }
-  };
+  }, [editingAttrId, tempAttrName, tempAttrType, attributes, id, className, stereotype, methods]);
 
-  const getVisibilitySymbol = (visibility: string) => {
-    switch (visibility) {
-      case 'private':
-        return '-';
-      case 'protected':
-        return '#';
-      case 'public':
-        return '+';
-      case 'package':
-        return '~';
-      default:
-        return '';
+  const saveMethodEdit = useCallback(() => {
+    if (editingMethodId) {
+      const newMethods = methods.map(m => 
+        m.id === editingMethodId 
+          ? { ...m, name: tempMethodName, returnType: tempMethodReturn, parameters: tempMethodParams }
+          : m
+      );
+      setMethods(newMethods);
+      setEditingMethodId(null);
+      if (window.updateNodeData) {
+        window.updateNodeData(id, { label: className, stereotype, attributes, methods: newMethods });
+      }
     }
-  };
+  }, [editingMethodId, tempMethodName, tempMethodReturn, tempMethodParams, methods, id, className, stereotype, attributes]);
 
-  // ============================================================================
-  // Render Attribute
-  // ============================================================================
+  const toggleAttributeVisibility = useCallback((attrId: string) => {
+    const visibilityOrder: Visibility[] = ['public', 'private', 'protected', 'package'];
+    const newAttributes = attributes.map(a => {
+      if (a.id === attrId) {
+        const currentIndex = visibilityOrder.indexOf(a.visibility);
+        const nextIndex = (currentIndex + 1) % visibilityOrder.length;
+        return { ...a, visibility: visibilityOrder[nextIndex] };
+      }
+      return a;
+    });
+    setAttributes(newAttributes);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes: newAttributes, methods });
+    }
+  }, [attributes, id, className, stereotype, methods]);
 
-  const renderAttribute = (attr: UMLAttribute) => {
-    const isEditing = editingAttrId === attr.id;
-
-    return (
-      <div
-        key={attr.id}
-        className="px-4 py-1.5 flex items-center gap-2 group hover:bg-gray-50 transition-colors"
-      >
-        {!isEditing && (
-          <button
-            onClick={() => handleToggleAttrVisibility(attr.id)}
-            className="flex-shrink-0 text-gray-600 hover:text-blue-600 transition-colors"
-            title="Toggle visibility"
-          >
-            {getVisibilityIcon(attr.visibility)}
-          </button>
-        )}
-
-        {isEditing ? (
-          <>
-            <input
-              ref={attrNameInputRef}
-              type="text"
-              value={tempAttrName}
-              onChange={(e) => setTempAttrName(e.target.value)}
-              onKeyDown={handleAttrKeyDown}
-              className="flex-1 px-2 py-1 text-sm border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
-              placeholder="Attribute name"
-            />
-            <span className="text-gray-400">:</span>
-            <input
-              type="text"
-              value={tempAttrType}
-              onChange={(e) => setTempAttrType(e.target.value)}
-              onKeyDown={handleAttrKeyDown}
-              className="w-24 px-2 py-1 text-sm border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
-              placeholder="Type"
-            />
-            <button
-              onClick={handleSaveAttribute}
-              className="p-1 text-green-600 hover:bg-green-100 rounded"
-            >
-              <Check className="w-3 h-3" />
-            </button>
-            <button
-              onClick={handleCancelEditAttribute}
-              className="p-1 text-red-600 hover:bg-red-100 rounded"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="flex-1 text-sm font-mono">
-              <span className="text-gray-600">{getVisibilitySymbol(attr.visibility)}</span>
-              {' '}
-              <span className={clsx(attr.isStatic && 'underline')}>{attr.name}</span>
-              {' : '}
-              <span className="text-gray-500">{attr.type}</span>
-            </span>
-
-            <button
-              onClick={() => handleStartEditAttribute(attr)}
-              className="opacity-0 group-hover:opacity-100 p-0.5 text-blue-600 hover:bg-blue-100 rounded transition-opacity"
-            >
-              <Edit2 className="w-3 h-3" />
-            </button>
-
-            <button
-              onClick={() => handleDeleteAttribute(attr.id)}
-              className="opacity-0 group-hover:opacity-100 p-0.5 text-red-600 hover:bg-red-100 rounded transition-opacity"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        )}
-      </div>
-    );
-  };
-
-  // ============================================================================
-  // Render Method
-  // ============================================================================
-
-  const renderMethod = (method: UMLMethod) => {
-    const isEditing = editingMethodId === method.id;
-    const paramStr = method.parameters.map(p => `${p.name}: ${p.type}`).join(', ');
-
-    return (
-      <div
-        key={method.id}
-        className="px-4 py-1.5 flex items-center gap-2 group hover:bg-gray-50 transition-colors"
-      >
-        {!isEditing && (
-          <button
-            onClick={() => handleToggleMethodVisibility(method.id)}
-            className="flex-shrink-0 text-gray-600 hover:text-blue-600 transition-colors"
-            title="Toggle visibility"
-          >
-            {getVisibilityIcon(method.visibility)}
-          </button>
-        )}
-
-        {isEditing ? (
-          <>
-            <input
-              ref={methodNameInputRef}
-              type="text"
-              value={tempMethodName}
-              onChange={(e) => setTempMethodName(e.target.value)}
-              onKeyDown={handleMethodKeyDown}
-              className="flex-1 px-2 py-1 text-sm border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
-              placeholder="Method name"
-            />
-            <span className="text-gray-400">:</span>
-            <input
-              type="text"
-              value={tempMethodReturn}
-              onChange={(e) => setTempMethodReturn(e.target.value)}
-              onKeyDown={handleMethodKeyDown}
-              className="w-24 px-2 py-1 text-sm border border-purple-300 rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
-              placeholder="Return type"
-            />
-            <button
-              onClick={handleSaveMethod}
-              className="p-1 text-green-600 hover:bg-green-100 rounded"
-            >
-              <Check className="w-3 h-3" />
-            </button>
-            <button
-              onClick={handleCancelEditMethod}
-              className="p-1 text-red-600 hover:bg-red-100 rounded"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="flex-1 text-sm font-mono">
-              <span className="text-gray-600">{getVisibilitySymbol(method.visibility)}</span>
-              {' '}
-              <span className={clsx(
-                method.isStatic && 'underline',
-                method.isAbstract && 'italic'
-              )}>
-                {method.name}({paramStr})
-              </span>
-              {' : '}
-              <span className="text-gray-500">{method.returnType}</span>
-            </span>
-
-            <button
-              onClick={() => handleStartEditMethod(method)}
-              className="opacity-0 group-hover:opacity-100 p-0.5 text-blue-600 hover:bg-blue-100 rounded transition-opacity"
-            >
-              <Edit2 className="w-3 h-3" />
-            </button>
-
-            <button
-              onClick={() => handleDeleteMethod(method.id)}
-              className="opacity-0 group-hover:opacity-100 p-0.5 text-red-600 hover:bg-red-100 rounded transition-opacity"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </>
-        )}
-      </div>
-    );
-  };
-
-  // Safety check
-  if (!umlClass) {
-    return <div className="p-4 bg-red-100 text-red-800">Invalid class data</div>;
-  }
-
-  // ============================================================================
-  // Main Render
-  // ============================================================================
+  const toggleMethodVisibility = useCallback((methodId: string) => {
+    const visibilityOrder: Visibility[] = ['public', 'private', 'protected', 'package'];
+    const newMethods = methods.map(m => {
+      if (m.id === methodId) {
+        const currentIndex = visibilityOrder.indexOf(m.visibility);
+        const nextIndex = (currentIndex + 1) % visibilityOrder.length;
+        return { ...m, visibility: visibilityOrder[nextIndex] };
+      }
+      return m;
+    });
+    setMethods(newMethods);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label: className, stereotype, attributes, methods: newMethods });
+    }
+  }, [methods, id, className, stereotype, attributes]);
 
   return (
-    <div
-      className={clsx(
-        'relative transition-all duration-200',
-        selected && 'ring-2 ring-purple-500 ring-offset-2 rounded'
-      )}
-      style={{ zIndex }}
-    >
+    <div style={{ position: 'relative' }}>
       {/* Connection Handles */}
-      <Handle type="target" position={Position.Top} className="w-3 h-3 !bg-purple-500 border-2 border-white" />
-      <Handle type="target" position={Position.Left} className="w-3 h-3 !bg-purple-500 border-2 border-white" />
+      <Handle
+        type="target"
+        position={Position.Top}
+        style={{
+          background: '#6b7280',
+          width: '10px',
+          height: '10px',
+          border: '2px solid white'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        style={{
+          background: '#6b7280',
+          width: '10px',
+          height: '10px',
+          border: '2px solid white'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        style={{
+          background: '#6b7280',
+          width: '10px',
+          height: '10px',
+          border: '2px solid white'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          background: '#6b7280',
+          width: '10px',
+          height: '10px',
+          border: '2px solid white'
+        }}
+      />
 
-      {/* Main Class Container */}
-      <div 
-        className="min-w-[240px] max-w-[400px] rounded shadow-md overflow-hidden border-2 border-purple-500"
-        style={{ backgroundColor: nodeColor }}
+      {/* Class Container */}
+      <div
+        style={{
+          minWidth: '220px',
+          background: data.color || 'white',
+          border: `2px solid ${selected ? '#3b82f6' : '#374151'}`,
+          borderRadius: '6px',
+          boxShadow: selected ? '0 0 0 3px rgba(59, 130, 246, 0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
+          overflow: 'hidden',
+          position: 'relative',
+          zIndex: data.zIndex || 1
+        }}
       >
-        {/* Class Name Compartment */}
-        <div className={clsx(
-          'px-4 py-3 flex flex-col items-center gap-1',
-          'bg-gradient-to-r from-purple-500 to-purple-600 text-white'
-        )}>
+        {/* Class Name Section */}
+        <div style={{ padding: '10px', borderBottom: '1px solid #e5e7eb' }}>
           {/* Stereotype */}
-          {(data.stereotype || umlClass.isAbstract) && (
-            <div className="text-xs italic">
-              «{data.stereotype || (umlClass.isAbstract ? 'abstract' : '')}»
+          {(stereotype || isEditingStereotype) && (
+            <div
+              style={{ textAlign: 'center', marginBottom: '4px' }}
+              onDoubleClick={() => setIsEditingStereotype(true)}
+            >
+              {isEditingStereotype ? (
+                <input
+                  type="text"
+                  value={stereotype}
+                  onChange={(e) => setStereotype(e.target.value)}
+                  onBlur={handleStereotypeBlur}
+                  placeholder="«stereotype»"
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    padding: '2px',
+                    fontSize: '11px',
+                    fontStyle: 'italic',
+                    border: '1px solid #3b82f6',
+                    borderRadius: '3px',
+                    outline: 'none',
+                    textAlign: 'center'
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    fontSize: '11px',
+                    fontStyle: 'italic',
+                    color: '#6b7280',
+                    cursor: 'text'
+                  }}
+                >
+                  «{stereotype}»
+                </div>
+              )}
             </div>
           )}
 
           {/* Class Name */}
-          <div className="w-full flex items-center justify-center gap-2">
-            {editingClassName ? (
-              <>
-                <input
-                  ref={classNameInputRef}
-                  type="text"
-                  value={tempClassName}
-                  onChange={(e) => setTempClassName(e.target.value)}
-                  onKeyDown={handleClassNameKeyDown}
-                  className={clsx(
-                    'flex-1 px-2 py-1 text-sm bg-white text-gray-900 border border-purple-300 rounded',
-                    'focus:outline-none focus:ring-2 focus:ring-purple-500',
-                    umlClass.isAbstract && 'italic'
-                  )}
-                />
-                <button
-                  onClick={handleSaveClassName}
-                  className="p-1 bg-white text-green-600 hover:bg-green-100 rounded"
-                >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleCancelEditClassName}
-                  className="p-1 bg-white text-red-600 hover:bg-red-100 rounded"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </>
+          <div
+            style={{ textAlign: 'center' }}
+            onDoubleClick={() => setIsEditingName(true)}
+          >
+            {isEditingName ? (
+              <input
+                type="text"
+                value={className}
+                onChange={handleNameChange}
+                onBlur={handleNameBlur}
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '4px',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  fontStyle: data.isAbstract ? 'italic' : 'normal',
+                  border: '2px solid #3b82f6',
+                  borderRadius: '4px',
+                  outline: 'none',
+                  textAlign: 'center'
+                }}
+              />
             ) : (
-              <>
-                <h3 className={clsx('flex-1 font-semibold text-center', umlClass.isAbstract && 'italic')}>
-                  {umlClass.name}
-                </h3>
-                <button
-                  onClick={handleStartEditClassName}
-                  className="opacity-0 group-hover:opacity-100 p-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-opacity"
-                >
-                  <Edit2 className="w-4 h-4" />
-                </button>
-                {/* NEW: Color Picker */}
-                <button
-                  onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="opacity-0 group-hover:opacity-100 p-1 bg-white bg-opacity-20 hover:bg-opacity-30 rounded transition-opacity"
-                  title="Customize colors"
-                >
-                  <Palette className="w-4 h-4" />
-                </button>
-              </>
+              <div
+                style={{
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  fontStyle: data.isAbstract ? 'italic' : 'normal',
+                  color: data.textColor || '#374151',
+                  cursor: 'text'
+                }}
+              >
+                {className}
+              </div>
             )}
           </div>
         </div>
 
-        {/* NEW: Color Picker Panel */}
-        {showColorPicker && (
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-            <div className="space-y-2">
-              <div>
-                <label className="text-xs font-medium text-gray-700">Background Color</label>
-                <input
-                  type="color"
-                  value={nodeColor}
-                  onChange={(e) => handleColorChange(e.target.value)}
-                  className="w-full h-8 rounded border border-gray-300 cursor-pointer"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-gray-700">Text Color</label>
-                <input
-                  type="color"
-                  value={textColor}
-                  onChange={(e) => handleTextColorChange(e.target.value)}
-                  className="w-full h-8 rounded border border-gray-300 cursor-pointer"
-                />
-              </div>
-            </div>
+        {/* Attributes Section */}
+        <div style={{ borderBottom: '1px solid #e5e7eb' }}>
+          <div
+            style={{
+              padding: '6px 10px',
+              background: '#f9fafb',
+              fontSize: '11px',
+              fontWeight: '600',
+              color: '#6b7280',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}
+          >
+            <span>Attributes</span>
+            <button
+              onClick={addAttribute}
+              style={{
+                padding: '2px 4px',
+                background: 'transparent',
+                border: '1px solid #d1d5db',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                display: 'flex',
+                color: '#6b7280'
+              }}
+            >
+              <Plus size={12} />
+            </button>
           </div>
-        )}
-
-        {/* Attributes Compartment */}
-        <div className="border-t-2 border-purple-500 bg-white">
-          <div className="max-h-48 overflow-y-auto">
-            {umlClass.attributes && umlClass.attributes.length > 0 ? (
-              <div className="divide-y divide-gray-100">
-                {umlClass.attributes.map(renderAttribute)}
-              </div>
-            ) : (
-              <div className="px-4 py-2 text-xs text-gray-400 italic text-center">
+          <div style={{ padding: '6px 10px', minHeight: '30px' }}>
+            {attributes.length === 0 ? (
+              <div style={{ fontSize: '11px', color: '#9ca3af', fontStyle: 'italic' }}>
                 No attributes
               </div>
+            ) : (
+              attributes.map((attr) => (
+                <div
+                  key={attr.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    marginBottom: '3px',
+                    fontSize: '11px',
+                    fontFamily: 'monospace'
+                  }}
+                >
+                  {editingAttrId === attr.id ? (
+                    <>
+                      <button
+                        onClick={() => toggleAttributeVisibility(attr.id)}
+                        style={{
+                          padding: '1px 3px',
+                          background: 'transparent',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          fontSize: '10px'
+                        }}
+                      >
+                        {getVisibilitySymbol(attr.visibility)}
+                      </button>
+                      <input
+                        type="text"
+                        value={tempAttrName}
+                        onChange={(e) => setTempAttrName(e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '2px 4px',
+                          fontSize: '11px',
+                          border: '1px solid #3b82f6',
+                          borderRadius: '3px',
+                          outline: 'none'
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={tempAttrType}
+                        onChange={(e) => setTempAttrType(e.target.value)}
+                        style={{
+                          width: '60px',
+                          padding: '2px 4px',
+                          fontSize: '11px',
+                          border: '1px solid #3b82f6',
+                          borderRadius: '3px',
+                          outline: 'none'
+                        }}
+                      />
+                      <button
+                        onClick={saveAttributeEdit}
+                        style={{
+                          padding: '2px',
+                          background: '#10b981',
+                          border: 'none',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          color: 'white'
+                        }}
+                      >
+                        <Check size={10} />
+                      </button>
+                      <button
+                        onClick={() => setEditingAttrId(null)}
+                        style={{
+                          padding: '2px',
+                          background: '#ef4444',
+                          border: 'none',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          color: 'white'
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => toggleAttributeVisibility(attr.id)}
+                        style={{
+                          padding: '1px 3px',
+                          background: 'transparent',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          fontSize: '10px'
+                        }}
+                      >
+                        {getVisibilitySymbol(attr.visibility)}
+                      </button>
+                      <span
+                        style={{
+                          flex: 1,
+                          cursor: 'pointer',
+                          textDecoration: attr.isStatic ? 'underline' : 'none'
+                        }}
+                        onDoubleClick={() => {
+                          setEditingAttrId(attr.id);
+                          setTempAttrName(attr.name);
+                          setTempAttrType(attr.type);
+                        }}
+                      >
+                        {attr.name}: {attr.type}
+                      </span>
+                      <button
+                        onClick={() => removeAttribute(attr.id)}
+                        style={{
+                          padding: '1px',
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'flex'
+                        }}
+                      >
+                        <Trash2 size={10} color="#ef4444" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))
             )}
-          </div>
-          <div className="border-t border-gray-200 px-3 py-1.5 bg-gray-50">
-            <button
-              onClick={handleAddAttribute}
-              className="w-full flex items-center justify-center gap-1 text-xs text-purple-600 hover:text-purple-700 transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add Attribute</span>
-            </button>
           </div>
         </div>
 
-        {/* Methods Compartment */}
-        <div className="border-t-2 border-purple-500 bg-white">
-          <div className="max-h-48 overflow-y-auto">
-            {umlClass.methods && umlClass.methods.length > 0 ? (
-              <div className="divide-y divide-gray-100">
-                {umlClass.methods.map(renderMethod)}
-              </div>
-            ) : (
-              <div className="px-4 py-2 text-xs text-gray-400 italic text-center">
+        {/* Methods Section */}
+        <div>
+          <div
+            style={{
+              padding: '6px 10px',
+              background: '#f9fafb',
+              fontSize: '11px',
+              fontWeight: '600',
+              color: '#6b7280',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}
+          >
+            <span>Methods</span>
+            <button
+              onClick={addMethod}
+              style={{
+                padding: '2px 4px',
+                background: 'transparent',
+                border: '1px solid #d1d5db',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                display: 'flex',
+                color: '#6b7280'
+              }}
+            >
+              <Plus size={12} />
+            </button>
+          </div>
+          <div style={{ padding: '6px 10px', minHeight: '30px' }}>
+            {methods.length === 0 ? (
+              <div style={{ fontSize: '11px', color: '#9ca3af', fontStyle: 'italic' }}>
                 No methods
               </div>
+            ) : (
+              methods.map((method) => (
+                <div
+                  key={method.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    marginBottom: '3px',
+                    fontSize: '11px',
+                    fontFamily: 'monospace'
+                  }}
+                >
+                  {editingMethodId === method.id ? (
+                    <>
+                      <button
+                        onClick={() => toggleMethodVisibility(method.id)}
+                        style={{
+                          padding: '1px 3px',
+                          background: 'transparent',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          fontSize: '10px'
+                        }}
+                      >
+                        {getVisibilitySymbol(method.visibility)}
+                      </button>
+                      <input
+                        type="text"
+                        value={tempMethodName}
+                        onChange={(e) => setTempMethodName(e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '2px 4px',
+                          fontSize: '11px',
+                          border: '1px solid #3b82f6',
+                          borderRadius: '3px',
+                          outline: 'none'
+                        }}
+                      />
+                      <button
+                        onClick={saveMethodEdit}
+                        style={{
+                          padding: '2px',
+                          background: '#10b981',
+                          border: 'none',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          color: 'white'
+                        }}
+                      >
+                        <Check size={10} />
+                      </button>
+                      <button
+                        onClick={() => setEditingMethodId(null)}
+                        style={{
+                          padding: '2px',
+                          background: '#ef4444',
+                          border: 'none',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          color: 'white'
+                        }}
+                      >
+                        <X size={10} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => toggleMethodVisibility(method.id)}
+                        style={{
+                          padding: '1px 3px',
+                          background: 'transparent',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '2px',
+                          cursor: 'pointer',
+                          fontSize: '10px'
+                        }}
+                      >
+                        {getVisibilitySymbol(method.visibility)}
+                      </button>
+                      <span
+                        style={{
+                          flex: 1,
+                          cursor: 'pointer',
+                          textDecoration: method.isStatic ? 'underline' : 'none',
+                          fontStyle: method.isAbstract ? 'italic' : 'normal'
+                        }}
+                        onDoubleClick={() => {
+                          setEditingMethodId(method.id);
+                          setTempMethodName(method.name);
+                          setTempMethodReturn(method.returnType);
+                          setTempMethodParams(method.parameters);
+                        }}
+                      >
+                        {method.name}({method.parameters}): {method.returnType}
+                      </span>
+                      <button
+                        onClick={() => removeMethod(method.id)}
+                        style={{
+                          padding: '1px',
+                          background: 'transparent',
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'flex'
+                        }}
+                      >
+                        <Trash2 size={10} color="#ef4444" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ))
             )}
-          </div>
-          <div className="border-t border-gray-200 px-3 py-1.5 bg-gray-50">
-            <button
-              onClick={handleAddMethod}
-              className="w-full flex items-center justify-center gap-1 text-xs text-purple-600 hover:text-purple-700 transition-colors"
-            >
-              <Plus className="w-3 h-3" />
-              <span>Add Method</span>
-            </button>
           </div>
         </div>
       </div>
-
-      {/* Connection Handles */}
-      <Handle type="source" position={Position.Right} className="w-3 h-3 !bg-purple-500 border-2 border-white" />
-      <Handle type="source" position={Position.Bottom} className="w-3 h-3 !bg-purple-500 border-2 border-white" />
     </div>
   );
 });
 
 ClassNode.displayName = 'ClassNode';
+
+export default ClassNode;

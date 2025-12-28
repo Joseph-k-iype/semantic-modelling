@@ -1,192 +1,363 @@
 // frontend/src/pages/DiagramEditorPage/DiagramEditorPage.tsx
-import { useEffect } from 'react';
+
+import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { DiagramCanvas } from '../../components/diagram/DiagramCanvas/DiagramCanvas';
-import { useDiagramStore } from '../../store/diagramStore';
-import { DiagramType } from '../../types/diagram.types';
-import { ArrowLeft, Save, Download, Share2, History } from 'lucide-react';
+import DiagramCanvas from '../../components/diagram/DiagramCanvas/DiagramCanvas';
+import { ArrowLeft, Save, Download, Share2, History, Layout } from 'lucide-react';
 
 export const DiagramEditorPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { 
-    loadDiagram, 
-    setDiagram, 
-    setDiagramType,
-    isLoading, 
-    error,
-    nodes,
-    edges,
-    diagramName,
-    saveDiagram,
-    isSaving
-  } = useDiagramStore();
+  
+  const [modelId, setModelId] = useState<string>('');
+  const [diagramId, setDiagramId] = useState<string>('');
+  const [diagramName, setDiagramName] = useState<string>('');
+  const [notation, setNotation] = useState<'er' | 'uml-class' | 'uml-sequence' | 'bpmn' | 'uml-interaction'>('uml-class');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Get diagram type and name from URL params
+    // Get parameters from URL
+    const id = searchParams.get('id') || '';
+    const model = searchParams.get('model') || '';
     const type = searchParams.get('type') || 'UML_CLASS';
     const name = searchParams.get('name') || 'Untitled Diagram';
-    const id = searchParams.get('id');
     
-    // Map string to DiagramType enum
-    let diagramTypeEnum: DiagramType = DiagramType.UML_CLASS;
+    setDiagramId(id);
+    setModelId(model);
+    setDiagramName(name);
     
-    switch (type) {
+    // Map string to notation type
+    let notationType: 'er' | 'uml-class' | 'uml-sequence' | 'bpmn' | 'uml-interaction' = 'uml-class';
+    
+    switch (type.toUpperCase()) {
       case 'ER':
-        diagramTypeEnum = DiagramType.ER;
+        notationType = 'er';
         break;
       case 'UML_CLASS':
-        diagramTypeEnum = DiagramType.UML_CLASS;
+        notationType = 'uml-class';
         break;
       case 'UML_SEQUENCE':
-        diagramTypeEnum = DiagramType.UML_SEQUENCE;
+        notationType = 'uml-sequence';
         break;
-      case 'UML_ACTIVITY':
-        diagramTypeEnum = DiagramType.UML_ACTIVITY;
-        break;
-      case 'UML_STATE':
-        diagramTypeEnum = DiagramType.UML_STATE;
+      case 'UML_INTERACTION':
+        notationType = 'uml-interaction';
         break;
       case 'BPMN':
-        diagramTypeEnum = DiagramType.BPMN;
+        notationType = 'bpmn';
         break;
       default:
-        diagramTypeEnum = DiagramType.UML_CLASS;
+        notationType = 'uml-class';
     }
+    
+    setNotation(notationType);
+    setIsLoading(false);
+  }, [searchParams]);
 
-    if (id) {
-      // Load existing diagram
-      loadDiagram(id);
-    } else {
-      // Create new diagram
-      setDiagram({
-        diagramId: `diagram_${Date.now()}`,
-        diagramName: name,
-        diagramType: diagramTypeEnum,
-        nodes: [],
-        edges: [],
-      });
-      setDiagramType(diagramTypeEnum);
-    }
-  }, [searchParams, loadDiagram, setDiagram, setDiagramType]);
+  const handleBack = () => {
+    navigate(-1);
+  };
 
   const handleSave = async () => {
-    await saveDiagram();
+    setIsSaving(true);
+    try {
+      // Save logic will be implemented here
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulated delay
+      console.log('Diagram saved successfully');
+    } catch (error) {
+      console.error('Failed to save diagram:', error);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleExport = () => {
-    // TODO: Implement export
     console.log('Export diagram');
+    // Export logic will be implemented
   };
 
   const handleShare = () => {
-    // TODO: Implement share
     console.log('Share diagram');
+    // Share logic will be implemented
   };
 
-  const handleViewHistory = () => {
-    // TODO: Implement version history
-    console.log('View history');
+  const handleVersionHistory = () => {
+    console.log('View version history');
+    // Version history logic will be implemented
+  };
+
+  const handleAutoLayout = () => {
+    console.log('Auto layout');
+    // Auto layout logic will be implemented
   };
 
   if (isLoading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading diagram...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center max-w-md">
-          <div className="text-red-600 mb-4">
-            <svg className="w-16 h-16 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-          </div>
-          <h2 className="text-xl font-bold text-gray-800 mb-2">Error Loading Diagram</h2>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={() => navigate('/')}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Go Back
-          </button>
+      <div style={{
+        width: '100%',
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#f9fafb'
+      }}>
+        <div style={{
+          textAlign: 'center'
+        }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            border: '4px solid #e5e7eb',
+            borderTopColor: '#3b82f6',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto 16px'
+          }} />
+          <p style={{
+            color: '#6b7280',
+            fontSize: '14px'
+          }}>
+            Loading diagram...
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Top Navbar */}
-      <div className="bg-white border-b border-gray-200 shadow-sm">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate('/')}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </button>
-            
-            <div className="h-6 w-px bg-gray-300" />
-            
-            <div>
-              <h1 className="text-lg font-semibold text-gray-900">{diagramName}</h1>
-              <p className="text-xs text-gray-500">
-                {nodes.length} nodes • {edges.length} connections
-              </p>
-            </div>
-          </div>
+    <div style={{
+      width: '100%',
+      height: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      background: '#f9fafb'
+    }}>
+      {/* Toolbar */}
+      <div style={{
+        height: '60px',
+        background: 'white',
+        borderBottom: '1px solid #e5e7eb',
+        display: 'flex',
+        alignItems: 'center',
+        padding: '0 16px',
+        gap: '12px',
+        flexShrink: 0
+      }}>
+        {/* Back Button */}
+        <button
+          onClick={handleBack}
+          style={{
+            padding: '8px 12px',
+            background: 'none',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: '#374151',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f3f4f6';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'none';
+          }}
+        >
+          <ArrowLeft size={16} />
+          Back
+        </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleViewHistory}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <History className="w-4 h-4" />
-              History
-            </button>
-
-            <button
-              onClick={handleShare}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <Share2 className="w-4 h-4" />
-              Share
-            </button>
-
-            <button
-              onClick={handleExport}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            >
-              <Download className="w-4 h-4" />
-              Export
-            </button>
-
-            <button
-              onClick={handleSave}
-              disabled={isSaving}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="w-4 h-4" />
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-          </div>
+        {/* Diagram Name */}
+        <div style={{
+          flex: 1,
+          fontSize: '16px',
+          fontWeight: '600',
+          color: '#111827'
+        }}>
+          {diagramName}
         </div>
+
+        {/* Action Buttons */}
+        <button
+          onClick={handleAutoLayout}
+          style={{
+            padding: '8px 12px',
+            background: 'none',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: '#374151',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f3f4f6';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'none';
+          }}
+        >
+          <Layout size={16} />
+          Auto Layout
+        </button>
+
+        <button
+          onClick={handleVersionHistory}
+          style={{
+            padding: '8px 12px',
+            background: 'none',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: '#374151',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f3f4f6';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'none';
+          }}
+        >
+          <History size={16} />
+          History
+        </button>
+
+        <button
+          onClick={handleExport}
+          style={{
+            padding: '8px 12px',
+            background: 'none',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: '#374151',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f3f4f6';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'none';
+          }}
+        >
+          <Download size={16} />
+          Export
+        </button>
+
+        <button
+          onClick={handleShare}
+          style={{
+            padding: '8px 12px',
+            background: 'none',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: '#374151',
+            transition: 'all 0.2s'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = '#f3f4f6';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'none';
+          }}
+        >
+          <Share2 size={16} />
+          Share
+        </button>
+
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          style={{
+            padding: '8px 16px',
+            background: '#3b82f6',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: isSaving ? 'not-allowed' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '14px',
+            color: 'white',
+            fontWeight: '500',
+            transition: 'all 0.2s',
+            opacity: isSaving ? 0.7 : 1
+          }}
+          onMouseEnter={(e) => {
+            if (!isSaving) {
+              e.currentTarget.style.background = '#2563eb';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = '#3b82f6';
+          }}
+        >
+          <Save size={16} />
+          {isSaving ? 'Saving...' : 'Save'}
+        </button>
       </div>
 
-      {/* Diagram Canvas */}
-      <div className="flex-1 overflow-hidden">
-        <DiagramCanvas />
+      {/* Canvas Area */}
+      <div style={{
+        flex: 1,
+        overflow: 'hidden',
+        position: 'relative'
+      }}>
+        {modelId && diagramId ? (
+          <DiagramCanvas
+            modelId={modelId}
+            diagramId={diagramId}
+            notation={notation}
+          />
+        ) : (
+          <div style={{
+            width: '100%',
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <p style={{
+              color: '#9ca3af',
+              fontSize: '14px'
+            }}>
+              Invalid diagram parameters
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* Add spinner animation */}
+      <style>
+        {`
+          @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+        `}
+      </style>
     </div>
   );
 };
+
+export default DiagramEditorPage;

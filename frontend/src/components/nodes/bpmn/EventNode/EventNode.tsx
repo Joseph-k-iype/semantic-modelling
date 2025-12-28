@@ -2,148 +2,181 @@
 
 import React, { memo, useState, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { Play, Clock, Mail, AlertCircle, XCircle } from 'lucide-react';
+import { Clock, Mail, AlertCircle, CheckCircle } from 'lucide-react';
 
 export type EventType = 'start' | 'intermediate' | 'end';
-export type EventTrigger = 'none' | 'message' | 'timer' | 'error' | 'signal' | 'terminate';
+export type EventTrigger = 'none' | 'message' | 'timer' | 'error' | 'conditional';
 
 export interface EventNodeData {
   label: string;
   eventType: EventType;
-  trigger: EventTrigger;
+  eventTrigger: EventTrigger;
   color?: string;
   textColor?: string;
   zIndex?: number;
 }
 
-const EventNode: React.FC<NodeProps<EventNodeData>> = ({ data, selected, id }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [eventName, setEventName] = useState(data.label);
+const EventNode: React.FC<NodeProps<EventNodeData>> = memo(({ id, data, selected }) => {
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [label, setLabel] = useState(data.label || 'Event');
 
-  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setEventName(e.target.value);
+  const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setLabel(e.target.value);
   }, []);
 
-  const handleNameBlur = useCallback(() => {
-    setIsEditing(false);
+  const handleLabelBlur = useCallback(() => {
+    setIsEditingLabel(false);
     if (window.updateNodeData) {
-      window.updateNodeData(id, { label: eventName });
+      window.updateNodeData(id, { label });
     }
-  }, [id, eventName]);
+  }, [id, label]);
 
-  const backgroundColor = data.color || '#ffffff';
-  const textColor = data.textColor || '#000000';
-  const eventType = data.eventType || 'start';
-  const trigger = data.trigger || 'none';
+  const handleLabelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleLabelBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingLabel(false);
+      setLabel(data.label || 'Event');
+    }
+  }, [handleLabelBlur, data.label]);
 
   const getEventIcon = () => {
-    switch (trigger) {
+    switch (data.eventTrigger) {
       case 'message':
-        return <Mail size={20} color={textColor} />;
+        return <Mail size={16} />;
       case 'timer':
-        return <Clock size={20} color={textColor} />;
+        return <Clock size={16} />;
       case 'error':
-        return <AlertCircle size={20} color={textColor} />;
-      case 'terminate':
-        return <XCircle size={20} color={textColor} />;
-      case 'signal':
-        return <div style={{ 
-          width: 0, 
-          height: 0, 
-          borderLeft: '10px solid transparent',
-          borderRight: '10px solid transparent',
-          borderBottom: `20px solid ${textColor}`
-        }} />;
+        return <AlertCircle size={16} />;
+      case 'conditional':
+        return <CheckCircle size={16} />;
       default:
-        return eventType === 'start' ? <Play size={16} color={textColor} /> : null;
+        return null;
     }
   };
 
-  const getBorderStyle = () => {
-    switch (eventType) {
+  const getEventStyle = () => {
+    const baseStyle = {
+      width: '50px',
+      height: '50px',
+      borderRadius: '50%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: data.color || 'white',
+      position: 'relative' as const,
+      zIndex: data.zIndex || 1
+    };
+
+    switch (data.eventType) {
       case 'start':
-        return `2px solid ${textColor}`;
+        return {
+          ...baseStyle,
+          border: '3px solid #10b981',
+          boxShadow: selected ? '0 0 0 3px rgba(16, 185, 129, 0.3)' : 'none'
+        };
       case 'intermediate':
-        return `3px double ${textColor}`;
+        return {
+          ...baseStyle,
+          border: '3px double #f59e0b',
+          boxShadow: selected ? '0 0 0 3px rgba(245, 158, 11, 0.3)' : 'none'
+        };
       case 'end':
-        return `3px solid ${textColor}`;
+        return {
+          ...baseStyle,
+          border: '3px solid #ef4444',
+          boxShadow: selected ? '0 0 0 3px rgba(239, 68, 68, 0.3)' : 'none'
+        };
       default:
-        return `2px solid ${textColor}`;
+        return baseStyle;
     }
   };
 
   return (
-    <div style={{ position: 'relative', zIndex: data.zIndex || 1 }}>
-      <div 
-        className="event-node"
-        style={{
-          width: '60px',
-          height: '60px',
-          backgroundColor,
-          border: getBorderStyle(),
-          borderRadius: '50%',
-          boxShadow: selected ? '0 0 0 2px #3b82f6' : '0 2px 4px rgba(0,0,0,0.1)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center'
-        }}
-      >
-        <Handle type="target" position={Position.Top} id="top" />
-        <Handle type="target" position={Position.Left} id="left" />
-        <Handle type="target" position={Position.Right} id="right" />
-        <Handle type="target" position={Position.Bottom} id="bottom" />
-        
-        <Handle type="source" position={Position.Top} id="top-source" />
-        <Handle type="source" position={Position.Left} id="left-source" />
-        <Handle type="source" position={Position.Right} id="right-source" />
-        <Handle type="source" position={Position.Bottom} id="bottom-source" />
+    <div style={{ position: 'relative' }}>
+      {/* Handles */}
+      {data.eventType !== 'end' && (
+        <Handle
+          type="source"
+          position={Position.Right}
+          style={{
+            background: '#6b7280',
+            width: '8px',
+            height: '8px',
+            border: '2px solid white'
+          }}
+        />
+      )}
+      {data.eventType !== 'start' && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          style={{
+            background: '#6b7280',
+            width: '8px',
+            height: '8px',
+            border: '2px solid white'
+          }}
+        />
+      )}
 
-        {getEventIcon()}
+      {/* Event Circle */}
+      <div style={getEventStyle()}>
+        <div style={{ color: data.textColor || '#374151' }}>
+          {getEventIcon()}
+        </div>
       </div>
 
-      {/* Event Label */}
-      <div 
+      {/* Label */}
+      <div
         style={{
           position: 'absolute',
-          top: '70px',
+          top: '60px',
           left: '50%',
           transform: 'translateX(-50%)',
-          minWidth: '100px',
+          whiteSpace: 'nowrap',
           textAlign: 'center',
-          fontSize: '11px',
-          color: textColor,
-          whiteSpace: 'nowrap'
+          minWidth: '80px'
         }}
+        onDoubleClick={() => setIsEditingLabel(true)}
       >
-        {isEditing ? (
+        {isEditingLabel ? (
           <input
             type="text"
-            value={eventName}
-            onChange={handleNameChange}
-            onBlur={handleNameBlur}
+            value={label}
+            onChange={handleLabelChange}
+            onBlur={handleLabelBlur}
+            onKeyDown={handleLabelKeyDown}
             autoFocus
             style={{
-              width: '100%',
-              border: 'none',
-              background: 'white',
-              color: textColor,
+              padding: '2px 6px',
               fontSize: '11px',
-              textAlign: 'center',
+              border: '2px solid #3b82f6',
+              borderRadius: '3px',
               outline: 'none',
-              padding: '2px'
+              textAlign: 'center',
+              minWidth: '80px'
             }}
           />
         ) : (
-          <div 
-            onDoubleClick={() => setIsEditing(true)}
-            style={{ cursor: 'text' }}
+          <div
+            style={{
+              padding: '2px 6px',
+              fontSize: '11px',
+              cursor: 'text',
+              color: data.textColor || '#374151',
+              fontWeight: '500'
+            }}
           >
-            {eventName}
+            {label}
           </div>
         )}
       </div>
     </div>
   );
-};
+});
 
-export default memo(EventNode);
+EventNode.displayName = 'EventNode';
+
+export default EventNode;

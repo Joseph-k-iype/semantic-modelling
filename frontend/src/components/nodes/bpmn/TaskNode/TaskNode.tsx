@@ -2,159 +2,162 @@
 
 import React, { memo, useState, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { User, Cog, Mail, FileText, Repeat } from 'lucide-react';
+import { User, Settings, FileText, Code } from 'lucide-react';
 
-export type TaskType = 'task' | 'user' | 'service' | 'send' | 'receive' | 'manual' | 'script';
+export type TaskType = 'task' | 'user' | 'service' | 'manual' | 'script';
 
 export interface TaskNodeData {
   label: string;
   taskType: TaskType;
-  isLooping?: boolean;
-  isMultiInstance?: boolean;
   color?: string;
   textColor?: string;
   zIndex?: number;
 }
 
-const TaskNode: React.FC<NodeProps<TaskNodeData>> = ({ data, selected, id }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [taskName, setTaskName] = useState(data.label);
+const TaskNode: React.FC<NodeProps<TaskNodeData>> = memo(({ id, data, selected }) => {
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [label, setLabel] = useState(data.label || 'Task');
 
-  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setTaskName(e.target.value);
+  const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setLabel(e.target.value);
   }, []);
 
-  const handleNameBlur = useCallback(() => {
-    setIsEditing(false);
+  const handleLabelBlur = useCallback(() => {
+    setIsEditingLabel(false);
     if (window.updateNodeData) {
-      window.updateNodeData(id, { label: taskName });
+      window.updateNodeData(id, { label });
     }
-  }, [id, taskName]);
+  }, [id, label]);
 
-  const backgroundColor = data.color || '#ffffff';
-  const textColor = data.textColor || '#000000';
-  const taskType = data.taskType || 'task';
+  const handleLabelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleLabelBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingLabel(false);
+      setLabel(data.label || 'Task');
+    }
+  }, [handleLabelBlur, data.label]);
 
   const getTaskIcon = () => {
-    switch (taskType) {
+    switch (data.taskType) {
       case 'user':
-        return <User size={16} color={textColor} strokeWidth={1.5} />;
+        return <User size={14} />;
       case 'service':
-        return <Cog size={16} color={textColor} strokeWidth={1.5} />;
-      case 'send':
-        return <Mail size={16} color={textColor} strokeWidth={1.5} />;
-      case 'receive':
-        return <Mail size={16} color={textColor} strokeWidth={1.5} style={{ transform: 'rotate(180deg)' }} />;
+        return <Settings size={14} />;
       case 'manual':
-        return <FileText size={16} color={textColor} strokeWidth={1.5} />;
+        return <FileText size={14} />;
       case 'script':
-        return <FileText size={16} color={textColor} strokeWidth={1.5} />;
+        return <Code size={14} />;
       default:
         return null;
     }
   };
 
   return (
-    <div 
-      className="task-node"
-      style={{
-        minWidth: '120px',
-        minHeight: '80px',
-        backgroundColor,
-        border: `2px solid ${textColor}`,
-        borderRadius: '8px',
-        boxShadow: selected ? '0 0 0 2px #3b82f6' : '0 2px 4px rgba(0,0,0,0.1)',
-        padding: '12px',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        position: 'relative',
-        zIndex: data.zIndex || 1
-      }}
-    >
-      <Handle type="target" position={Position.Top} id="top" />
-      <Handle type="target" position={Position.Left} id="left" />
-      <Handle type="target" position={Position.Right} id="right" />
-      <Handle type="target" position={Position.Bottom} id="bottom" />
-      
-      <Handle type="source" position={Position.Top} id="top-source" />
-      <Handle type="source" position={Position.Left} id="left-source" />
-      <Handle type="source" position={Position.Right} id="right-source" />
-      <Handle type="source" position={Position.Bottom} id="bottom-source" />
+    <div style={{ position: 'relative' }}>
+      {/* Handles */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white'
+        }}
+      />
 
-      {/* Task Type Icon */}
-      {taskType !== 'task' && (
-        <div style={{ 
-          position: 'absolute', 
-          top: '8px', 
-          left: '8px',
-          padding: '4px',
-          backgroundColor: 'rgba(255,255,255,0.9)',
-          borderRadius: '4px'
-        }}>
-          {getTaskIcon()}
-        </div>
-      )}
-
-      {/* Loop/Multi-instance Marker */}
-      {(data.isLooping || data.isMultiInstance) && (
-        <div style={{ 
-          position: 'absolute', 
-          bottom: '8px', 
-          left: '50%',
-          transform: 'translateX(-50%)',
+      {/* Task Rectangle */}
+      <div
+        style={{
+          width: '120px',
+          minHeight: '60px',
+          background: data.color || 'white',
+          border: `3px solid ${selected ? '#3b82f6' : '#3b82f6'}`,
+          borderRadius: '8px',
+          padding: '8px',
           display: 'flex',
-          gap: '2px'
-        }}>
-          {data.isLooping && <Repeat size={14} color={textColor} />}
-          {data.isMultiInstance && (
-            <div style={{ display: 'flex', gap: '1px' }}>
-              <div style={{ width: '2px', height: '12px', backgroundColor: textColor }} />
-              <div style={{ width: '2px', height: '12px', backgroundColor: textColor }} />
-              <div style={{ width: '2px', height: '12px', backgroundColor: textColor }} />
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: selected ? '0 0 0 3px rgba(59, 130, 246, 0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
+          position: 'relative',
+          zIndex: data.zIndex || 1
+        }}
+      >
+        {/* Task Type Icon */}
+        {data.taskType !== 'task' && (
+          <div
+            style={{
+              position: 'absolute',
+              top: '4px',
+              left: '4px',
+              padding: '2px',
+              background: '#e0f2fe',
+              borderRadius: '3px',
+              color: '#0369a1'
+            }}
+          >
+            {getTaskIcon()}
+          </div>
+        )}
+
+        {/* Task Label */}
+        <div
+          style={{
+            width: '100%',
+            textAlign: 'center'
+          }}
+          onDoubleClick={() => setIsEditingLabel(true)}
+        >
+          {isEditingLabel ? (
+            <input
+              type="text"
+              value={label}
+              onChange={handleLabelChange}
+              onBlur={handleLabelBlur}
+              onKeyDown={handleLabelKeyDown}
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '2px',
+                fontSize: '12px',
+                border: '2px solid #3b82f6',
+                borderRadius: '3px',
+                outline: 'none',
+                textAlign: 'center'
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                fontSize: '12px',
+                fontWeight: '500',
+                cursor: 'text',
+                color: data.textColor || '#374151',
+                wordWrap: 'break-word'
+              }}
+            >
+              {label}
             </div>
           )}
         </div>
-      )}
-
-      {/* Task Name */}
-      <div style={{ 
-        textAlign: 'center', 
-        fontSize: '12px', 
-        color: textColor,
-        fontWeight: '500',
-        wordBreak: 'break-word',
-        width: '100%'
-      }}>
-        {isEditing ? (
-          <input
-            type="text"
-            value={taskName}
-            onChange={handleNameChange}
-            onBlur={handleNameBlur}
-            autoFocus
-            style={{
-              width: '100%',
-              border: 'none',
-              background: 'transparent',
-              color: textColor,
-              fontSize: '12px',
-              textAlign: 'center',
-              outline: 'none'
-            }}
-          />
-        ) : (
-          <div 
-            onDoubleClick={() => setIsEditing(true)}
-            style={{ cursor: 'text' }}
-          >
-            {taskName}
-          </div>
-        )}
       </div>
     </div>
   );
-};
+});
 
-export default memo(TaskNode);
+TaskNode.displayName = 'TaskNode';
+
+export default TaskNode;

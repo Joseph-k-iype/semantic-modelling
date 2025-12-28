@@ -2,167 +2,214 @@
 
 import React, { memo, useState, useCallback } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
-import { User, Database, Server, Globe } from 'lucide-react';
-
-export type LifelineType = 'actor' | 'object' | 'boundary' | 'control' | 'entity';
-
-export interface Activation {
-  id: string;
-  startY: number;
-  endY: number;
-}
 
 export interface LifelineNodeData {
   label: string;
-  type: LifelineType;
   stereotype?: string;
-  activations: Activation[];
   color?: string;
   textColor?: string;
-  lineHeight?: number;
+  lifelineHeight?: number;
   zIndex?: number;
 }
 
-const LifelineNode: React.FC<NodeProps<LifelineNodeData>> = ({ data, selected, id }) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [name, setName] = useState(data.label);
+const LifelineNode: React.FC<NodeProps<LifelineNodeData>> = memo(({ id, data, selected }) => {
+  const [isEditingLabel, setIsEditingLabel] = useState(false);
+  const [label, setLabel] = useState(data.label || 'Object');
+  const [isEditingStereotype, setIsEditingStereotype] = useState(false);
   const [stereotype, setStereotype] = useState(data.stereotype || '');
 
-  const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setName(e.target.value);
+  const lifelineHeight = data.lifelineHeight || 400;
+
+  const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setLabel(e.target.value);
   }, []);
 
-  const handleNameBlur = useCallback(() => {
-    setIsEditing(false);
+  const handleLabelBlur = useCallback(() => {
+    setIsEditingLabel(false);
     if (window.updateNodeData) {
-      window.updateNodeData(id, { label: name, stereotype });
+      window.updateNodeData(id, { label, stereotype });
     }
-  }, [id, name, stereotype]);
+  }, [id, label, stereotype]);
 
-  const backgroundColor = data.color || '#ffffff';
-  const textColor = data.textColor || '#000000';
-  const lineHeight = data.lineHeight || 400;
-  const lifelineType = data.type || 'object';
+  const handleStereotypeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setStereotype(e.target.value);
+  }, []);
 
-  const getIcon = () => {
-    switch (lifelineType) {
-      case 'actor':
-        return <User size={24} color={textColor} />;
-      case 'entity':
-        return <Database size={24} color={textColor} />;
-      case 'control':
-        return <Server size={24} color={textColor} />;
-      case 'boundary':
-        return <Globe size={24} color={textColor} />;
-      default:
-        return null;
+  const handleStereotypeBlur = useCallback(() => {
+    setIsEditingStereotype(false);
+    if (window.updateNodeData) {
+      window.updateNodeData(id, { label, stereotype });
     }
-  };
+  }, [id, label, stereotype]);
+
+  const handleLabelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleLabelBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingLabel(false);
+      setLabel(data.label || 'Object');
+    }
+  }, [handleLabelBlur, data.label]);
+
+  const handleStereotypeKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleStereotypeBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingStereotype(false);
+      setStereotype(data.stereotype || '');
+    }
+  }, [handleStereotypeBlur, data.stereotype]);
 
   return (
-    <div 
-      className="lifeline-node"
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        zIndex: data.zIndex || 1
-      }}
-    >
-      <Handle type="target" position={Position.Top} id="top" />
-      <Handle type="source" position={Position.Top} id="top-source" />
-
-      {/* Lifeline Header */}
-      <div 
+    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      {/* Object Box */}
+      <div
         style={{
+          background: data.color || 'white',
+          border: `2px solid ${selected ? '#3b82f6' : '#374151'}`,
+          borderRadius: '4px',
+          padding: '8px 16px',
           minWidth: '100px',
-          padding: '12px 16px',
-          backgroundColor,
-          border: `2px solid ${textColor}`,
-          borderRadius: lifelineType === 'actor' ? '50%' : '4px',
-          boxShadow: selected ? '0 0 0 2px #3b82f6' : '0 2px 4px rgba(0,0,0,0.1)',
-          textAlign: 'center',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '4px'
-        }}
-      >
-        {getIcon()}
-        
-        {stereotype && (
-          <div style={{ fontSize: '10px', color: `${textColor}99` }}>
-            «{stereotype}»
-          </div>
-        )}
-        
-        {isEditing ? (
-          <input
-            type="text"
-            value={name}
-            onChange={handleNameChange}
-            onBlur={handleNameBlur}
-            autoFocus
-            style={{
-              width: '100%',
-              border: 'none',
-              background: 'transparent',
-              color: textColor,
-              fontWeight: 'bold',
-              textAlign: 'center',
-              outline: 'none',
-              fontSize: '12px'
-            }}
-          />
-        ) : (
-          <div 
-            onDoubleClick={() => setIsEditing(true)}
-            style={{ 
-              cursor: 'text',
-              fontWeight: 'bold',
-              fontSize: '12px',
-              color: textColor
-            }}
-          >
-            {name}
-          </div>
-        )}
-      </div>
-
-      {/* Lifeline */}
-      <div 
-        style={{
-          width: '2px',
-          height: `${lineHeight}px`,
-          backgroundColor: textColor,
-          borderLeft: '1px dashed',
-          borderRight: '1px dashed',
+          boxShadow: selected ? '0 0 0 3px rgba(59, 130, 246, 0.3)' : '0 1px 3px rgba(0,0,0,0.1)',
           position: 'relative',
-          marginTop: '8px'
+          zIndex: data.zIndex || 1
         }}
       >
-        {/* Activation Boxes */}
-        {(data.activations || []).map((activation) => (
+        {/* Stereotype */}
+        {(stereotype || isEditingStereotype) && (
           <div
-            key={activation.id}
             style={{
-              position: 'absolute',
-              left: '-6px',
-              top: `${activation.startY}px`,
-              width: '14px',
-              height: `${activation.endY - activation.startY}px`,
-              backgroundColor,
-              border: `1px solid ${textColor}`,
-              boxShadow: '2px 2px 4px rgba(0,0,0,0.2)'
+              textAlign: 'center',
+              marginBottom: '4px'
             }}
-          />
-        ))}
+            onDoubleClick={() => setIsEditingStereotype(true)}
+          >
+            {isEditingStereotype ? (
+              <input
+                type="text"
+                value={stereotype}
+                onChange={handleStereotypeChange}
+                onBlur={handleStereotypeBlur}
+                onKeyDown={handleStereotypeKeyDown}
+                placeholder="«stereotype»"
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '2px',
+                  fontSize: '10px',
+                  border: '1px solid #3b82f6',
+                  borderRadius: '2px',
+                  outline: 'none',
+                  textAlign: 'center',
+                  fontStyle: 'italic'
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  fontSize: '10px',
+                  fontStyle: 'italic',
+                  color: data.textColor || '#6b7280',
+                  cursor: 'text'
+                }}
+              >
+                «{stereotype}»
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Object Name */}
+        <div
+          style={{
+            textAlign: 'center'
+          }}
+          onDoubleClick={() => setIsEditingLabel(true)}
+        >
+          {isEditingLabel ? (
+            <input
+              type="text"
+              value={label}
+              onChange={handleLabelChange}
+              onBlur={handleLabelBlur}
+              onKeyDown={handleLabelKeyDown}
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '2px',
+                fontSize: '12px',
+                border: '2px solid #3b82f6',
+                borderRadius: '3px',
+                outline: 'none',
+                textAlign: 'center',
+                fontWeight: 'bold'
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                fontSize: '12px',
+                fontWeight: 'bold',
+                cursor: 'text',
+                color: data.textColor || '#374151'
+              }}
+            >
+              {label}
+            </div>
+          )}
+        </div>
       </div>
 
-      <Handle type="source" position={Position.Bottom} id="bottom-source" />
-      <Handle type="target" position={Position.Bottom} id="bottom" />
+      {/* Lifeline (dashed vertical line) */}
+      <svg
+        width="2"
+        height={lifelineHeight}
+        style={{
+          overflow: 'visible'
+        }}
+      >
+        <line
+          x1="1"
+          y1="0"
+          x2="1"
+          y2={lifelineHeight}
+          stroke={selected ? '#3b82f6' : '#6b7280'}
+          strokeWidth="2"
+          strokeDasharray="5,5"
+        />
+      </svg>
+
+      {/* Handles for messages */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          left: '-50px',
+          top: '50px'
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{
+          background: '#6b7280',
+          width: '8px',
+          height: '8px',
+          border: '2px solid white',
+          right: '-50px',
+          top: '50px'
+        }}
+      />
     </div>
   );
-};
+});
 
-export default memo(LifelineNode);
+LifelineNode.displayName = 'LifelineNode';
+
+export default LifelineNode;

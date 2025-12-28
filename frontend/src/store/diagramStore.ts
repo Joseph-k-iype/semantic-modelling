@@ -10,7 +10,7 @@ import {
   addEdge,
 } from 'reactflow';
 import { DiagramNode, DiagramType } from '../types/diagram.types';
-import { createDefaultNodeData } from '../features/diagram-engine/NodeFactory';
+import { getDefaultNodeData } from '../features/diagram-engine/NodeFactory';
 
 interface DiagramStore {
   // State
@@ -162,7 +162,7 @@ export const useDiagramStore = create<DiagramStore>()(
         id: `node_${Date.now()}`,
         type: nodeType,
         position,
-        data: createDefaultNodeData(nodeType, position),
+        data: getDefaultNodeData(nodeType, position),
       };
 
       set((state) => {

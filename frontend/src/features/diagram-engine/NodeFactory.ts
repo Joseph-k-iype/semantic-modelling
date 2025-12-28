@@ -1,66 +1,65 @@
 // frontend/src/features/diagram-engine/NodeFactory.ts
+
 import { ComponentType } from 'react';
-import { NodeTypes, EdgeTypes, EdgeProps } from 'reactflow';
+import { NodeTypes, EdgeTypes, EdgeProps, NodeProps } from 'reactflow';
 
-// Import node components
-import { EntityNode } from '../../components/nodes/er/EntityNode/EntityNode';
-import { ClassNode } from '../../components/nodes/uml/ClassNode/ClassNode';
-import { TaskNode } from '../../components/nodes/bpmn/TaskNode/TaskNode';
-import { EventNode } from '../../components/nodes/bpmn/EventNode/EventNode';
-import { GatewayNode } from '../../components/nodes/bpmn/GatewayNode/GatewayNode';
-import { PoolNode } from '../../components/nodes/bpmn/PoolNode/PoolNode';
+// Import node components (all use default exports)
+import EntityNode from '../../components/nodes/er/EntityNode/EntityNode';
+import ClassNode from '../../components/nodes/uml/ClassNode/ClassNode';
+import TaskNode from '../../components/nodes/bpmn/TaskNode/TaskNode';
+import EventNode from '../../components/nodes/bpmn/EventNode/EventNode';
+import GatewayNode from '../../components/nodes/bpmn/GatewayNode/GatewayNode';
+import PoolNode from '../../components/nodes/bpmn/PoolNode/PoolNode';
+import LifelineNode from '../../components/nodes/uml/LifelineNode/LifelineNode';
 
-// Import ER edge components
-import { RelationshipEdge } from '../../components/edges/er/RelationshipEdge/RelationshipEdge';
-
-// Import UML edge components
-import {
-  AssociationEdge,
-  GeneralizationEdge,
-  DependencyEdge,
-  AggregationEdge,
-  CompositionEdge,
-  RealizationEdge,
-  MessageEdge,
-  TransitionEdge,
-} from '../../components/edges/uml/UMLEdges';
-
-// Import BPMN edge components
-import {
-  SequenceFlowEdge,
-  MessageFlowEdge,
-  BPMNAssociationEdge,
-} from '../../components/edges/bpmn/BPMNEdges';
+// Import edge components (all use default exports)
+import RelationshipEdge from '../../components/edges/er/RelationshipEdge/RelationshipEdge';
+import AssociationEdge from '../../components/edges/uml/AssociationEdge/AssociationEdge';
+import MessageEdge from '../../components/edges/uml/MessageEdge/MessageEdge';
+import SequenceFlowEdge from '../../components/edges/bpmn/SequenceFlowEdge/SequenceFlowEdge';
 
 // Node type registry
 export const nodeTypes: NodeTypes = {
   // ER Nodes
-  ER_ENTITY: EntityNode,
-  ER_WEAK_ENTITY: EntityNode,
-  ER_ATTRIBUTE: EntityNode,
+  ER_ENTITY: EntityNode as ComponentType<NodeProps>,
+  ER_WEAK_ENTITY: EntityNode as ComponentType<NodeProps>,
+  ER_ATTRIBUTE: EntityNode as ComponentType<NodeProps>,
+  entityNode: EntityNode as ComponentType<NodeProps>,
 
   // UML Nodes
-  UML_CLASS: ClassNode,
-  UML_INTERFACE: ClassNode,
-  UML_ABSTRACT_CLASS: ClassNode,
-  UML_PACKAGE: ClassNode,
-  UML_COMPONENT: ClassNode,
-  UML_NOTE: ClassNode,
+  UML_CLASS: ClassNode as ComponentType<NodeProps>,
+  UML_INTERFACE: ClassNode as ComponentType<NodeProps>,
+  UML_ABSTRACT_CLASS: ClassNode as ComponentType<NodeProps>,
+  UML_PACKAGE: ClassNode as ComponentType<NodeProps>,
+  UML_COMPONENT: ClassNode as ComponentType<NodeProps>,
+  UML_NOTE: ClassNode as ComponentType<NodeProps>,
+  classNode: ClassNode as ComponentType<NodeProps>,
+  
+  // UML Sequence Nodes
+  UML_LIFELINE: LifelineNode as ComponentType<NodeProps>,
+  lifelineNode: LifelineNode as ComponentType<NodeProps>,
 
   // BPMN Nodes
-  BPMN_TASK: TaskNode,
-  BPMN_USER_TASK: TaskNode,
-  BPMN_SERVICE_TASK: TaskNode,
-  BPMN_MANUAL_TASK: TaskNode,
-  BPMN_SCRIPT_TASK: TaskNode,
-  BPMN_START_EVENT: EventNode,
-  BPMN_END_EVENT: EventNode,
-  BPMN_INTERMEDIATE_EVENT: EventNode,
-  BPMN_GATEWAY_EXCLUSIVE: GatewayNode,
-  BPMN_GATEWAY_PARALLEL: GatewayNode,
-  BPMN_GATEWAY_INCLUSIVE: GatewayNode,
-  BPMN_POOL: PoolNode,
-  BPMN_LANE: PoolNode,
+  BPMN_TASK: TaskNode as ComponentType<NodeProps>,
+  BPMN_USER_TASK: TaskNode as ComponentType<NodeProps>,
+  BPMN_SERVICE_TASK: TaskNode as ComponentType<NodeProps>,
+  BPMN_MANUAL_TASK: TaskNode as ComponentType<NodeProps>,
+  BPMN_SCRIPT_TASK: TaskNode as ComponentType<NodeProps>,
+  taskNode: TaskNode as ComponentType<NodeProps>,
+  
+  BPMN_START_EVENT: EventNode as ComponentType<NodeProps>,
+  BPMN_END_EVENT: EventNode as ComponentType<NodeProps>,
+  BPMN_INTERMEDIATE_EVENT: EventNode as ComponentType<NodeProps>,
+  eventNode: EventNode as ComponentType<NodeProps>,
+  
+  BPMN_GATEWAY_EXCLUSIVE: GatewayNode as ComponentType<NodeProps>,
+  BPMN_GATEWAY_PARALLEL: GatewayNode as ComponentType<NodeProps>,
+  BPMN_GATEWAY_INCLUSIVE: GatewayNode as ComponentType<NodeProps>,
+  gatewayNode: GatewayNode as ComponentType<NodeProps>,
+  
+  BPMN_POOL: PoolNode as ComponentType<NodeProps>,
+  BPMN_LANE: PoolNode as ComponentType<NodeProps>,
+  poolNode: PoolNode as ComponentType<NodeProps>,
 };
 
 // Edge type registry with proper typing
@@ -68,139 +67,169 @@ export const edgeTypes: EdgeTypes = {
   // ER Edges
   ER_RELATIONSHIP: RelationshipEdge as ComponentType<EdgeProps>,
   ER_ATTRIBUTE_LINK: RelationshipEdge as ComponentType<EdgeProps>,
+  relationshipEdge: RelationshipEdge as ComponentType<EdgeProps>,
 
   // UML Edges
   UML_ASSOCIATION: AssociationEdge as ComponentType<EdgeProps>,
-  UML_AGGREGATION: AggregationEdge as ComponentType<EdgeProps>,
-  UML_COMPOSITION: CompositionEdge as ComponentType<EdgeProps>,
-  UML_GENERALIZATION: GeneralizationEdge as ComponentType<EdgeProps>,
-  UML_DEPENDENCY: DependencyEdge as ComponentType<EdgeProps>,
-  UML_REALIZATION: RealizationEdge as ComponentType<EdgeProps>,
+  UML_AGGREGATION: AssociationEdge as ComponentType<EdgeProps>,
+  UML_COMPOSITION: AssociationEdge as ComponentType<EdgeProps>,
+  UML_GENERALIZATION: AssociationEdge as ComponentType<EdgeProps>,
+  UML_DEPENDENCY: AssociationEdge as ComponentType<EdgeProps>,
+  UML_REALIZATION: AssociationEdge as ComponentType<EdgeProps>,
+  associationEdge: AssociationEdge as ComponentType<EdgeProps>,
+  
+  // UML Sequence Message Edge
   UML_MESSAGE: MessageEdge as ComponentType<EdgeProps>,
-  UML_TRANSITION: TransitionEdge as ComponentType<EdgeProps>,
+  messageEdge: MessageEdge as ComponentType<EdgeProps>,
 
   // BPMN Edges
   BPMN_SEQUENCE_FLOW: SequenceFlowEdge as ComponentType<EdgeProps>,
-  BPMN_MESSAGE_FLOW: MessageFlowEdge as ComponentType<EdgeProps>,
-  BPMN_ASSOCIATION: BPMNAssociationEdge as ComponentType<EdgeProps>,
-  BPMN_DATA_ASSOCIATION: BPMNAssociationEdge as ComponentType<EdgeProps>,
+  BPMN_MESSAGE_FLOW: SequenceFlowEdge as ComponentType<EdgeProps>,
+  BPMN_ASSOCIATION: SequenceFlowEdge as ComponentType<EdgeProps>,
+  sequenceFlowEdge: SequenceFlowEdge as ComponentType<EdgeProps>,
 };
 
-// Helper function to create default node data based on type
-export const createDefaultNodeData = (nodeType: string, position: { x: number; y: number }) => {
-  const baseData = {
-    label: 'New Node',
+// Factory function to create nodes
+export function createNode(
+  type: string,
+  position: { x: number; y: number },
+  data: any
+) {
+  return {
+    id: `node-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    type,
     position,
+    data,
   };
+}
 
-  // ER Nodes
-  if (nodeType.startsWith('ER_')) {
-    if (nodeType === 'ER_ENTITY' || nodeType === 'ER_WEAK_ENTITY') {
-      return {
-        ...baseData,
-        label: 'New Entity',
-        entity: {
-          id: `entity_${Date.now()}`,
-          name: 'New Entity',
-          attributes: [],
-          isWeak: nodeType === 'ER_WEAK_ENTITY',
-        },
-      };
-    }
+// Factory function to create edges
+export function createEdge(
+  source: string,
+  target: string,
+  type: string,
+  data: any = {}
+) {
+  return {
+    id: `edge-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    source,
+    target,
+    type,
+    data,
+  };
+}
+
+// Helper to get default node data based on type
+export function getDefaultNodeData(type: string): any {
+  if (type.startsWith('ER_') || type === 'entityNode') {
+    return {
+      label: 'Entity',
+      attributes: [],
+      primaryKeys: [],
+      foreignKeys: []
+    };
   }
-
-  // UML Nodes
-  if (nodeType.startsWith('UML_')) {
-    if (nodeType === 'UML_CLASS' || nodeType === 'UML_INTERFACE' || nodeType === 'UML_ABSTRACT_CLASS') {
-      return {
-        ...baseData,
-        label: nodeType === 'UML_INTERFACE' ? 'New Interface' : 'New Class',
-        isAbstract: nodeType === 'UML_ABSTRACT_CLASS',
-        stereotype: nodeType === 'UML_INTERFACE' ? 'interface' : undefined,
-        class: {
-          id: `class_${Date.now()}`,
-          name: nodeType === 'UML_INTERFACE' ? 'New Interface' : 'New Class',
-          attributes: [],
-          methods: [],
-          isAbstract: nodeType === 'UML_ABSTRACT_CLASS',
-        },
-      };
-    }
+  
+  if (type.startsWith('UML_CLASS') || type === 'classNode') {
+    return {
+      label: 'Class',
+      stereotype: '',
+      attributes: [],
+      methods: [],
+      isAbstract: false
+    };
   }
-
-  // BPMN Nodes
-  if (nodeType.startsWith('BPMN_')) {
-    if (nodeType.includes('TASK')) {
-      const taskTypeMap: Record<string, any> = {
-        BPMN_TASK: 'task',
-        BPMN_USER_TASK: 'userTask',
-        BPMN_SERVICE_TASK: 'serviceTask',
-        BPMN_MANUAL_TASK: 'manualTask',
-        BPMN_SCRIPT_TASK: 'scriptTask',
-      };
-
-      return {
-        ...baseData,
-        label: 'New Task',
-        task: {
-          id: `task_${Date.now()}`,
-          name: 'New Task',
-          type: taskTypeMap[nodeType] || 'task',
-        },
-      };
-    }
-
-    if (nodeType.includes('EVENT')) {
-      const eventTypeMap: Record<string, any> = {
-        BPMN_START_EVENT: 'start',
-        BPMN_END_EVENT: 'end',
-        BPMN_INTERMEDIATE_EVENT: 'intermediate',
-      };
-
-      return {
-        ...baseData,
-        label: '',
-        event: {
-          id: `event_${Date.now()}`,
-          name: '',
-          eventType: eventTypeMap[nodeType] || 'start',
-        },
-      };
-    }
-
-    if (nodeType.includes('GATEWAY')) {
-      const gatewayTypeMap: Record<string, any> = {
-        BPMN_GATEWAY_EXCLUSIVE: 'exclusive',
-        BPMN_GATEWAY_PARALLEL: 'parallel',
-        BPMN_GATEWAY_INCLUSIVE: 'inclusive',
-      };
-
-      return {
-        ...baseData,
-        label: '',
-        gateway: {
-          id: `gateway_${Date.now()}`,
-          name: '',
-          gatewayType: gatewayTypeMap[nodeType] || 'exclusive',
-        },
-      };
-    }
-
-    if (nodeType === 'BPMN_POOL') {
-      return {
-        ...baseData,
-        label: 'New Pool',
-        pool: {
-          id: `pool_${Date.now()}`,
-          name: 'New Pool',
-          lanes: [
-            { id: `lane_${Date.now()}_1`, name: 'Lane 1', height: 200 },
-            { id: `lane_${Date.now()}_2`, name: 'Lane 2', height: 200 },
-          ],
-        },
-      };
-    }
+  
+  if (type.startsWith('UML_LIFELINE') || type === 'lifelineNode') {
+    return {
+      label: 'Object',
+      stereotype: '',
+      lifelineHeight: 400
+    };
   }
+  
+  if (type.startsWith('BPMN_TASK') || type === 'taskNode') {
+    return {
+      label: 'Task',
+      taskType: 'task'
+    };
+  }
+  
+  if (type.startsWith('BPMN_') && type.includes('EVENT') || type === 'eventNode') {
+    return {
+      label: 'Event',
+      eventType: 'start',
+      eventTrigger: 'none'
+    };
+  }
+  
+  if (type.startsWith('BPMN_GATEWAY') || type === 'gatewayNode') {
+    return {
+      label: 'Gateway',
+      gatewayType: 'exclusive'
+    };
+  }
+  
+  if (type.startsWith('BPMN_POOL') || type.startsWith('BPMN_LANE') || type === 'poolNode') {
+    return {
+      label: 'Pool',
+      poolType: 'pool',
+      width: 400,
+      height: 200
+    };
+  }
+  
+  return {
+    label: 'Node'
+  };
+}
 
-  return baseData;
+// Helper to get default edge data based on type
+export function getDefaultEdgeData(type: string): any {
+  if (type.startsWith('ER_') || type === 'relationshipEdge') {
+    return {
+      label: '',
+      sourceCardinality: '1',
+      targetCardinality: 'N',
+      isIdentifying: false
+    };
+  }
+  
+  if (type.startsWith('UML_ASSOCIATION') || type === 'associationEdge') {
+    return {
+      label: '',
+      associationType: 'association',
+      sourceMultiplicity: '1',
+      targetMultiplicity: '1'
+    };
+  }
+  
+  if (type.startsWith('UML_MESSAGE') || type === 'messageEdge') {
+    return {
+      label: 'message()',
+      messageType: 'sync',
+      sequence: 1
+    };
+  }
+  
+  if (type.startsWith('BPMN_') || type === 'sequenceFlowEdge') {
+    return {
+      label: '',
+      condition: '',
+      isDefault: false
+    };
+  }
+  
+  return {
+    label: ''
+  };
+}
+
+export default {
+  nodeTypes,
+  edgeTypes,
+  createNode,
+  createEdge,
+  getDefaultNodeData,
+  getDefaultEdgeData,
 };

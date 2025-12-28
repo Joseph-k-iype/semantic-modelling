@@ -3,18 +3,18 @@
 import React, { memo, useState, useCallback } from 'react';
 import { EdgeProps, getStraightPath, EdgeLabelRenderer, BaseEdge } from 'reactflow';
 
-export type MessageType = 'synchronous' | 'asynchronous' | 'return' | 'create' | 'destroy';
+export type MessageType = 'sync' | 'async' | 'return' | 'create' | 'delete';
 
 export interface MessageEdgeData {
   label?: string;
   messageType: MessageType;
-  sequenceNumber?: string;
+  sequence?: number;
   color?: string;
   strokeWidth?: number;
   zIndex?: number;
 }
 
-const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
+const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = memo(({
   id,
   sourceX,
   sourceY,
@@ -27,15 +27,17 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
 }) => {
   const [isEditingLabel, setIsEditingLabel] = useState(false);
   const [label, setLabel] = useState(data?.label || '');
-  const [messageType, setMessageType] = useState<MessageType>(data?.messageType || 'synchronous');
 
-  // Use straight path for sequence diagrams
   const [edgePath, labelX, labelY] = getStraightPath({
     sourceX,
     sourceY,
     targetX,
     targetY,
   });
+
+  const messageType = data?.messageType || 'sync';
+  const edgeColor = data?.color || (selected ? '#3b82f6' : '#000000');
+  const strokeWidth = data?.strokeWidth || 2;
 
   const handleLabelChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setLabel(e.target.value);
@@ -44,38 +46,34 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
   const handleLabelBlur = useCallback(() => {
     setIsEditingLabel(false);
     if (window.updateEdgeData) {
-      window.updateEdgeData(id, { label, messageType });
+      window.updateEdgeData(id, { 
+        label, 
+        messageType: data?.messageType,
+        sequence: data?.sequence
+      });
     }
-  }, [id, label, messageType]);
+  }, [id, label, data?.messageType, data?.sequence]);
 
-  const handleMessageTypeChange = useCallback((type: MessageType) => {
-    setMessageType(type);
-    if (window.updateEdgeData) {
-      window.updateEdgeData(id, { label, messageType: type });
-    }
-  }, [id, label]);
-
-  const edgeColor = data?.color || '#000000';
-  const strokeWidth = data?.strokeWidth || 2;
-
-  // Get stroke style based on message type
   const getStrokeStyle = () => {
-    if (messageType === 'return' || messageType === 'asynchronous') {
-      return '5,5'; // dashed
+    switch (messageType) {
+      case 'return':
+        return '5,5';
+      case 'create':
+        return '5,5';
+      default:
+        return undefined;
     }
-    return undefined;
   };
 
-  // Get marker end based on message type
   const getMarkerEnd = () => {
     const arrowSize = 10;
     
     switch (messageType) {
-      case 'synchronous':
+      case 'sync':
         // Filled arrow
         return (
           <marker
-            id={`sync-${id}`}
+            id={`sync-message-${id}`}
             markerWidth={arrowSize}
             markerHeight={arrowSize}
             refX={arrowSize}
@@ -88,14 +86,14 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
             />
           </marker>
         );
-      case 'asynchronous':
+      case 'async':
         // Open arrow
         return (
           <marker
-            id={`async-${id}`}
+            id={`async-message-${id}`}
             markerWidth={arrowSize}
             markerHeight={arrowSize}
-            refX={arrowSize}
+            refX={arrowSize / 2}
             refY={arrowSize / 2}
             orient="auto"
           >
@@ -108,13 +106,13 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
           </marker>
         );
       case 'return':
-        // Open arrow dashed
+        // Open arrow (dashed line)
         return (
           <marker
-            id={`return-${id}`}
+            id={`return-message-${id}`}
             markerWidth={arrowSize}
             markerHeight={arrowSize}
-            refX={arrowSize}
+            refX={arrowSize / 2}
             refY={arrowSize / 2}
             orient="auto"
           >
@@ -127,39 +125,44 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
           </marker>
         );
       case 'create':
-        // Filled arrow with "create" stereotype
+        // Open arrow with dashed line
         return (
           <marker
-            id={`create-${id}`}
+            id={`create-message-${id}`}
             markerWidth={arrowSize}
             markerHeight={arrowSize}
-            refX={arrowSize}
+            refX={arrowSize / 2}
             refY={arrowSize / 2}
             orient="auto"
           >
-            <polygon
+            <polyline
               points={`0,0 ${arrowSize},${arrowSize / 2} 0,${arrowSize}`}
-              fill={edgeColor}
+              fill="none"
+              stroke={edgeColor}
+              strokeWidth={strokeWidth}
             />
           </marker>
         );
-      case 'destroy':
+      case 'delete':
         // X marker
         return (
           <marker
-            id={`destroy-${id}`}
-            markerWidth={arrowSize * 2}
-            markerHeight={arrowSize * 2}
-            refX={arrowSize}
-            refY={arrowSize}
+            id={`delete-message-${id}`}
+            markerWidth={arrowSize}
+            markerHeight={arrowSize}
+            refX={arrowSize / 2}
+            refY={arrowSize / 2}
             orient="auto"
           >
-            <line x1="0" y1="0" x2={arrowSize * 2} y2={arrowSize * 2} stroke={edgeColor} strokeWidth={strokeWidth} />
-            <line x1={arrowSize * 2} y1="0" x2="0" y2={arrowSize * 2} stroke={edgeColor} strokeWidth={strokeWidth} />
+            <path
+              d={`M 0 0 L ${arrowSize} ${arrowSize} M 0 ${arrowSize} L ${arrowSize} 0`}
+              stroke={edgeColor}
+              strokeWidth={strokeWidth}
+            />
           </marker>
         );
       default:
-        return undefined;
+        return null;
     }
   };
 
@@ -172,7 +175,7 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
       <BaseEdge
         id={id}
         path={edgePath}
-        markerEnd={`url(#${messageType}-${id})`}
+        markerEnd={`url(#${messageType}-message-${id})`}
         style={{
           stroke: edgeColor,
           strokeWidth: selected ? strokeWidth + 1 : strokeWidth,
@@ -183,57 +186,39 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
 
       <EdgeLabelRenderer>
         {/* Sequence Number */}
-        {data?.sequenceNumber && (
+        {data?.sequence && (
           <div
             style={{
               position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${sourceX + 20}px, ${sourceY - 15}px)`,
+              transform: `translate(-50%, -50%) translate(${sourceX + 15}px, ${sourceY}px)`,
               pointerEvents: 'none',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              color: edgeColor,
               zIndex: data?.zIndex || 1
             }}
           >
-            {data.sequenceNumber}.
+            <div
+              style={{
+                width: '20px',
+                height: '20px',
+                borderRadius: '50%',
+                background: 'white',
+                border: '2px solid #3b82f6',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '10px',
+                fontWeight: 'bold'
+              }}
+            >
+              {data.sequence}
+            </div>
           </div>
         )}
-
-        {/* Message Type Selector */}
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 25}px)`,
-            pointerEvents: 'all',
-            zIndex: data?.zIndex || 1
-          }}
-          className="nodrag nopan"
-        >
-          <select
-            value={messageType}
-            onChange={(e) => handleMessageTypeChange(e.target.value as MessageType)}
-            style={{
-              padding: '2px 4px',
-              fontSize: '10px',
-              background: 'white',
-              border: '1px solid #ccc',
-              borderRadius: '3px',
-              cursor: 'pointer'
-            }}
-          >
-            <option value="synchronous">Synchronous</option>
-            <option value="asynchronous">Asynchronous</option>
-            <option value="return">Return</option>
-            <option value="create">Create</option>
-            <option value="destroy">Destroy</option>
-          </select>
-        </div>
 
         {/* Message Label */}
         <div
           style={{
             position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY + 5}px)`,
+            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 15}px)`,
             pointerEvents: 'all',
             zIndex: data?.zIndex || 1
           }}
@@ -247,55 +232,39 @@ const MessageEdge: React.FC<EdgeProps<MessageEdgeData>> = ({
               onChange={handleLabelChange}
               onBlur={handleLabelBlur}
               autoFocus
-              placeholder="message()"
               style={{
                 padding: '2px 6px',
                 fontSize: '11px',
-                background: 'white',
-                border: '1px solid #ccc',
+                border: '1px solid #3b82f6',
                 borderRadius: '3px',
-                minWidth: '100px',
-                fontFamily: 'monospace'
+                outline: 'none',
+                minWidth: '80px',
+                background: 'white'
               }}
             />
           ) : (
             <div
               style={{
                 padding: '2px 6px',
-                fontSize: '11px',
                 background: 'white',
-                border: '1px solid #ccc',
+                border: `1px solid ${selected ? '#3b82f6' : 'transparent'}`,
                 borderRadius: '3px',
+                fontSize: '11px',
                 cursor: 'text',
-                fontFamily: 'monospace',
                 minWidth: '60px',
-                textAlign: 'center'
+                textAlign: 'center',
+                fontFamily: 'monospace'
               }}
             >
               {label || 'message()'}
             </div>
           )}
         </div>
-
-        {/* Create stereotype label */}
-        {messageType === 'create' && (
-          <div
-            style={{
-              position: 'absolute',
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 40}px)`,
-              pointerEvents: 'none',
-              fontSize: '10px',
-              fontStyle: 'italic',
-              color: edgeColor,
-              zIndex: data?.zIndex || 1
-            }}
-          >
-            «create»
-          </div>
-        )}
       </EdgeLabelRenderer>
     </>
   );
-};
+});
 
-export default memo(MessageEdge);
+MessageEdge.displayName = 'MessageEdge';
+
+export default MessageEdge;

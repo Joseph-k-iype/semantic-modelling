@@ -14,7 +14,6 @@ import ReactFlow, {
   Panel,
   NodeTypes,
   EdgeTypes,
-  MarkerType
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -45,6 +44,7 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string; edgeId?: string } | null>(null);
+  const [maxZIndex, setMaxZIndex] = useState(1);
 
   // Define node types
   const nodeTypes: NodeTypes = useMemo(() => ({
@@ -93,24 +93,53 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
       delete (window as any).updateNodeData;
       delete (window as any).updateEdgeData;
     };
-  }, []);
+  }, [setNodes, setEdges]);
+
+  // Load diagram data
+  useEffect(() => {
+    loadDiagramData();
+  }, [modelId, diagramId]);
+
+  const loadDiagramData = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNodes(data.nodes || []);
+        setEdges(data.edges || []);
+      }
+    } catch (error) {
+      console.error('Failed to load diagram:', error);
+    }
+  };
 
   // Sync node to graph database
   const syncNodeToGraph = async (node: Node) => {
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/nodes/${node.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          type: node.type,
-          position: node.position,
-          data: node.data,
-          notation
-        })
-      });
+      await fetch(
+        `${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/nodes/${node.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          },
+          body: JSON.stringify({
+            type: node.type,
+            position: node.position,
+            data: node.data,
+            notation
+          })
+        }
+      );
     } catch (error) {
       console.error('Failed to sync node to graph:', error);
     }
@@ -119,20 +148,23 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
   // Sync edge to graph database
   const syncEdgeToGraph = async (edge: Edge) => {
     try {
-      await fetch(`${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/edges/${edge.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          source: edge.source,
-          target: edge.target,
-          type: edge.type,
-          data: edge.data,
-          notation
-        })
-      });
+      await fetch(
+        `${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}/edges/${edge.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          },
+          body: JSON.stringify({
+            source: edge.source,
+            target: edge.target,
+            type: edge.type,
+            data: edge.data,
+            notation
+          })
+        }
+      );
     } catch (error) {
       console.error('Failed to sync edge to graph:', error);
     }
@@ -163,42 +195,35 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
       edgeType = 'messageEdge';
       edgeData = {
         label: 'message()',
-        messageType: 'synchronous'
+        messageType: 'sync'
       };
     } else if (notation === 'bpmn') {
       edgeType = 'sequenceFlowEdge';
       edgeData = {
         label: '',
-        flowType: 'sequence',
-        sequenceFlowType: 'normal'
+        isDefault: false
       };
     }
-    
+
     const newEdge = {
       ...params,
       id: `edge-${Date.now()}`,
       type: edgeType,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-      },
       data: edgeData
     };
-    
-    setEdges((eds) => {
-      const updatedEdges = addEdge(newEdge, eds);
-      syncEdgeToGraph(newEdge as Edge);
-      return updatedEdges;
-    });
-  }, [notation, modelId, diagramId]);
+
+    setEdges((eds) => addEdge(newEdge, eds));
+    syncEdgeToGraph(newEdge as Edge);
+  }, [notation, setEdges]);
 
   // Handle node selection
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+  const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
     setSelectedEdge(null);
   }, []);
 
   // Handle edge selection
-  const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
+  const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
     setSelectedEdge(edge);
     setSelectedNode(null);
   }, []);
@@ -222,148 +247,49 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
     });
   }, []);
 
-  // Bring to front
+  // Z-index management
   const bringToFront = useCallback((nodeId?: string, edgeId?: string) => {
+    const newZIndex = maxZIndex + 1;
+    setMaxZIndex(newZIndex);
+
     if (nodeId) {
-      const maxZ = Math.max(...nodes.map(n => n.data?.zIndex || 1), 0);
       setNodes(nds => nds.map(node => {
         if (node.id === nodeId) {
-          const updatedNode = { 
-            ...node, 
-            data: { ...node.data, zIndex: maxZ + 1 } 
-          };
-          syncNodeToGraph(updatedNode);
-          return updatedNode;
+          return { ...node, data: { ...node.data, zIndex: newZIndex } };
         }
         return node;
       }));
     } else if (edgeId) {
-      const maxZ = Math.max(...edges.map(e => e.data?.zIndex || 1), 0);
       setEdges(eds => eds.map(edge => {
         if (edge.id === edgeId) {
-          const updatedEdge = { 
-            ...edge, 
-            data: { ...edge.data, zIndex: maxZ + 1 } 
-          };
-          syncEdgeToGraph(updatedEdge);
-          return updatedEdge;
+          return { ...edge, data: { ...edge.data, zIndex: newZIndex } };
         }
         return edge;
       }));
     }
-    setContextMenu(null);
-  }, [nodes, edges]);
 
-  // Send to back
+    setContextMenu(null);
+  }, [maxZIndex, setNodes, setEdges]);
+
   const sendToBack = useCallback((nodeId?: string, edgeId?: string) => {
     if (nodeId) {
-      const minZ = Math.min(...nodes.map(n => n.data?.zIndex || 1), 1);
       setNodes(nds => nds.map(node => {
         if (node.id === nodeId) {
-          const updatedNode = { 
-            ...node, 
-            data: { ...node.data, zIndex: minZ - 1 } 
-          };
-          syncNodeToGraph(updatedNode);
-          return updatedNode;
+          return { ...node, data: { ...node.data, zIndex: 0 } };
         }
         return node;
       }));
     } else if (edgeId) {
-      const minZ = Math.min(...edges.map(e => e.data?.zIndex || 1), 1);
       setEdges(eds => eds.map(edge => {
         if (edge.id === edgeId) {
-          const updatedEdge = { 
-            ...edge, 
-            data: { ...edge.data, zIndex: minZ - 1 } 
-          };
-          syncEdgeToGraph(updatedEdge);
-          return updatedEdge;
+          return { ...edge, data: { ...edge.data, zIndex: 0 } };
         }
         return edge;
       }));
     }
+
     setContextMenu(null);
-  }, [nodes, edges]);
-
-  // Add new node based on notation
-  const addNode = useCallback((type: string) => {
-    const newNode: Node = {
-      id: `node-${Date.now()}`,
-      type,
-      position: { x: 250, y: 250 },
-      data: getDefaultNodeData(type, notation)
-    };
-    
-    setNodes(nds => {
-      syncNodeToGraph(newNode);
-      return [...nds, newNode];
-    });
-  }, [notation, modelId, diagramId]);
-
-  // Get default node data based on type and notation
-  const getDefaultNodeData = (type: string, notation: string) => {
-    switch (type) {
-      case 'entityNode':
-        return {
-          label: 'Entity',
-          attributes: [],
-          isWeak: false,
-          color: '#ffffff',
-          textColor: '#000000'
-        };
-      case 'classNode':
-        return {
-          label: 'Class',
-          classType: 'class',
-          attributes: [],
-          methods: [],
-          color: '#ffffff',
-          textColor: '#000000'
-        };
-      case 'lifelineNode':
-        return {
-          label: 'Object',
-          type: 'object',
-          activations: [],
-          lineHeight: 400,
-          color: '#ffffff',
-          textColor: '#000000'
-        };
-      case 'taskNode':
-        return {
-          label: 'Task',
-          taskType: 'task',
-          color: '#ffffff',
-          textColor: '#000000'
-        };
-      case 'eventNode':
-        return {
-          label: 'Start Event',
-          eventType: 'start',
-          trigger: 'none',
-          color: '#ffffff',
-          textColor: '#000000'
-        };
-      case 'gatewayNode':
-        return {
-          label: 'Gateway',
-          gatewayType: 'exclusive',
-          color: '#ffffcc',
-          textColor: '#000000'
-        };
-      case 'poolNode':
-        return {
-          label: 'Pool',
-          lanes: [{ id: 'lane-1', name: 'Lane 1', height: 150 }],
-          isHorizontal: true,
-          color: '#f0f0f0',
-          textColor: '#000000'
-        };
-      default:
-        return {};
-    }
-  };
+  }, [setNodes, setEdges]);
 
   // Update node color
   const updateNodeColor = useCallback((color: string) => {
@@ -380,7 +306,7 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
         return node;
       }));
     }
-  }, [selectedNode]);
+  }, [selectedNode, setNodes]);
 
   // Update edge color
   const updateEdgeColor = useCallback((color: string) => {
@@ -397,33 +323,17 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
         return edge;
       }));
     }
-  }, [selectedEdge]);
+  }, [selectedEdge, setEdges]);
 
-  // Load diagram data
-  useEffect(() => {
-    const loadDiagram = async () => {
-      try {
-        const response = await fetch(
-          `${import.meta.env.VITE_API_URL}/models/${modelId}/diagrams/${diagramId}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('token')}`
-            }
-          }
-        );
-        const data = await response.json();
-        setNodes(data.nodes || []);
-        setEdges(data.edges || []);
-      } catch (error) {
-        console.error('Failed to load diagram:', error);
-      }
-    };
-
-    loadDiagram();
-  }, [modelId, diagramId]);
+  // Handle pane click (deselect)
+  const onPaneClick = useCallback(() => {
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setContextMenu(null);
+  }, []);
 
   return (
-    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -434,6 +344,7 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
         onEdgeClick={onEdgeClick}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
+        onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         fitView
@@ -442,61 +353,19 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
         <Controls />
         <MiniMap />
 
-        {/* Toolbar Panel */}
-        <Panel position="top-left">
-          <div style={{ 
-            background: 'white', 
-            padding: '12px', 
-            borderRadius: '8px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-            display: 'flex',
-            gap: '8px',
-            flexWrap: 'wrap'
-          }}>
-            {notation === 'er' && (
-              <>
-                <button onClick={() => addNode('entityNode')}>+ Entity</button>
-                <button onClick={() => addNode('entityNode')} 
-                  onDoubleClick={() => {
-                    const node = addNode('entityNode');
-                    // Mark as weak entity
-                  }}>
-                  + Weak Entity
-                </button>
-              </>
-            )}
-            {notation === 'uml-class' && (
-              <>
-                <button onClick={() => addNode('classNode')}>+ Class</button>
-              </>
-            )}
-            {notation === 'uml-sequence' && (
-              <>
-                <button onClick={() => addNode('lifelineNode')}>+ Lifeline</button>
-              </>
-            )}
-            {notation === 'bpmn' && (
-              <>
-                <button onClick={() => addNode('taskNode')}>+ Task</button>
-                <button onClick={() => addNode('eventNode')}>+ Event</button>
-                <button onClick={() => addNode('gatewayNode')}>+ Gateway</button>
-                <button onClick={() => addNode('poolNode')}>+ Pool</button>
-              </>
-            )}
-          </div>
-        </Panel>
-
         {/* Properties Panel */}
         {(selectedNode || selectedEdge) && (
           <Panel position="top-right">
-            <div style={{ 
-              background: 'white', 
-              padding: '16px', 
-              borderRadius: '8px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-              minWidth: '200px'
-            }}>
-              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px' }}>
+            <div
+              style={{
+                background: 'white',
+                padding: '12px',
+                borderRadius: '8px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                minWidth: '200px'
+              }}
+            >
+              <h3 style={{ margin: '0 0 12px 0', fontSize: '14px', fontWeight: 'bold' }}>
                 {selectedNode ? 'Node Properties' : 'Edge Properties'}
               </h3>
               
@@ -512,15 +381,15 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
                 />
               </div>
 
-              <div>
-                <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>
-                  Text Color:
-                </label>
-                <input
-                  type="color"
-                  value={selectedNode?.data?.textColor || '#000000'}
-                  onChange={(e) => {
-                    if (selectedNode) {
+              {selectedNode && (
+                <div>
+                  <label style={{ display: 'block', marginBottom: '4px', fontSize: '12px' }}>
+                    Text Color:
+                  </label>
+                  <input
+                    type="color"
+                    value={selectedNode?.data?.textColor || '#000000'}
+                    onChange={(e) => {
                       setNodes(nds => nds.map(node => {
                         if (node.id === selectedNode.id) {
                           const updatedNode = {
@@ -532,11 +401,11 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
                         }
                         return node;
                       }));
-                    }
-                  }}
-                  style={{ width: '100%', height: '32px' }}
-                />
-              </div>
+                    }}
+                    style={{ width: '100%', height: '32px' }}
+                  />
+                </div>
+              )}
             </div>
           </Panel>
         )}
@@ -544,62 +413,68 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
 
       {/* Context Menu */}
       {contextMenu && (
-        <div
-          style={{
-            position: 'fixed',
-            top: contextMenu.y,
-            left: contextMenu.x,
-            background: 'white',
-            border: '1px solid #ccc',
-            borderRadius: '4px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            zIndex: 1000
-          }}
-        >
-          <button
-            onClick={() => bringToFront(contextMenu.nodeId, contextMenu.edgeId)}
+        <>
+          <div
             style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              textAlign: 'left',
-              cursor: 'pointer'
+              position: 'fixed',
+              top: contextMenu.y,
+              left: contextMenu.x,
+              background: 'white',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              zIndex: 1000
             }}
           >
-            Bring to Front
-          </button>
-          <button
-            onClick={() => sendToBack(contextMenu.nodeId, contextMenu.edgeId)}
+            <button
+              onClick={() => bringToFront(contextMenu.nodeId, contextMenu.edgeId)}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 16px',
+                border: 'none',
+                background: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontSize: '13px'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+            >
+              Bring to Front
+            </button>
+            <button
+              onClick={() => sendToBack(contextMenu.nodeId, contextMenu.edgeId)}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 16px',
+                border: 'none',
+                background: 'none',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontSize: '13px'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = '#f3f4f6'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+            >
+              Send to Back
+            </button>
+          </div>
+          
+          {/* Click outside to close context menu */}
+          <div
+            onClick={() => setContextMenu(null)}
             style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 16px',
-              border: 'none',
-              background: 'none',
-              textAlign: 'left',
-              cursor: 'pointer'
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 999
             }}
-          >
-            Send to Back
-          </button>
-        </div>
-      )}
-
-      {/* Click outside to close context menu */}
-      {contextMenu && (
-        <div
-          onClick={() => setContextMenu(null)}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 999
-          }}
-        />
+          />
+        </>
       )}
     </div>
   );
