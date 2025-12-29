@@ -1,3 +1,6 @@
+-- database/postgres/schema/09-comments.sql
+-- Comments and collaboration features
+
 -- Comments table for collaboration
 CREATE TABLE IF NOT EXISTS comments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -48,7 +51,7 @@ CREATE TABLE IF NOT EXISTS comment_reactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     comment_id UUID NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    reaction VARCHAR(20) NOT NULL, -- like, helpful, confused
+    reaction VARCHAR(20) NOT NULL, -- like, helpful, confused, resolved
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     
     CONSTRAINT unique_reaction UNIQUE (comment_id, user_id, reaction),
@@ -188,6 +191,7 @@ LEFT JOIN users u ON c.author_id = u.id
 WHERE c.deleted = false
 ORDER BY c.created_at DESC;
 
+-- Comments
 COMMENT ON TABLE comments IS 'Threaded comments for collaboration on models and diagrams';
 COMMENT ON TABLE comment_mentions IS 'User mentions in comments for notifications';
 COMMENT ON TABLE comment_reactions IS 'Emoji reactions to comments';

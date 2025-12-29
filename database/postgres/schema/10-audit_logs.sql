@@ -1,3 +1,6 @@
+-- database/postgres/schema/10-audit_logs.sql
+-- Audit logging and security tracking
+
 -- Audit action enum
 CREATE TYPE audit_action AS ENUM (
     'create', 'update', 'delete', 'read',
@@ -78,7 +81,7 @@ CREATE TABLE IF NOT EXISTS data_access_logs (
     -- What was accessed
     entity_type VARCHAR(100) NOT NULL,
     entity_id UUID NOT NULL,
-    access_type VARCHAR(20) NOT NULL, -- read, export, share
+    access_type VARCHAR(20) NOT NULL, -- read, export, share, print
     
     -- When and where
     accessed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -203,6 +206,7 @@ WHERE created_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'
 GROUP BY event_type, severity
 ORDER BY event_count DESC;
 
+-- Comments
 COMMENT ON TABLE audit_logs IS 'Complete audit trail of all system actions';
 COMMENT ON TABLE security_events IS 'Security-related events for monitoring and compliance';
 COMMENT ON TABLE data_access_logs IS 'Log of data access for compliance requirements';

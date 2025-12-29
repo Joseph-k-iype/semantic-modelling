@@ -1,3 +1,6 @@
+-- database/postgres/schema/08-publish_workflows.sql
+-- Publishing workflow for promoting models from team to common workspace
+
 -- Publish workflow status enum
 CREATE TYPE publish_status AS ENUM ('pending', 'approved', 'rejected', 'cancelled');
 
@@ -171,6 +174,7 @@ LEFT JOIN workspaces wt ON pr.target_workspace_id = wt.id
 LEFT JOIN users u_req ON pr.requested_by = u_req.id
 LEFT JOIN users u_res ON pr.resolved_by = u_res.id;
 
+-- Comments
 COMMENT ON TABLE publish_requests IS 'Requests to publish models from team to common workspace';
 COMMENT ON TABLE publish_reviews IS 'Review comments on publish requests';
 COMMENT ON TABLE publish_approvals IS 'Formal approvals required for publishing';

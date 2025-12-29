@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - FIXED
+FastAPI main application entry point - CORS FIXED
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -10,7 +10,6 @@ import structlog
 
 from app.core.config import settings
 from app.api.v1.router import api_router
-from app.middleware.auth_middleware import AuthMiddleware
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.error_middleware import ErrorHandlerMiddleware
 
@@ -80,102 +79,149 @@ app = FastAPI(
     debug=settings.DEBUG,
 )
 
-# Add CORS middleware - MUST be added FIRST before other middleware
+# ============================================================================
+# CRITICAL: CORS MIDDLEWARE MUST BE FIRST
+# ============================================================================
+# Get CORS origins - ensure they're properly formatted
+cors_origins = settings.cors_origins_list
+
+# Log CORS configuration for debugging
+logger.info("Configuring CORS with origins:", origins=cors_origins)
+
+# Add CORS middleware with explicit configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["X-Request-ID", "X-Response-Time", "X-Total-Count"],
-    max_age=3600,
+    allow_origins=cors_origins,  # List of allowed origins
+    allow_credentials=True,       # Allow cookies and auth headers
+    allow_methods=["*"],          # Allow all HTTP methods
+    allow_headers=["*"],          # Allow all headers
+    expose_headers=[              # Headers exposed to frontend
+        "Content-Length",
+        "Content-Type",
+        "X-Request-ID",
+        "X-Response-Time",
+        "X-Total-Count",
+    ],
+    max_age=600,                  # Cache preflight requests for 10 minutes
 )
 
-# GZip compression
+# GZip compression for responses > 1000 bytes
 app.add_middleware(
     GZipMiddleware,
     minimum_size=1000
 )
 
-# Custom middleware (in order of execution)
-# Note: Middleware executes in reverse order of addition
+# Custom middleware (executes in reverse order of addition)
 app.add_middleware(ErrorHandlerMiddleware)
 app.add_middleware(LoggingMiddleware)
-# AuthMiddleware is intentionally NOT added here - it would block all requests
-# Instead, we use Depends(get_current_user) in endpoints that need auth
 
 
-# Root endpoints (outside of API versioning)
+# ============================================================================
+# HEALTH CHECK ENDPOINTS (No Authentication Required)
+# ============================================================================
+
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint - API information"""
     return {
         "message": "Enterprise Modeling Platform API",
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
-        "api": f"{settings.API_V1_STR}",
-        "docs": "/docs",
-        "redoc": "/redoc",
-        "status": "operational"
+        "status": "operational",
+        "endpoints": {
+            "api": settings.API_V1_STR,
+            "docs": "/docs",
+            "redoc": "/redoc",
+            "health": "/health",
+        }
     }
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    # Test database connection
-    db_status = "unknown"
-    try:
-        from app.db.session import engine
-        from sqlalchemy import text
-        async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        db_status = "connected"
-    except Exception as e:
-        logger.error(f"Database health check failed: {str(e)}")
-        db_status = "disconnected"
-    
-    # Test FalkorDB connection
-    falkordb_status = "unknown"
-    try:
-        from app.graph.client import get_graph_client
-        graph_client = get_graph_client()
-        falkordb_status = "connected" if graph_client.is_connected() else "disconnected"
-    except Exception as e:
-        logger.error(f"FalkorDB health check failed: {str(e)}")
-        falkordb_status = "disconnected"
-    
+    """Health check endpoint - verify service is running"""
     return {
-        "status": "healthy" if db_status == "connected" else "degraded",
+        "status": "healthy",
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
-        "services": {
-            "api": "operational",
-            "database": db_status,
-            "falkordb": falkordb_status,
-        }
     }
 
 
 @app.get("/ready")
 async def readiness_check():
-    """Readiness check endpoint for Kubernetes"""
-    return {"status": "ready"}
+    """Readiness check endpoint - verify all dependencies are ready"""
+    checks = {
+        "api": "ready",
+        "database": "unknown",
+        "graph": "unknown",
+        "cache": "unknown",
+    }
+    
+    # Check database connection
+    try:
+        from app.db.session import engine
+        async with engine.begin() as conn:
+            await conn.execute("SELECT 1")
+        checks["database"] = "ready"
+    except Exception as e:
+        checks["database"] = f"error: {str(e)}"
+    
+    # Check graph database
+    try:
+        from app.graph.client import get_graph_client
+        graph_client = get_graph_client()
+        if graph_client.is_connected():
+            checks["graph"] = "ready"
+        else:
+            checks["graph"] = "disconnected"
+    except Exception as e:
+        checks["graph"] = f"error: {str(e)}"
+    
+    # Determine overall status
+    all_ready = all(status == "ready" for status in checks.values())
+    
+    return {
+        "status": "ready" if all_ready else "degraded",
+        "checks": checks,
+    }
 
+
+# ============================================================================
+# API ROUTES
+# ============================================================================
 
 # Include API router with version prefix
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# Log all registered routes on startup
-@app.on_event("startup")
-async def log_routes():
-    """Log all registered routes for debugging"""
-    logger.info("📋 Registered routes:")
-    for route in app.routes:
-        if hasattr(route, "methods"):
-            methods = ", ".join(route.methods)
-            logger.info(f"  {methods:8} {route.path}")
 
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
+@app.exception_handler(404)
+async def not_found_handler(request, exc):
+    """Custom 404 handler"""
+    return {
+        "error": "Not Found",
+        "message": f"The requested endpoint {request.url.path} was not found",
+        "status_code": 404,
+    }
+
+
+@app.exception_handler(500)
+async def internal_error_handler(request, exc):
+    """Custom 500 handler"""
+    logger.error("Internal server error", path=request.url.path, error=str(exc))
+    return {
+        "error": "Internal Server Error",
+        "message": "An unexpected error occurred",
+        "status_code": 500,
+    }
+
+
+# ============================================================================
+# STARTUP MESSAGE
+# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
@@ -186,5 +232,4 @@ if __name__ == "__main__":
         port=settings.PORT,
         reload=settings.DEBUG,
         log_level=settings.LOG_LEVEL.lower(),
-        access_log=True
     )

@@ -1,109 +1,105 @@
--- Folders table for hierarchical organization
+-- database/postgres/schema/03-folders.sql
+-- Folders table - Hierarchical organization within workspaces
+
 CREATE TABLE IF NOT EXISTS folders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     parent_id UUID REFERENCES folders(id) ON DELETE CASCADE,
+    
+    -- Folder details
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    color VARCHAR(7), -- Hex color code
-    icon VARCHAR(50),
+    color VARCHAR(50),
+    icon VARCHAR(100),
     
-    -- Materialized path for efficient queries
+    -- Path for efficient queries (materialized path)
     path TEXT NOT NULL,
-    depth INT NOT NULL DEFAULT 0,
     
-    -- Ordering
-    position INT DEFAULT 0,
+    -- Position for ordering
+    position INT DEFAULT 0 NOT NULL,
     
-    -- Metadata
+    -- Ownership
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    
+    -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     
-    CONSTRAINT unique_folder_name_per_parent UNIQUE (workspace_id, parent_id, name),
-    CONSTRAINT valid_depth CHECK (depth >= 0),
+    -- Constraints
+    CONSTRAINT unique_folder_name_in_parent UNIQUE (workspace_id, parent_id, name),
+    CONSTRAINT folder_name_length CHECK (char_length(name) >= 1 AND char_length(name) <= 255),
     CONSTRAINT no_self_reference CHECK (id != parent_id)
 );
 
 -- Indexes
-CREATE INDEX idx_folders_workspace_id ON folders(workspace_id);
-CREATE INDEX idx_folders_parent_id ON folders(parent_id);
-CREATE INDEX idx_folders_path ON folders(path);
-CREATE INDEX idx_folders_created_by ON folders(created_by);
-CREATE INDEX idx_folders_name_search ON folders USING gin(to_tsvector('english', name));
+CREATE INDEX IF NOT EXISTS idx_folders_workspace_id ON folders(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
+CREATE INDEX IF NOT EXISTS idx_folders_created_by ON folders(created_by);
+CREATE INDEX IF NOT EXISTS idx_folders_path ON folders USING gin(path gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_folders_position ON folders(workspace_id, parent_id, position);
 
--- Trigger
+-- Trigger for updated_at
 CREATE TRIGGER update_folders_updated_at
     BEFORE UPDATE ON folders
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Function to update materialized path
+-- Function to update folder path
 CREATE OR REPLACE FUNCTION update_folder_path()
 RETURNS TRIGGER AS $$
+DECLARE
+    parent_path TEXT;
 BEGIN
     IF NEW.parent_id IS NULL THEN
-        NEW.path := NEW.id::text;
-        NEW.depth := 0;
+        NEW.path = '/' || NEW.id::TEXT;
     ELSE
-        SELECT path || '.' || NEW.id::text, depth + 1
-        INTO NEW.path, NEW.depth
-        FROM folders
-        WHERE id = NEW.parent_id;
+        SELECT path INTO parent_path FROM folders WHERE id = NEW.parent_id;
+        NEW.path = parent_path || '/' || NEW.id::TEXT;
     END IF;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER set_folder_path
-    BEFORE INSERT OR UPDATE OF parent_id ON folders
+-- Trigger to auto-update path
+CREATE TRIGGER update_folder_path_trigger
+    BEFORE INSERT OR UPDATE ON folders
     FOR EACH ROW
     EXECUTE FUNCTION update_folder_path();
 
--- Function to prevent circular references
+-- Function to prevent circular folder references
 CREATE OR REPLACE FUNCTION check_folder_circular_reference()
 RETURNS TRIGGER AS $$
+DECLARE
+    current_parent UUID;
+    depth INT := 0;
+    max_depth INT := 100;
 BEGIN
-    IF NEW.parent_id IS NOT NULL THEN
-        IF EXISTS (
-            SELECT 1 FROM folders
-            WHERE id = NEW.parent_id
-            AND path LIKE NEW.path || '.%'
-        ) THEN
-            RAISE EXCEPTION 'Circular reference detected in folder hierarchy';
+    current_parent := NEW.parent_id;
+    
+    WHILE current_parent IS NOT NULL AND depth < max_depth LOOP
+        IF current_parent = NEW.id THEN
+            RAISE EXCEPTION 'Circular folder reference detected';
         END IF;
+        
+        SELECT parent_id INTO current_parent FROM folders WHERE id = current_parent;
+        depth := depth + 1;
+    END LOOP;
+    
+    IF depth >= max_depth THEN
+        RAISE EXCEPTION 'Folder hierarchy too deep (max % levels)', max_depth;
     END IF;
+    
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER check_circular_reference
-    BEFORE UPDATE OF parent_id ON folders
+-- Trigger to check circular references
+CREATE TRIGGER check_folder_circular_reference_trigger
+    BEFORE INSERT OR UPDATE ON folders
     FOR EACH ROW
-    WHEN (NEW.parent_id IS NOT NULL)
     EXECUTE FUNCTION check_folder_circular_reference();
 
--- View for folder tree with model counts
-CREATE OR REPLACE VIEW folders_with_counts AS
-SELECT 
-    f.id,
-    f.workspace_id,
-    f.parent_id,
-    f.name,
-    f.description,
-    f.path,
-    f.depth,
-    f.position,
-    f.created_at,
-    f.updated_at,
-    COUNT(m.id) as model_count,
-    u.full_name as created_by_name
-FROM folders f
-LEFT JOIN models m ON f.id = m.folder_id
-LEFT JOIN users u ON f.created_by = u.id
-GROUP BY f.id, u.id;
-
+-- Comments
 COMMENT ON TABLE folders IS 'Hierarchical folder structure for organizing models';
-COMMENT ON COLUMN folders.path IS 'Materialized path for efficient tree queries (e.g., uuid1.uuid2.uuid3)';
-COMMENT ON COLUMN folders.depth IS 'Depth in folder tree (0 = root)';
+COMMENT ON COLUMN folders.path IS 'Materialized path for efficient hierarchy queries';
+COMMENT ON COLUMN folders.position IS 'Sort order within parent folder';

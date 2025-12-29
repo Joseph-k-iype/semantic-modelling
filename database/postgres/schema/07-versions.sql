@@ -1,3 +1,6 @@
+-- database/postgres/schema/07-versions.sql
+-- Model versioning and change tracking
+
 -- Model versions table
 CREATE TABLE IF NOT EXISTS model_versions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -143,6 +146,7 @@ LEFT JOIN users u ON mv.created_by = u.id
 LEFT JOIN models m ON mv.model_id = m.id
 ORDER BY mv.model_id, mv.version DESC;
 
+-- Comments
 COMMENT ON TABLE model_versions IS 'Version history for models with change tracking';
 COMMENT ON TABLE change_log IS 'Granular log of individual changes within each version';
 COMMENT ON TABLE version_comparisons IS 'Cached comparison results between versions';
