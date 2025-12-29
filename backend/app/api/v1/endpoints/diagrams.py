@@ -2,14 +2,16 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from pydantic import BaseModel
+from datetime import datetime
+import uuid
 
 from app.db.session import get_db
 from app.models.diagram import Diagram
+from app.models.model import Model
 from app.models.user import User
 from app.core.auth import get_current_user
-from app.services.graph_sync_service import graph_sync_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Pydantic models for request/response
+# Request/Response Models
 class NodeDataRequest(BaseModel):
     type: str
     position: Dict[str, float]
@@ -33,27 +35,94 @@ class EdgeDataRequest(BaseModel):
     notation: str
 
 
+class DiagramCreateRequest(BaseModel):
+    name: str
+    notation_type: str  # er, uml_class, bpmn, etc.
+    model_id: str | None = None  # Optional - will create new model if not provided
+    model_name: str | None = None
+
+
 class DiagramResponse(BaseModel):
     id: str
     name: str
-    notation: str
+    notation_type: str
+    model_id: str
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
 
 
-@router.get("/models/{model_id}/diagrams/{diagram_id}", response_model=DiagramResponse)
+@router.post("/", response_model=DiagramResponse)
+async def create_diagram(
+    diagram_data: DiagramCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new diagram (and model if needed)"""
+    try:
+        model_id = diagram_data.model_id
+        
+        # Create model if not provided
+        if not model_id:
+            model_name = diagram_data.model_name or f"Model for {diagram_data.name}"
+            new_model = Model(
+                id=str(uuid.uuid4()),
+                name=model_name,
+                description=f"Auto-generated model for diagram: {diagram_data.name}",
+                model_type=diagram_data.notation_type,
+                created_by=str(current_user.id),
+                created_at=datetime.utcnow()
+            )
+            db.add(new_model)
+            db.flush()
+            model_id = new_model.id
+            logger.info(f"Created new model: {model_id}")
+        
+        # Create diagram
+        new_diagram = Diagram(
+            id=str(uuid.uuid4()),
+            model_id=model_id,
+            name=diagram_data.name,
+            notation_type=diagram_data.notation_type,
+            metadata_dict={"nodes": [], "edges": []},
+            created_by=str(current_user.id),
+            created_at=datetime.utcnow()
+        )
+        
+        db.add(new_diagram)
+        db.commit()
+        db.refresh(new_diagram)
+        
+        logger.info(f"Created diagram: {new_diagram.id}")
+        
+        return DiagramResponse(
+            id=new_diagram.id,
+            name=new_diagram.name,
+            notation_type=new_diagram.notation_type,
+            model_id=new_diagram.model_id,
+            nodes=[],
+            edges=[]
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating diagram: {str(e)}")
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create diagram: {str(e)}"
+        )
+
+
+@router.get("/{diagram_id}", response_model=DiagramResponse)
 async def get_diagram(
-    model_id: str,
     diagram_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Get diagram with nodes and edges"""
+    """Get diagram by ID"""
     try:
-        # Get diagram from database
         diagram = db.query(Diagram).filter(
             Diagram.id == diagram_id,
-            Diagram.model_id == model_id
+            Diagram.deleted_at.is_(None)
         ).first()
         
         if not diagram:
@@ -62,16 +131,93 @@ async def get_diagram(
                 detail="Diagram not found"
             )
         
-        # Get nodes and edges from diagram metadata
-        nodes = diagram.metadata_dict.get('nodes', [])
-        edges = diagram.metadata_dict.get('edges', [])
+        # Get nodes and edges from metadata
+        metadata = diagram.metadata_dict or {}
+        nodes = metadata.get('nodes', [])
+        edges = metadata.get('edges', [])
         
         return DiagramResponse(
             id=diagram.id,
             name=diagram.name,
-            notation=diagram.notation_type,
+            notation_type=diagram.notation_type,
+            model_id=diagram.model_id,
             nodes=nodes,
             edges=edges
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting diagram: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get diagram"
+        )
+
+
+@router.get("/models/{model_id}/diagrams", response_model=List[DiagramResponse])
+async def list_diagrams_by_model(
+    model_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all diagrams for a model"""
+    try:
+        diagrams = db.query(Diagram).filter(
+            Diagram.model_id == model_id,
+            Diagram.deleted_at.is_(None)
+        ).all()
+        
+        return [
+            DiagramResponse(
+                id=d.id,
+                name=d.name,
+                notation_type=d.notation_type,
+                model_id=d.model_id,
+                nodes=d.metadata_dict.get('nodes', []),
+                edges=d.metadata_dict.get('edges', [])
+            )
+            for d in diagrams
+        ]
+        
+    except Exception as e:
+        logger.error(f"Error listing diagrams: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list diagrams"
+        )
+
+
+@router.get("/models/{model_id}/diagrams/{diagram_id}", response_model=DiagramResponse)
+async def get_diagram_by_model(
+    model_id: str,
+    diagram_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get specific diagram in a model"""
+    try:
+        diagram = db.query(Diagram).filter(
+            Diagram.id == diagram_id,
+            Diagram.model_id == model_id,
+            Diagram.deleted_at.is_(None)
+        ).first()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        metadata = diagram.metadata_dict or {}
+        
+        return DiagramResponse(
+            id=diagram.id,
+            name=diagram.name,
+            notation_type=diagram.notation_type,
+            model_id=diagram.model_id,
+            nodes=metadata.get('nodes', []),
+            edges=metadata.get('edges', [])
         )
         
     except HTTPException:
@@ -93,12 +239,12 @@ async def update_node(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Update or create a node and sync to graph database"""
+    """Update or create a node"""
     try:
-        # Get diagram
         diagram = db.query(Diagram).filter(
             Diagram.id == diagram_id,
-            Diagram.model_id == model_id
+            Diagram.model_id == model_id,
+            Diagram.deleted_at.is_(None)
         ).first()
         
         if not diagram:
@@ -112,69 +258,36 @@ async def update_node(
         nodes = metadata.get('nodes', [])
         
         # Update or add node
+        node_dict = {
+            'id': node_id,
+            'type': node_data.type,
+            'position': node_data.position,
+            'data': node_data.data
+        }
+        
         node_exists = False
         for i, node in enumerate(nodes):
             if node['id'] == node_id:
-                nodes[i] = {
-                    'id': node_id,
-                    'type': node_data.type,
-                    'position': node_data.position,
-                    'data': node_data.data
-                }
+                nodes[i] = node_dict
                 node_exists = True
                 break
         
         if not node_exists:
-            nodes.append({
-                'id': node_id,
-                'type': node_data.type,
-                'position': node_data.position,
-                'data': node_data.data
-            })
+            nodes.append(node_dict)
         
-        # Update diagram metadata
+        # Update diagram
         metadata['nodes'] = nodes
         diagram.metadata_dict = metadata
+        diagram.updated_by = str(current_user.id)
+        diagram.updated_at = datetime.utcnow()
+        
         db.commit()
         
-        # Sync to graph database based on notation
-        sync_result = None
-        if node_data.notation == 'er':
-            sync_result = await graph_sync_service.sync_er_entity(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                node_id=node_id,
-                node_data=node_data.data
-            )
-        elif node_data.notation in ['uml-class', 'uml-interaction']:
-            sync_result = await graph_sync_service.sync_uml_class(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                node_id=node_id,
-                node_data=node_data.data
-            )
-        elif node_data.notation == 'bpmn':
-            # Determine BPMN element type from node type
-            element_type_map = {
-                'taskNode': 'task',
-                'eventNode': 'event',
-                'gatewayNode': 'gateway',
-                'poolNode': 'pool'
-            }
-            element_type = element_type_map.get(node_data.type, 'task')
-            
-            sync_result = await graph_sync_service.sync_bpmn_element(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                node_id=node_id,
-                node_data=node_data.data,
-                element_type=element_type
-            )
+        logger.info(f"Updated node {node_id} in diagram {diagram_id}")
         
         return {
             'success': True,
             'node_id': node_id,
-            'graph_sync': sync_result,
             'message': 'Node updated successfully'
         }
         
@@ -198,12 +311,12 @@ async def update_edge(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Update or create an edge and sync to graph database"""
+    """Update or create an edge"""
     try:
-        # Get diagram
         diagram = db.query(Diagram).filter(
             Diagram.id == diagram_id,
-            Diagram.model_id == model_id
+            Diagram.model_id == model_id,
+            Diagram.deleted_at.is_(None)
         ).first()
         
         if not diagram:
@@ -217,7 +330,6 @@ async def update_edge(
         edges = metadata.get('edges', [])
         
         # Update or add edge
-        edge_exists = False
         edge_dict = {
             'id': edge_id,
             'source': edge_data.source,
@@ -226,6 +338,7 @@ async def update_edge(
             'data': edge_data.data
         }
         
+        edge_exists = False
         for i, edge in enumerate(edges):
             if edge['id'] == edge_id:
                 edges[i] = edge_dict
@@ -235,39 +348,19 @@ async def update_edge(
         if not edge_exists:
             edges.append(edge_dict)
         
-        # Update diagram metadata
+        # Update diagram
         metadata['edges'] = edges
         diagram.metadata_dict = metadata
+        diagram.updated_by = str(current_user.id)
+        diagram.updated_at = datetime.utcnow()
+        
         db.commit()
         
-        # Sync to graph database based on notation
-        sync_result = None
-        if edge_data.notation == 'er':
-            sync_result = await graph_sync_service.sync_er_relationship(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                edge_id=edge_id,
-                edge_data=edge_dict
-            )
-        elif edge_data.notation in ['uml-class', 'uml-interaction']:
-            sync_result = await graph_sync_service.sync_uml_relationship(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                edge_id=edge_id,
-                edge_data=edge_dict
-            )
-        elif edge_data.notation == 'bpmn':
-            sync_result = await graph_sync_service.sync_bpmn_flow(
-                model_id=model_id,
-                diagram_id=diagram_id,
-                edge_id=edge_id,
-                edge_data=edge_dict
-            )
+        logger.info(f"Updated edge {edge_id} in diagram {diagram_id}")
         
         return {
             'success': True,
             'edge_id': edge_id,
-            'graph_sync': sync_result,
             'message': 'Edge updated successfully'
         }
         
@@ -282,73 +375,17 @@ async def update_edge(
         )
 
 
-@router.get("/models/{model_id}/diagrams/{diagram_id}/lineage/{element_id}")
-async def get_element_lineage(
-    model_id: str,
+@router.delete("/{diagram_id}")
+async def delete_diagram(
     diagram_id: str,
-    element_id: str,
-    depth: int = 3,
-    current_user: User = Depends(get_current_user)
-):
-    """Get lineage information for a diagram element"""
-    try:
-        full_element_id = f"{model_id}:{element_id}"
-        lineage = await graph_sync_service.get_lineage(full_element_id, depth)
-        
-        return {
-            'success': True,
-            'element_id': element_id,
-            'lineage': lineage
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting lineage: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get lineage"
-        )
-
-
-@router.get("/models/{model_id}/diagrams/{diagram_id}/impact/{element_id}")
-async def get_element_impact(
-    model_id: str,
-    diagram_id: str,
-    element_id: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Get impact analysis for a diagram element"""
-    try:
-        full_element_id = f"{model_id}:{element_id}"
-        impact = await graph_sync_service.get_impact_analysis(full_element_id)
-        
-        return {
-            'success': True,
-            'element_id': element_id,
-            'impact_analysis': impact
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting impact analysis: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get impact analysis"
-        )
-
-
-@router.delete("/models/{model_id}/diagrams/{diagram_id}/nodes/{node_id}")
-async def delete_node(
-    model_id: str,
-    diagram_id: str,
-    node_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a node from diagram and graph database"""
+    """Soft delete a diagram"""
     try:
-        # Get diagram
         diagram = db.query(Diagram).filter(
             Diagram.id == diagram_id,
-            Diagram.model_id == model_id
+            Diagram.deleted_at.is_(None)
         ).first()
         
         if not diagram:
@@ -357,93 +394,26 @@ async def delete_node(
                 detail="Diagram not found"
             )
         
-        # Remove node from metadata
-        metadata = diagram.metadata_dict or {}
-        nodes = metadata.get('nodes', [])
-        metadata['nodes'] = [n for n in nodes if n['id'] != node_id]
+        # Soft delete
+        diagram.deleted_at = datetime.utcnow()
+        diagram.updated_by = str(current_user.id)
+        diagram.updated_at = datetime.utcnow()
         
-        diagram.metadata_dict = metadata
         db.commit()
         
-        # Delete from graph database
-        delete_query = """
-        MATCH (n {id: $element_id})
-        DETACH DELETE n
-        """
-        
-        await graph_sync_service.graph.execute_query(
-            delete_query,
-            {'element_id': f"{model_id}:{node_id}"}
-        )
+        logger.info(f"Deleted diagram {diagram_id}")
         
         return {
             'success': True,
-            'message': 'Node deleted successfully'
+            'message': 'Diagram deleted successfully'
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting node: {str(e)}")
+        logger.error(f"Error deleting diagram: {str(e)}")
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete node"
-        )
-
-
-@router.delete("/models/{model_id}/diagrams/{diagram_id}/edges/{edge_id}")
-async def delete_edge(
-    model_id: str,
-    diagram_id: str,
-    edge_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Delete an edge from diagram and graph database"""
-    try:
-        # Get diagram
-        diagram = db.query(Diagram).filter(
-            Diagram.id == diagram_id,
-            Diagram.model_id == model_id
-        ).first()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Remove edge from metadata
-        metadata = diagram.metadata_dict or {}
-        edges = metadata.get('edges', [])
-        metadata['edges'] = [e for e in edges if e['id'] != edge_id]
-        
-        diagram.metadata_dict = metadata
-        db.commit()
-        
-        # Delete from graph database
-        delete_query = """
-        MATCH ()-[r {id: $element_id}]-()
-        DELETE r
-        """
-        
-        await graph_sync_service.graph.execute_query(
-            delete_query,
-            {'element_id': f"{model_id}:{edge_id}"}
-        )
-        
-        return {
-            'success': True,
-            'message': 'Edge deleted successfully'
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting edge: {str(e)}")
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete edge"
+            detail="Failed to delete diagram"
         )
