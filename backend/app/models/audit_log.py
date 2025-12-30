@@ -4,7 +4,8 @@ Audit Log Database Model - Complete and Fixed
 Path: backend/app/models/audit_log.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import UUID, JSONB, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -16,10 +17,7 @@ class AuditLog(Base):
     
     __tablename__ = "audit_logs"
     
-    id = Column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         index=True,
     )
     
@@ -39,7 +37,7 @@ class AuditLog(Base):
     error_message = Column(Text, nullable=True)
     
     # Change details - what was changed
-    changes = Column(JSON, nullable=True, default=lambda: {})
+    changes = Column(JSONB, nullable=True, default=lambda: {})
     # Example: {"field": "name", "old_value": "Old Name", "new_value": "New Name"}
     
     # Additional metadata about the action
@@ -56,7 +54,7 @@ class AuditLog(Base):
     
     # Audit - FIXED: now String(36) to match User model
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     # nullable=True because some actions might be system-generated
     
     # Relationships

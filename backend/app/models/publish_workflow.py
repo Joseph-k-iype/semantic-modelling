@@ -4,7 +4,8 @@ Publish Workflow Database Model - Complete and Fixed
 Path: backend/app/models/publish_workflow.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import UUID, JSONB, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -21,10 +22,7 @@ class PublishWorkflow(Base):
     
     __tablename__ = "publish_workflows"
     
-    id = Column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         index=True,
     )
     
@@ -34,15 +32,11 @@ class PublishWorkflow(Base):
     entity_id = Column(String(36), nullable=False, index=True)
     
     # Source and target workspaces
-    source_workspace_id = Column(
-        String(36),
-        ForeignKey("workspaces.id"),
+    source_workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"),
         nullable=False,
         index=True
     )
-    target_workspace_id = Column(
-        String(36),
-        ForeignKey("workspaces.id"),
+    target_workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"),
         nullable=False,
         index=True
     )
@@ -58,11 +52,11 @@ class PublishWorkflow(Base):
     
     # Snapshot of published data at time of request
     # This preserves the exact state that was submitted for approval
-    snapshot_data = Column(JSON, nullable=False, default=lambda: {})
+    snapshot_data = Column(JSONB, nullable=False, default=lambda: {})
     
     # Workflow participants - FIXED: now String(36) to match User model
-    requested_by = Column(String(36), ForeignKey("users.id"), nullable=False)
-    reviewed_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    requested_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

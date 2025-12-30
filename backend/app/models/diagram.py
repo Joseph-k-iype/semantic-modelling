@@ -4,7 +4,8 @@ Diagram Database Model - Complete and Fixed
 Path: backend/app/models/diagram.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import UUID, JSONB, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -24,9 +25,7 @@ class Diagram(Base):
     )
     
     # Parent model - diagrams are projections of models
-    model_id = Column(
-        String(36),
-        ForeignKey("models.id", ondelete="CASCADE"),
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -42,7 +41,7 @@ class Diagram(Base):
     
     # Diagram data stored as JSON
     # Contains: nodes, edges, viewport settings, notation-specific config
-    data = Column(JSON, nullable=False, default=lambda: {
+    data = Column(JSONB, nullable=False, default=lambda: {
         "nodes": [],
         "edges": [],
         "viewport": {
@@ -56,8 +55,8 @@ class Diagram(Base):
     meta_data = Column('metadata', JSON, nullable=False, default=lambda: {})
     
     # Ownership - FIXED: now String(36) to match User model
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
-    updated_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

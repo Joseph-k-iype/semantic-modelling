@@ -4,7 +4,8 @@ Comment Database Model - Complete and Fixed
 Path: backend/app/models/comment.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Boolean, Integer
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import UUID, JSONB, String, DateTime, ForeignKey, Text, Boolean, Integer
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -16,10 +17,7 @@ class Comment(Base):
     
     __tablename__ = "comments"
     
-    id = Column(
-        String(36),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
         index=True,
     )
     
@@ -35,20 +33,20 @@ class Comment(Base):
     element_id = Column(String(100), nullable=True)  # e.g., node ID within diagram
     
     # Threading support for nested comments
-    parent_id = Column(String(36), ForeignKey("comments.id"), nullable=True, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("comments.id"), nullable=True, index=True)
     thread_id = Column(String(36), nullable=True, index=True)  # Top-level comment ID for grouping
     
     # Status and resolution
     is_resolved = Column(Boolean, default=False, nullable=False)
     resolved_at = Column(DateTime, nullable=True)
-    resolved_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     # Reactions/likes count
     reaction_count = Column(Integer, default=0, nullable=False)
     
     # Ownership - FIXED: now String(36) to match User model
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
-    updated_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

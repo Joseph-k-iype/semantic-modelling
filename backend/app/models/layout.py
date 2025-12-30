@@ -4,7 +4,8 @@ Layout Database Model - Complete and Fixed
 Path: backend/app/models/layout.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON, Boolean
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import UUID, JSONB, String, DateTime, ForeignKey, Text, JSON, Boolean
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -24,9 +25,7 @@ class Layout(Base):
     )
     
     # Parent diagram
-    diagram_id = Column(
-        String(36),
-        ForeignKey("diagrams.id", ondelete="CASCADE"),
+    diagram_id = Column(UUID(as_uuid=True), ForeignKey("diagrams.id", ondelete="CASCADE"),
         nullable=False,
         index=True
     )
@@ -42,7 +41,7 @@ class Layout(Base):
     
     # Layout data stored as JSON
     # Contains: node positions, edge routes, constraints, etc.
-    layout_data = Column(JSON, nullable=False, default=lambda: {
+    layout_data = Column(JSONB, nullable=False, default=lambda: {
         "nodes": {},      # Node positions: {node_id: {x, y, width, height}}
         "edges": {},      # Edge routes: {edge_id: {points: [{x, y}]}}
         "constraints": {}, # Layout constraints
@@ -58,8 +57,8 @@ class Layout(Base):
     is_locked = Column(Boolean, default=False, nullable=False)
     
     # Ownership - FIXED: now String(36) to match User model
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
-    updated_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
