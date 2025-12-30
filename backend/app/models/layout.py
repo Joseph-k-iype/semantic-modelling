@@ -1,9 +1,11 @@
 # backend/app/models/layout.py
 """
-Layout Database Model - FIXED
+Layout Database Model - Complete and Fixed
+Path: backend/app/models/layout.py
 """
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON, Boolean
+from sqlalchemy.orm import relationship
 import uuid
 
 from app.db.base import Base
@@ -21,28 +23,62 @@ class Layout(Base):
         index=True,
     )
     
-    # Layout info
-    name = Column(String(255), nullable=False, index=True)
+    # Parent diagram
+    diagram_id = Column(
+        String(36),
+        ForeignKey("diagrams.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    
+    # Layout identity
+    name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    # Relationships
-    diagram_id = Column(String(36), ForeignKey("diagrams.id"), nullable=False, index=True)
+    # Layout configuration
+    layout_engine = Column(String(100), nullable=False, index=True)
+    # Supported engines: manual, layered, force_directed, bpmn_swimlane, 
+    # uml_sequence, state_machine, hierarchical
     
-    # Layout algorithm
-    algorithm = Column(String(50), nullable=False, index=True)  # manual, layered, force-directed, etc.
+    # Layout data stored as JSON
+    # Contains: node positions, edge routes, constraints, etc.
+    layout_data = Column(JSON, nullable=False, default=lambda: {
+        "nodes": {},      # Node positions: {node_id: {x, y, width, height}}
+        "edges": {},      # Edge routes: {edge_id: {points: [{x, y}]}}
+        "constraints": {}, # Layout constraints
+        "viewport": {     # Viewport settings
+            "x": 0,
+            "y": 0,
+            "zoom": 1.0
+        }
+    })
     
-    # Layout configuration and node positions
-    config = Column(JSON, nullable=False, default=lambda: {})
-    positions = Column(JSON, nullable=False, default=lambda: {})
+    # Settings
+    is_default = Column(Boolean, default=False, nullable=False)
+    is_locked = Column(Boolean, default=False, nullable=False)
     
-    # Is this the active layout? - FIXED: Changed from String to Boolean
-    is_active = Column(Boolean, nullable=False, default=False)
-    
-    # Audit
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Ownership - FIXED: now String(36) to match User model
     created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
-    updated_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    updated_by = Column(String(36), ForeignKey("users.id"), nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=True, onupdate=datetime.utcnow)
+    
+    # Relationships
+    diagram = relationship("Diagram", backref="layouts")
+    creator = relationship("User", foreign_keys=[created_by], backref="created_layouts")
+    updater = relationship("User", foreign_keys=[updated_by])
     
     def __repr__(self):
-        return f"<Layout(id={self.id}, name={self.name}, algorithm={self.algorithm})>"
+        return f"<Layout(id={self.id}, name='{self.name}', engine='{self.layout_engine}', default={self.is_default})>"
+    
+    @property
+    def node_count(self):
+        """Get the number of nodes in this layout"""
+        return len(self.layout_data.get("nodes", {}))
+    
+    @property
+    def edge_count(self):
+        """Get the number of edges in this layout"""
+        return len(self.layout_data.get("edges", {}))

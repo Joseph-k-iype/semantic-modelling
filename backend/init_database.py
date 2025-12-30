@@ -1,7 +1,7 @@
-# backend/init_database.py
 """
 Database initialization script - COMPLETE AND FIXED
 Creates all tables if they don't exist and handles proper model imports
+Path: backend/init_database.py
 """
 import asyncio
 import sys
@@ -10,7 +10,7 @@ from pathlib import Path
 # Add parent directory to path to import app modules
 sys.path.insert(0, str(Path(__file__).parent))
 
-from sqlalchemy import inspect, text  # FIXED: Added text import
+from sqlalchemy import inspect, text
 import structlog
 
 from app.db.session import engine, AsyncSessionLocal
@@ -30,9 +30,9 @@ from app.models.layout import Layout
 from app.models.publish_workflow import PublishWorkflow
 from app.models.comment import Comment
 
-# Configure logging
+# Configure logging - FIXED: Use min_level instead of logging_level
 structlog.configure(
-    wrapper_class=structlog.make_filtering_bound_logger(logging_level=20),
+    wrapper_class=structlog.make_filtering_bound_logger(min_level=20),
 )
 
 logger = structlog.get_logger()
@@ -52,7 +52,7 @@ async def verify_connection():
     logger.info("Verifying database connection...")
     try:
         async with engine.begin() as conn:
-            result = await conn.execute(text("SELECT 1"))  # FIXED: Now text is imported
+            result = await conn.execute(text("SELECT 1"))
             logger.info("✅ Database connection successful")
             return True
     except Exception as e:
@@ -144,6 +144,7 @@ async def create_admin_user():
             if existing_user:
                 logger.info("ℹ️  Admin user already exists")
                 logger.info(f"   Email: {existing_user.email}")
+                logger.info(f"   Username: {existing_user.username}")
                 logger.info(f"   ID: {existing_user.id}")
                 return existing_user
             
@@ -172,11 +173,13 @@ async def create_admin_user():
             
         except Exception as e:
             logger.error(f"❌ Failed to create admin user: {str(e)}")
+            import traceback
+            traceback.print_exc()
             await session.rollback()
             raise
 
 
-async def create_sample_workspace(user):
+async def create_sample_workspace(user: User):
     """Create a sample workspace for testing"""
     from sqlalchemy import select
     
@@ -185,8 +188,8 @@ async def create_sample_workspace(user):
             # Check if workspace already exists
             result = await session.execute(
                 select(Workspace).where(
-                    Workspace.name == "My First Workspace",
-                    Workspace.created_by == user.id
+                    Workspace.name == "My Workspace",
+                    Workspace.owner_id == user.id
                 )
             )
             existing_workspace = result.scalar_one_or_none()
@@ -199,10 +202,10 @@ async def create_sample_workspace(user):
             
             # Create workspace
             workspace = Workspace(
-                name="My First Workspace",
-                description="A sample workspace for testing and development",
-                type="personal",
-                created_by=user.id
+                name="My Workspace",
+                description="Personal workspace for modeling projects",
+                workspace_type="personal",
+                owner_id=user.id
             )
             
             session.add(workspace)
@@ -210,7 +213,8 @@ async def create_sample_workspace(user):
             await session.refresh(workspace)
             
             logger.info("✅ Sample workspace created successfully")
-            logger.info(f"   Name: My First Workspace")
+            logger.info(f"   Name: {workspace.name}")
+            logger.info(f"   Type: {workspace.workspace_type}")
             logger.info(f"   ID: {workspace.id}")
             
             return workspace
@@ -223,8 +227,8 @@ async def create_sample_workspace(user):
             raise
 
 
-async def create_common_workspace(admin_user):
-    """Create a common workspace for published models"""
+async def create_common_workspace(user: User):
+    """Create a common workspace for organization-wide models"""
     from sqlalchemy import select
     
     async with AsyncSessionLocal() as session:
@@ -233,7 +237,7 @@ async def create_common_workspace(admin_user):
             result = await session.execute(
                 select(Workspace).where(
                     Workspace.name == "Common Workspace",
-                    Workspace.type == "common"
+                    Workspace.workspace_type == "common"
                 )
             )
             existing_workspace = result.scalar_one_or_none()
@@ -247,9 +251,9 @@ async def create_common_workspace(admin_user):
             # Create common workspace
             workspace = Workspace(
                 name="Common Workspace",
-                description="Shared workspace for published models",
-                type="common",
-                created_by=admin_user.id
+                description="Organization-wide canonical models",
+                workspace_type="common",
+                owner_id=user.id
             )
             
             session.add(workspace)
@@ -257,19 +261,22 @@ async def create_common_workspace(admin_user):
             await session.refresh(workspace)
             
             logger.info("✅ Common workspace created successfully")
-            logger.info(f"   Name: Common Workspace")
+            logger.info(f"   Name: {workspace.name}")
+            logger.info(f"   Type: {workspace.workspace_type}")
             logger.info(f"   ID: {workspace.id}")
             
             return workspace
             
         except Exception as e:
             logger.error(f"❌ Failed to create common workspace: {str(e)}")
+            import traceback
+            traceback.print_exc()
             await session.rollback()
             raise
 
 
-async def create_sample_model(user, workspace):
-    """Create a sample model for testing"""
+async def create_sample_model(user: User, workspace: Workspace):
+    """Create a sample ER model for testing"""
     from sqlalchemy import select
     
     async with AsyncSessionLocal() as session:
@@ -289,14 +296,47 @@ async def create_sample_model(user, workspace):
                 logger.info(f"   ID: {existing_model.id}")
                 return existing_model
             
-            # Create model
+            # Create model with sample ER data
+            model_data = {
+                "entities": [
+                    {
+                        "id": "entity-1",
+                        "name": "Customer",
+                        "attributes": [
+                            {"name": "customer_id", "type": "INTEGER", "isPrimaryKey": True},
+                            {"name": "name", "type": "VARCHAR(100)"},
+                            {"name": "email", "type": "VARCHAR(255)"}
+                        ]
+                    },
+                    {
+                        "id": "entity-2",
+                        "name": "Order",
+                        "attributes": [
+                            {"name": "order_id", "type": "INTEGER", "isPrimaryKey": True},
+                            {"name": "customer_id", "type": "INTEGER", "isForeignKey": True},
+                            {"name": "order_date", "type": "TIMESTAMP"},
+                            {"name": "total", "type": "DECIMAL(10,2)"}
+                        ]
+                    }
+                ],
+                "relationships": [
+                    {
+                        "id": "rel-1",
+                        "source": "entity-1",
+                        "target": "entity-2",
+                        "type": "one-to-many",
+                        "label": "places"
+                    }
+                ]
+            }
+            
             model = Model(
                 name="Sample ER Model",
-                description="A sample Entity-Relationship model for testing",
-                type="ER",
+                description="A sample entity-relationship model for testing",
+                model_type="er",
                 workspace_id=workspace.id,
                 created_by=user.id,
-                updated_by=user.id
+                data=model_data
             )
             
             session.add(model)
@@ -304,7 +344,8 @@ async def create_sample_model(user, workspace):
             await session.refresh(model)
             
             logger.info("✅ Sample model created successfully")
-            logger.info(f"   Name: Sample ER Model")
+            logger.info(f"   Name: {model.name}")
+            logger.info(f"   Type: {model.model_type}")
             logger.info(f"   ID: {model.id}")
             
             return model

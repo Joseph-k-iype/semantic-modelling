@@ -1,11 +1,12 @@
 """
 Database Session Configuration with Async Support
+Path: backend/app/db/session.py
 """
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
 from app.core.config import settings
-from app.db.base import Base  # Import Base from base.py
+from app.db.base import Base
 
 # Create async database engine
 engine = create_async_engine(
