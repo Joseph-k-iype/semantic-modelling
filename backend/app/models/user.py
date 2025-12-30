@@ -1,6 +1,6 @@
 # backend/app/models/user.py
 """
-User Database Model - FIXED with correct column names matching database schema
+User Database Model - FIXED to match database schema
 Path: backend/app/models/user.py
 """
 from datetime import datetime
@@ -40,22 +40,15 @@ class User(Base):
     is_superuser = Column(Boolean, default=False, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     
-    # Timestamps - FIXED: Use last_login_at to match database schema
+    # Timestamps
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_login_at = Column(DateTime, nullable=True)  # FIXED: Changed from last_login
+    last_login_at = Column(DateTime, nullable=True)
     
     # Profile
     avatar_url = Column(String(500), nullable=True)
-    bio = Column(Text, nullable=True)
-    
-    # Preferences stored as JSON
-    # Note: preferences column exists in database but we don't map it here
-    # to avoid complexity. Can be added later if needed.
-    
-    # Relationships - defined but not eagerly loaded
-    # workspaces = relationship("Workspace", back_populates="owner")
-    # models = relationship("Model", back_populates="created_by")
+    # NOTE: 'bio' column removed - not in database schema
+    # NOTE: 'preferences' is in database but not mapped here to keep model simple
     
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', username='{self.username}')>"
