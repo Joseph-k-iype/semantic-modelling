@@ -1,11 +1,12 @@
 # backend/app/models/version.py
 """
-Version Database Model - Complete and Fixed
+Version Database Model - FIXED with UUID types
 Path: backend/app/models/version.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, JSON, Integer, UniqueConstraint
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, UniqueConstraint
+from sqlalchemy.orm import relationship, mapped_column
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
 
 from app.db.base import Base
@@ -21,46 +22,68 @@ class Version(Base):
         UniqueConstraint('entity_type', 'entity_id', 'version_number', name='uq_entity_version'),
     )
     
+    # Primary key - FIXED: UUID type
     id = Column(
-        String(36),
+        UUID(as_uuid=True),
         primary_key=True,
-        default=lambda: str(uuid.uuid4()),
+        default=uuid.uuid4,
         index=True,
     )
     
     # Versioned entity
     entity_type = Column(String(50), nullable=False, index=True)
     # Supported types: model, diagram
-    entity_id = Column(String(36), nullable=False, index=True)
+    
+    # FIXED: UUID for entity_id to match models/diagrams
+    entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     
     # Version info
     version_number = Column(Integer, nullable=False, index=True)
     name = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     
-    # Tags for semantic versioning or custom tags
-    tags = Column(JSON, nullable=True, default=lambda: [])
+    # Tags for semantic versioning or custom tags (JSONB for better performance)
+    tags = Column(JSONB, nullable=True, default=list)
     # Example: ["v1.0.0", "stable", "production"]
     
-    # Snapshot data - complete state at this version
-    snapshot_data = Column(JSON, nullable=False, default=lambda: {})
+    # Snapshot data - complete state at this version (JSONB)
+    snapshot_data = Column(JSONB, nullable=False, default=dict)
     
-    # Change summary
-    changes = Column(JSON, nullable=True, default=lambda: {})
+    # Change summary (JSONB)
+    changes = Column(JSONB, nullable=True, default=dict)
     # Example: {"added": [], "modified": [], "removed": []}
     
-    # Version metadata
-    meta_data = Column('metadata', JSON, nullable=False, default=lambda: {})
+    # Version metadata (JSONB, using mapped_column to avoid conflict with 'metadata')
+    meta_data = mapped_column("metadata", JSONB, nullable=False, default=dict)
     
-    # Audit - FIXED: now String(36) to match User model
+    # Audit - FIXED: UUID type to match User model
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    created_by = Column(String(36), ForeignKey("users.id"), nullable=False)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=False,
+        index=True
+    )
     
     # Relationships
     creator = relationship("User", foreign_keys=[created_by], backref="versions_created")
     
     def __repr__(self):
         return f"<Version(id={self.id}, entity={self.entity_type}:{self.entity_id}, version={self.version_number})>"
+    
+    def to_dict(self):
+        """Convert model to dictionary"""
+        return {
+            'id': str(self.id),
+            'entity_type': self.entity_type,
+            'entity_id': str(self.entity_id),
+            'version_number': self.version_number,
+            'name': self.name,
+            'description': self.description,
+            'tags': self.tags,
+            'created_by': str(self.created_by),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
     
     @property
     def version_tag(self):

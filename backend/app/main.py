@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE with FIXED CORS
+FastAPI main application entry point - COMPLETE with FIXED CORS and Authentication
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager
@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 import structlog
 
 from app.core.config import settings
@@ -36,6 +37,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"⚡ Redis: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
     logger.info(f"🔐 CORS Origins: {', '.join(settings.cors_origins_list)}")
     logger.info("=" * 80)
+    
+    # Test database connection
+    try:
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        logger.info("✅ PostgreSQL connected successfully")
+    except Exception as e:
+        logger.error(f"❌ PostgreSQL connection error: {str(e)}")
     
     # Test FalkorDB connection
     try:
@@ -110,7 +121,7 @@ for origin in cors_origins:
     logger.info(f"  ✓ {origin}")
 logger.info("=" * 80)
 
-# Add CORS middleware
+# Add CORS middleware - THIS MUST BE FIRST
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,       # List of allowed origins
@@ -131,124 +142,98 @@ app.add_middleware(
 # OTHER MIDDLEWARE (Order matters!)
 # ============================================================================
 
-# Trusted proxy configuration (if behind reverse proxy)
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"] if settings.is_development else settings.ALLOWED_HOSTS.split(",")
-)
+# Gzip compression middleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# GZip compression for responses > 1000 bytes
-app.add_middleware(
-    GZipMiddleware,
-    minimum_size=1000
-)
-
-# Custom middleware (executes in reverse order of addition)
-app.add_middleware(ErrorHandlerMiddleware)
+# Logging middleware
 app.add_middleware(LoggingMiddleware)
 
+# Error handling middleware
+app.add_middleware(ErrorHandlerMiddleware)
+
+# Trusted host middleware (only in production)
+if settings.is_production:
+    allowed_hosts = settings.ALLOWED_HOSTS.split(",") if settings.ALLOWED_HOSTS != "*" else ["*"]
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
 # ============================================================================
-# HEALTH CHECK ENDPOINTS (No Authentication Required)
+# ROUTES
 # ============================================================================
 
-@app.get("/")
-async def root():
-    """Root endpoint - API information"""
-    return {
-        "message": "Enterprise Modeling Platform API",
-        "version": settings.VERSION,
-        "environment": settings.ENVIRONMENT,
-        "status": "operational",
-        "endpoints": {
-            "api": settings.API_V1_STR,
-            "docs": "/docs",
-            "redoc": "/redoc",
-            "health": "/health",
-        }
-    }
-
-
+# Health check endpoint (before API router)
 @app.get("/health")
 async def health_check():
-    """Health check endpoint - verify service is running"""
+    """Health check endpoint"""
     return {
         "status": "healthy",
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
     }
 
-
 @app.get("/ready")
 async def readiness_check():
-    """Readiness check endpoint - verify all dependencies are ready"""
-    checks = {
-        "api": "ready",
-        "database": "unknown",
-        "graph": "unknown",
-        "cache": "unknown",
-    }
-    
-    # Check database connection
+    """Readiness check endpoint"""
+    # Test database connection
     try:
-        from app.db.session import engine
-        from sqlalchemy import text
-        async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        checks["database"] = "ready"
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        db_status = "healthy"
     except Exception as e:
-        checks["database"] = f"error: {str(e)}"
-    
-    # Check graph database
-    try:
-        from app.graph.client import get_graph_client
-        graph_client = get_graph_client()
-        if graph_client.is_connected():
-            checks["graph"] = "ready"
-        else:
-            checks["graph"] = "disconnected"
-    except Exception as e:
-        checks["graph"] = f"error: {str(e)}"
-    
-    # Check Redis cache
-    try:
-        from app.cache.redis_client import get_redis_client
-        redis_client = get_redis_client()
-        await redis_client.ping()
-        checks["cache"] = "ready"
-    except Exception as e:
-        checks["cache"] = f"error: {str(e)}"
-    
-    # Determine overall status
-    all_ready = all(status == "ready" for status in checks.values())
+        db_status = f"unhealthy: {str(e)}"
     
     return {
-        "status": "ready" if all_ready else "degraded",
-        "checks": checks,
+        "status": "ready" if db_status == "healthy" else "not ready",
+        "database": db_status,
+        "version": settings.VERSION,
+    }
+
+# Include API router
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "name": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "environment": settings.ENVIRONMENT,
+        "docs": "/docs",
+        "api": settings.API_V1_STR,
     }
 
 
-# ============================================================================
-# INCLUDE API ROUTER
-# ============================================================================
+# Exception handlers
+@app.exception_handler(404)
+async def not_found_handler(request, exc):
+    """Handle 404 errors"""
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "message": f"The requested resource at {request.url.path} was not found",
+            "path": str(request.url.path),
+        },
+    )
 
-app.include_router(api_router, prefix=settings.API_V1_STR)
 
+@app.exception_handler(500)
+async def internal_error_handler(request, exc):
+    """Handle 500 errors"""
+    logger.error(f"Internal server error: {str(exc)}", exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "message": "An unexpected error occurred. Please try again later.",
+        },
+    )
 
-# ============================================================================
-# STARTUP MESSAGE
-# ============================================================================
 
 if __name__ == "__main__":
     import uvicorn
-    
-    logger.info("=" * 80)
-    logger.info("🚀 Starting server with uvicorn")
-    logger.info(f"📡 http://{settings.HOST}:{settings.PORT}")
-    logger.info(f"📚 Docs: http://{settings.HOST}:{settings.PORT}/docs")
-    logger.info("=" * 80)
     
     uvicorn.run(
         "app.main:app",

@@ -1,6 +1,7 @@
 # backend/app/schemas/user.py
 """
-User Pydantic schemas - COMPLETE FIX
+User Pydantic schemas - FIXED to match database column names
+Path: backend/app/schemas/user.py
 """
 
 from datetime import datetime
@@ -28,6 +29,8 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     username: Optional[str] = Field(None, min_length=3, max_length=50)
     full_name: Optional[str] = Field(None, max_length=255)
+    avatar_url: Optional[str] = None
+    bio: Optional[str] = None
     is_active: Optional[bool] = None
 
 
@@ -38,7 +41,7 @@ class UserPasswordUpdate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """User response schema (without sensitive data)"""
+    """User response schema (without sensitive data) - FIXED: Use last_login_at"""
     id: str
     email: str
     username: Optional[str] = None
@@ -46,15 +49,16 @@ class UserResponse(BaseModel):
     is_active: bool
     is_superuser: bool
     is_verified: bool
+    avatar_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    last_login: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None  # FIXED: Changed from last_login
     
     model_config = ConfigDict(from_attributes=True)
 
 
 class UserInDB(UserBase):
-    """User schema as stored in database"""
+    """User schema as stored in database - FIXED: Use last_login_at"""
     id: str
     hashed_password: str
     is_active: bool
@@ -62,6 +66,7 @@ class UserInDB(UserBase):
     is_verified: bool
     created_at: datetime
     updated_at: datetime
-    last_login: Optional[datetime] = None
+    last_login_at: Optional[datetime] = None  # FIXED: Changed from last_login
+    avatar_url: Optional[str] = None
     
     model_config = ConfigDict(from_attributes=True)

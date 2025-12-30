@@ -1,6 +1,7 @@
 # backend/app/api/v1/endpoints/auth.py
 """
-Authentication endpoints - COMPLETE FIX
+Authentication endpoints - FIXED with correct column names
+Path: backend/app/api/v1/endpoints/auth.py
 """
 from datetime import datetime, timedelta
 from typing import Any
@@ -71,9 +72,9 @@ async def register(
     hashed_password = get_password_hash(user_data.password)
     user = User(
         email=user_data.email,
-        username=user_data.username if hasattr(user_data, 'username') else None,
+        username=user_data.username if user_data.username else user_data.email.split('@')[0],
         hashed_password=hashed_password,
-        full_name=user_data.full_name,
+        full_name=user_data.full_name if user_data.full_name else user_data.email.split('@')[0],
         is_active=True,
         is_verified=False
     )
@@ -92,7 +93,7 @@ async def login(
     user_data: UserLogin,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """User login with email and password"""
+    """User login with email and password - FIXED to update last_login_at"""
     # Find user by email
     result = await db.execute(
         select(User).where(User.email == user_data.email)
@@ -114,8 +115,8 @@ async def login(
             detail="Inactive user",
         )
     
-    # Update last login time
-    user.last_login = datetime.utcnow()
+    # FIXED: Update last_login_at (not last_login)
+    user.last_login_at = datetime.utcnow()
     await db.commit()
     
     # Create access and refresh tokens
@@ -235,19 +236,21 @@ async def request_password_reset(
     Note: Email functionality not implemented yet.
     This is a placeholder for future implementation.
     """
-    # Find user
+    # Find user by email
     result = await db.execute(
         select(User).where(User.email == reset_data.email)
     )
     user = result.scalar_one_or_none()
     
-    # Don't reveal if user exists or not for security
-    logger.info("Password reset requested", email=reset_data.email)
+    # Don't reveal whether user exists or not (security)
+    if not user:
+        logger.warning("Password reset requested for non-existent email", email=reset_data.email)
+        return {"message": "If the email exists, a password reset link will be sent"}
     
-    return {
-        "message": "If the email exists, a password reset link will be sent",
-        "note": "Email functionality not yet implemented"
-    }
+    # TODO: Generate reset token and send email
+    logger.info("Password reset requested", user_id=str(user.id), email=user.email)
+    
+    return {"message": "If the email exists, a password reset link will be sent"}
 
 
 @router.post("/password-reset/confirm")
@@ -260,6 +263,10 @@ async def confirm_password_reset(
     
     Note: This is a placeholder for future implementation.
     """
-    return {
-        "message": "Password reset functionality not yet implemented"
-    }
+    # TODO: Verify reset token and update password
+    logger.info("Password reset confirmation attempted")
+    
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Password reset not implemented yet",
+    )
