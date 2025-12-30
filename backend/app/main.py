@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE AND FIXED
+FastAPI main application entry point - COMPLETE AND FIXED with CORS
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager
@@ -102,7 +102,7 @@ app = FastAPI(
 )
 
 # ============================================================================
-# CRITICAL: CORS MIDDLEWARE MUST BE FIRST
+# CRITICAL: CORS MIDDLEWARE MUST BE FIRST - THIS IS THE FIX
 # ============================================================================
 
 # Get CORS origins from settings
@@ -118,6 +118,7 @@ if settings.is_development:
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
     ]
+    # Merge and deduplicate
     cors_origins = list(set(cors_origins + dev_origins))
 
 # Log CORS configuration
@@ -128,13 +129,13 @@ for origin in cors_origins:
     logger.info(f"  ✓ {origin}")
 logger.info("=" * 80)
 
-# Add CORS middleware - THIS MUST BE FIRST
+# CRITICAL FIX: Add CORS middleware FIRST with explicit configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,  # List of allowed origins
+    allow_credentials=True,       # Allow cookies and auth headers
+    allow_methods=["*"],          # Allow all HTTP methods
+    allow_headers=["*"],          # Allow all headers
     expose_headers=[
         "Content-Length",
         "Content-Type",
@@ -142,8 +143,10 @@ app.add_middleware(
         "X-Response-Time",
         "X-Total-Count",
     ],
-    max_age=3600,
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
+
+logger.info("✅ CORS middleware configured")
 
 # ============================================================================
 # OTHER MIDDLEWARE (Order matters!)
@@ -238,4 +241,28 @@ async def internal_error_handler(request, exc):
             "error": "Internal Server Error",
             "message": "An unexpected error occurred. Please try again later.",
         },
+    )
+
+
+# CORS preflight handler
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    """
+    Handle CORS preflight requests
+    This ensures OPTIONS requests work correctly
+    """
+    return JSONResponse(
+        status_code=200,
+        content={"message": "OK"},
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app.main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+        log_level=settings.LOG_LEVEL.lower(),
     )

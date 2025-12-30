@@ -1,12 +1,13 @@
 # backend/app/schemas/user.py
 """
-User Pydantic schemas - FIXED to match database column names
+User Pydantic schemas - FIXED with UUID serialization
 Path: backend/app/schemas/user.py
 """
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from uuid import UUID
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_serializer
 
 
 class UserBase(BaseModel):
@@ -41,8 +42,12 @@ class UserPasswordUpdate(BaseModel):
 
 
 class UserResponse(BaseModel):
-    """User response schema (without sensitive data) - FIXED: Use last_login_at"""
-    id: str
+    """
+    User response schema (without sensitive data) - FIXED with UUID serialization
+    
+    CRITICAL FIX: Added field_serializer to convert UUID to string
+    """
+    id: UUID  # Changed from str to UUID
     email: str
     username: Optional[str] = None
     full_name: Optional[str] = None
@@ -52,21 +57,39 @@ class UserResponse(BaseModel):
     avatar_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    last_login_at: Optional[datetime] = None  # FIXED: Changed from last_login
+    last_login_at: Optional[datetime] = None
     
-    model_config = ConfigDict(from_attributes=True)
+    # CRITICAL: Configure Pydantic to handle SQLAlchemy models and serialize UUIDs
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={UUID: str}  # Automatically convert UUID to string in JSON
+    )
+    
+    # CRITICAL: Field serializer to ensure UUID is always converted to string
+    @field_serializer('id')
+    def serialize_id(self, value: UUID, _info) -> str:
+        """Convert UUID to string for JSON serialization"""
+        return str(value)
 
 
 class UserInDB(UserBase):
-    """User schema as stored in database - FIXED: Use last_login_at"""
-    id: str
+    """User schema as stored in database - FIXED with UUID"""
+    id: UUID  # Changed from str to UUID
     hashed_password: str
     is_active: bool
     is_superuser: bool
     is_verified: bool
     created_at: datetime
     updated_at: datetime
-    last_login_at: Optional[datetime] = None  # FIXED: Changed from last_login
+    last_login_at: Optional[datetime] = None
     avatar_url: Optional[str] = None
     
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={UUID: str}
+    )
+    
+    @field_serializer('id')
+    def serialize_id(self, value: UUID, _info) -> str:
+        """Convert UUID to string for JSON serialization"""
+        return str(value)
