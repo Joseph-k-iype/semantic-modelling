@@ -1,6 +1,6 @@
 # backend/app/core/config.py
 """
-Application configuration settings - COMPLETE AND FIXED VERSION
+Application configuration settings - COMPLETE FIX with all JWT settings
 Single source of truth for all configuration
 Path: backend/app/core/config.py
 """
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: str = Field(default="*")
     
     # ========================================================================
-    # CORS CONFIGURATION - FIXED
+    # CORS CONFIGURATION
     # ========================================================================
     CORS_ORIGINS: str = Field(
         default="http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     
     @property
     def ASYNC_DATABASE_URL(self) -> str:
-        """Construct asynchronous database URL for async operations"""
+        """Construct asynchronous database URL"""
         return (
             f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -113,15 +113,14 @@ class Settings(BaseSettings):
     # ========================================================================
     FALKORDB_HOST: str = Field(default="falkordb")
     FALKORDB_PORT: int = Field(default=6379)
-    FALKORDB_PASSWORD: Optional[str] = Field(default=None)
+    FALKORDB_PASSWORD: str = Field(default="")
     FALKORDB_DB: int = Field(default=0)
     FALKORDB_GRAPH_NAME: str = Field(default="modeling_graph")
     
     # Connection settings
-    FALKORDB_MAX_CONNECTIONS: int = Field(default=50)
-    FALKORDB_SOCKET_TIMEOUT: int = Field(default=30)
-    FALKORDB_CONNECTION_TIMEOUT: int = Field(default=10)
-    FALKORDB_RETRY_ON_TIMEOUT: bool = Field(default=True)
+    FALKORDB_MAX_RETRIES: int = Field(default=3)
+    FALKORDB_RETRY_DELAY: int = Field(default=1)
+    FALKORDB_CONNECTION_TIMEOUT: int = Field(default=5)
     
     @property
     def FALKORDB_URL(self) -> str:
@@ -134,15 +133,14 @@ class Settings(BaseSettings):
     # CACHE - REDIS
     # ========================================================================
     REDIS_HOST: str = Field(default="redis")
-    REDIS_PORT: int = Field(default=6379)
-    REDIS_PASSWORD: Optional[str] = Field(default=None)
+    REDIS_PORT: int = Field(default=6380)
+    REDIS_PASSWORD: str = Field(default="")
     REDIS_DB: int = Field(default=0)
     
     # Cache settings
-    REDIS_MAX_CONNECTIONS: int = Field(default=50)
+    REDIS_MAX_CONNECTIONS: int = Field(default=10)
     REDIS_SOCKET_TIMEOUT: int = Field(default=5)
-    REDIS_CONNECTION_TIMEOUT: int = Field(default=5)
-    CACHE_TTL: int = Field(default=3600)  # 1 hour default
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5)
     
     @property
     def REDIS_URL(self) -> str:
@@ -152,38 +150,54 @@ class Settings(BaseSettings):
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
     
     # ========================================================================
-    # SECURITY - JWT
+    # SECURITY & AUTHENTICATION - CRITICAL FIX: Added missing JWT settings
     # ========================================================================
-    SECRET_KEY: str = Field(
-        default="your-secret-key-change-this-in-production-make-it-long-and-random"
-    )
+    SECRET_KEY: str = Field(default="your-super-secret-key-change-this-in-production-please")
     ALGORITHM: str = Field(default="HS256")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24)  # 24 hours
-    REFRESH_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24 * 7)  # 7 days
     
-    # Password requirements
-    PASSWORD_MIN_LENGTH: int = Field(default=8)
-    PASSWORD_MAX_LENGTH: int = Field(default=100)
+    # CRITICAL FIX: Added missing token expiration settings
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7)
+    
+    # Password hashing
+    BCRYPT_ROUNDS: int = Field(default=12)
+    
+    # JWT Settings (alternative names, kept for backward compatibility)
+    JWT_SECRET_KEY: Optional[str] = Field(default=None)
+    JWT_ALGORITHM: str = Field(default="HS256")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: Optional[int] = Field(default=None)
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: Optional[int] = Field(default=None)
+    
+    def __init__(self, **kwargs):
+        """Initialize settings and handle JWT aliases"""
+        super().__init__(**kwargs)
+        
+        # If JWT_ prefixed versions are provided, use them
+        if self.JWT_SECRET_KEY and not kwargs.get('SECRET_KEY'):
+            self.SECRET_KEY = self.JWT_SECRET_KEY
+        
+        if self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES and not kwargs.get('ACCESS_TOKEN_EXPIRE_MINUTES'):
+            self.ACCESS_TOKEN_EXPIRE_MINUTES = self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        
+        if self.JWT_REFRESH_TOKEN_EXPIRE_DAYS and not kwargs.get('REFRESH_TOKEN_EXPIRE_DAYS'):
+            self.REFRESH_TOKEN_EXPIRE_DAYS = self.JWT_REFRESH_TOKEN_EXPIRE_DAYS
     
     # ========================================================================
-    # EMAIL (Optional - for notifications)
+    # EMAIL CONFIGURATION (Optional)
     # ========================================================================
-    SMTP_HOST: Optional[str] = Field(default=None)
+    SMTP_HOST: str = Field(default="smtp.gmail.com")
     SMTP_PORT: int = Field(default=587)
-    SMTP_USER: Optional[str] = Field(default=None)
-    SMTP_PASSWORD: Optional[str] = Field(default=None)
-    SMTP_TLS: bool = Field(default=True)
-    EMAIL_FROM: Optional[str] = Field(default=None)
-    EMAIL_FROM_NAME: Optional[str] = Field(default="Enterprise Modeling Platform")
+    SMTP_USER: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_FROM: str = Field(default="noreply@modelingplatform.com")
+    SMTP_FROM_NAME: str = Field(default="Enterprise Modeling Platform")
     
     # ========================================================================
-    # FILE STORAGE (Optional - for exports/attachments)
+    # FILE UPLOAD
     # ========================================================================
-    UPLOAD_DIR: str = Field(default="/tmp/uploads")
-    MAX_UPLOAD_SIZE: int = Field(default=10 * 1024 * 1024)  # 10MB
-    ALLOWED_UPLOAD_EXTENSIONS: str = Field(
-        default=".json,.xml,.sql,.cypher,.png,.jpg,.jpeg,.svg,.pdf"
-    )
+    UPLOAD_DIR: str = Field(default="/app/uploads")
+    MAX_UPLOAD_SIZE: int = Field(default=10485760)  # 10 MB
+    ALLOWED_UPLOAD_EXTENSIONS: str = Field(default=".jpg,.jpeg,.png,.gif,.svg,.pdf,.json,.xml,.xmi")
     
     @property
     def allowed_extensions_list(self) -> List[str]:
@@ -193,21 +207,40 @@ class Settings(BaseSettings):
     # ========================================================================
     # WEBSOCKET
     # ========================================================================
-    WEBSOCKET_HEARTBEAT_INTERVAL: int = Field(default=30)  # seconds
-    WEBSOCKET_TIMEOUT: int = Field(default=60)  # seconds
+    WEBSOCKET_HEARTBEAT_INTERVAL: int = Field(default=30)
+    WEBSOCKET_TIMEOUT: int = Field(default=60)
+    WS_MESSAGE_QUEUE_SIZE: int = Field(default=100)
     
     # ========================================================================
     # COLLABORATION
     # ========================================================================
-    PRESENCE_TIMEOUT: int = Field(default=60)  # seconds
-    LOCK_TIMEOUT: int = Field(default=300)  # 5 minutes
+    PRESENCE_TIMEOUT: int = Field(default=60)
+    LOCK_TIMEOUT: int = Field(default=300)
     
     # ========================================================================
     # RATE LIMITING
     # ========================================================================
     RATE_LIMIT_ENABLED: bool = Field(default=True)
     RATE_LIMIT_REQUESTS: int = Field(default=100)
-    RATE_LIMIT_WINDOW: int = Field(default=60)  # seconds
+    RATE_LIMIT_WINDOW: int = Field(default=60)
+    
+    # ========================================================================
+    # FEATURE FLAGS
+    # ========================================================================
+    ENABLE_GRAPH_FEATURES: bool = Field(default=True)
+    ENABLE_REAL_TIME_COLLABORATION: bool = Field(default=True)
+    ENABLE_EMAIL_VERIFICATION: bool = Field(default=False)
+    ENABLE_AUDIT_LOGGING: bool = Field(default=True)
+    ENABLE_QUERY_CACHING: bool = Field(default=True)
+    ENABLE_COMPRESSION: bool = Field(default=True)
+    
+    # Cache TTL
+    CACHE_TTL: int = Field(default=3600)
+    
+    # Development tools
+    ENABLE_HOT_RELOAD: bool = Field(default=True)
+    ENABLE_PROFILING: bool = Field(default=False)
+    ENABLE_DEBUG_TOOLBAR: bool = Field(default=False)
     
     # ========================================================================
     # VALIDATION
@@ -230,6 +263,22 @@ class Settings(BaseSettings):
         if v_upper not in allowed:
             raise ValueError(f"LOG_LEVEL must be one of {allowed}")
         return v_upper
+    
+    @field_validator("ACCESS_TOKEN_EXPIRE_MINUTES")
+    @classmethod
+    def validate_access_token_expire(cls, v: int) -> int:
+        """Validate access token expiration"""
+        if v < 1 or v > 1440:  # Max 24 hours
+            raise ValueError("ACCESS_TOKEN_EXPIRE_MINUTES must be between 1 and 1440")
+        return v
+    
+    @field_validator("REFRESH_TOKEN_EXPIRE_DAYS")
+    @classmethod
+    def validate_refresh_token_expire(cls, v: int) -> int:
+        """Validate refresh token expiration"""
+        if v < 1 or v > 90:  # Max 90 days
+            raise ValueError("REFRESH_TOKEN_EXPIRE_DAYS must be between 1 and 90")
+        return v
 
 
 # Create settings instance
