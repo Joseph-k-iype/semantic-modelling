@@ -1,11 +1,9 @@
+# backend/app/db/base.py
 """
-Database Base Class
+Database Base Class - FIXED
+Path: backend/app/db/base.py
 """
 from sqlalchemy.ext.declarative import declarative_base
 
-# Base class for all models
+# Base class for all SQLAlchemy models
 Base = declarative_base()
-
-from app.models.user import User
-from app.models.model import Model
-from app.models.diagram import Diagram

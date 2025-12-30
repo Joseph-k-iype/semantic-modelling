@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE with FIXED CORS and Authentication
+FastAPI main application entry point - COMPLETE AND FIXED
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager
@@ -10,6 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 import structlog
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.api.v1.router import api_router
@@ -38,12 +39,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"🔐 CORS Origins: {', '.join(settings.cors_origins_list)}")
     logger.info("=" * 80)
     
-    # Test database connection
+    # Test database connection (async)
     try:
-        from app.db.session import SessionLocal
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        from app.db.session import engine
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
         logger.info("✅ PostgreSQL connected successfully")
     except Exception as e:
         logger.error(f"❌ PostgreSQL connection error: {str(e)}")
@@ -67,6 +67,15 @@ async def lifespan(app: FastAPI):
     logger.info("\n" + "=" * 80)
     logger.info("🛑 Shutting down Enterprise Modeling Platform API")
     logger.info("=" * 80)
+    
+    # Close database connections
+    try:
+        from app.db.session import close_db, close_sync_db
+        await close_db()
+        close_sync_db()
+        logger.info("✅ Database connections closed")
+    except Exception as e:
+        logger.error(f"Error closing database: {str(e)}")
     
     # Close graph client
     try:
@@ -94,7 +103,6 @@ app = FastAPI(
 
 # ============================================================================
 # CRITICAL: CORS MIDDLEWARE MUST BE FIRST
-# This ensures CORS headers are added to ALL responses, including errors
 # ============================================================================
 
 # Get CORS origins from settings
@@ -110,7 +118,6 @@ if settings.is_development:
         "http://127.0.0.1:5173",
         "http://127.0.0.1:8000",
     ]
-    # Merge with configured origins, removing duplicates
     cors_origins = list(set(cors_origins + dev_origins))
 
 # Log CORS configuration
@@ -124,18 +131,18 @@ logger.info("=" * 80)
 # Add CORS middleware - THIS MUST BE FIRST
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,       # List of allowed origins
-    allow_credentials=True,           # Allow cookies and auth headers
-    allow_methods=["*"],              # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],              # Allow all headers
-    expose_headers=[                  # Headers that frontend can access
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=[
         "Content-Length",
         "Content-Type",
         "X-Request-ID",
         "X-Response-Time",
         "X-Total-Count",
     ],
-    max_age=3600,                     # Cache preflight requests for 1 hour
+    max_age=3600,
 )
 
 # ============================================================================
@@ -170,15 +177,15 @@ async def health_check():
         "environment": settings.ENVIRONMENT,
     }
 
+
 @app.get("/ready")
 async def readiness_check():
     """Readiness check endpoint"""
-    # Test database connection
+    # Test database connection (async)
     try:
-        from app.db.session import SessionLocal
-        db = SessionLocal()
-        db.execute("SELECT 1")
-        db.close()
+        from app.db.session import engine
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
         db_status = "healthy"
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
@@ -189,8 +196,10 @@ async def readiness_check():
         "version": settings.VERSION,
     }
 
+
 # Include API router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
 
 # Root endpoint
 @app.get("/")
@@ -229,16 +238,4 @@ async def internal_error_handler(request, exc):
             "error": "Internal Server Error",
             "message": "An unexpected error occurred. Please try again later.",
         },
-    )
-
-
-if __name__ == "__main__":
-    import uvicorn
-    
-    uvicorn.run(
-        "app.main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-        log_level=settings.LOG_LEVEL.lower(),
     )

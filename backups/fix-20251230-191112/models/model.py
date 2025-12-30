@@ -1,6 +1,6 @@
 # backend/app/models/model.py
 """
-Model Database Model - COMPLETE AND FIXED with diagrams relationship
+Model Database Model - FIXED with UUID foreign keys
 Path: backend/app/models/model.py
 """
 from datetime import datetime
@@ -25,7 +25,7 @@ class Model(Base):
         index=True,
     )
     
-    # Relationships - All foreign keys use UUID
+    # Relationships - FIXED: All foreign keys now use UUID
     workspace_id = Column(
         UUID(as_uuid=True),
         ForeignKey("workspaces.id", ondelete="CASCADE"),
@@ -57,7 +57,7 @@ class Model(Base):
     # Metadata (JSONB for flexible storage)
     metadata_col = mapped_column("metadata", JSONB, default=dict)
     
-    # Ownership and audit - All UUID foreign keys
+    # Ownership and audit - FIXED: All UUID foreign keys
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
@@ -81,22 +81,19 @@ class Model(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
     last_edited_at = Column(DateTime, nullable=True)
-    deleted_at = Column(DateTime, nullable=True)  # Soft delete
     
-    # Relationships
-    # CRITICAL: This is what was missing!
-    diagrams = relationship(
-        "Diagram",
-        back_populates="model",
-        cascade="all, delete-orphan",
-        lazy="dynamic"
+    # Publishing info
+    published_at = Column(DateTime, nullable=True)
+    published_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
     )
     
-    workspace = relationship("Workspace", foreign_keys=[workspace_id], backref="models")
-    folder = relationship("Folder", foreign_keys=[folder_id], backref="models")
-    creator = relationship("User", foreign_keys=[created_by], backref="created_models")
-    updater = relationship("User", foreign_keys=[updated_by])
-    last_editor = relationship("User", foreign_keys=[last_edited_by])
+    # Relationships
+    workspace = relationship("Workspace", foreign_keys=[workspace_id])
+    folder = relationship("Folder", foreign_keys=[folder_id])
+    creator = relationship("User", foreign_keys=[created_by])
     
     def __repr__(self):
         return f"<Model(id={self.id}, name='{self.name}', type='{self.type}')>"
@@ -105,25 +102,15 @@ class Model(Base):
         """Convert model to dictionary"""
         return {
             'id': str(self.id),
+            'workspace_id': str(self.workspace_id),
+            'folder_id': str(self.folder_id) if self.folder_id else None,
             'name': self.name,
             'description': self.description,
             'type': self.type,
             'status': self.status,
             'version': self.version,
-            'workspace_id': str(self.workspace_id),
-            'folder_id': str(self.folder_id) if self.folder_id else None,
-            'tags': self.tags or [],
+            'tags': self.tags,
             'created_by': str(self.created_by),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-    
-    @property
-    def is_deleted(self):
-        """Check if model has been soft-deleted"""
-        return self.deleted_at is not None
-    
-    @property
-    def diagram_count(self):
-        """Get the number of diagrams for this model"""
-        return self.diagrams.count() if hasattr(self, 'diagrams') else 0
