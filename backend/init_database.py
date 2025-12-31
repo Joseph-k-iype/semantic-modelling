@@ -189,7 +189,7 @@ async def create_sample_workspace(user: User):
             result = await session.execute(
                 select(Workspace).where(
                     Workspace.name == "My Workspace",
-                    Workspace.owner_id == user.id
+                    Workspace.created_by == user.id
                 )
             )
             existing_workspace = result.scalar_one_or_none()
@@ -204,8 +204,8 @@ async def create_sample_workspace(user: User):
             workspace = Workspace(
                 name="My Workspace",
                 description="Personal workspace for modeling projects",
-                workspace_type="personal",
-                owner_id=user.id
+                type=Workspace.Type.PERSONAL,
+                created_by=user.id
             )
             
             session.add(workspace)
@@ -214,7 +214,7 @@ async def create_sample_workspace(user: User):
             
             logger.info("✅ Sample workspace created successfully")
             logger.info(f"   Name: {workspace.name}")
-            logger.info(f"   Type: {workspace.workspace_type}")
+            logger.info(f"   Type: {workspace.type.value}")
             logger.info(f"   ID: {workspace.id}")
             
             return workspace
@@ -262,7 +262,7 @@ async def create_common_workspace(user: User):
             
             logger.info("✅ Common workspace created successfully")
             logger.info(f"   Name: {workspace.name}")
-            logger.info(f"   Type: {workspace.workspace_type}")
+            logger.info(f"   Type: {workspace.type.value}")
             logger.info(f"   ID: {workspace.id}")
             
             return workspace
