@@ -1,12 +1,13 @@
 # backend/app/models/diagram.py
 """
-Diagram Database Model - COMPLETE with all properties and methods
+Diagram Database Model - COMPLETE AND PRODUCTION READY
+Matches database schema: database/postgres/schema/05-diagrams.sql
 Path: backend/app/models/diagram.py
 """
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 import uuid
 
 from app.db.base import Base
@@ -14,8 +15,13 @@ from app.db.base import Base
 
 class Diagram(Base):
     """
-    Diagram model representing visual projections of semantic models
-    Multiple diagrams can represent the same model with different notations/views
+    Diagram model - visual projections of semantic models
+    
+    Database schema mapping:
+    - notation (NOT notation_type)
+    - notation_config (NOT data)
+    - visible_concepts (UUID array)
+    - settings (JSONB)
     """
     
     __tablename__ = "diagrams"
@@ -40,33 +46,44 @@ class Diagram(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # Notation type - er, uml_class, uml_sequence, bpmn, etc.
-    notation_type = Column(String(100), nullable=False, index=True)
+    # Notation type - MATCHES DATABASE: 'notation' not 'notation_type'
+    notation = Column(String(100), nullable=False, index=True)
     
-    # Diagram data - nodes, edges, and other visual elements
-    # Using 'data' as column name - no conflict with Python dict
-    data = Column(
+    # Notation configuration - MATCHES DATABASE
+    notation_config = Column(
         JSONB,
         nullable=False,
-        default=lambda: {
-            "nodes": [],
-            "edges": [],
-            "viewport": {"x": 0, "y": 0, "zoom": 1}
-        }
+        default=dict,
+        server_default='{}'
     )
     
-    # Metadata - using column name 'meta_data' to avoid conflict with SQLAlchemy's metadata
-    meta_data = Column('metadata', JSONB, nullable=False, default=dict)
+    # Which concepts from the model are visible in this diagram
+    visible_concepts = Column(
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        default=list,
+        server_default='{}'
+    )
+    
+    # Diagram-specific settings
+    settings = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default='{}'
+    )
     
     # Ownership
     created_by = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.id"),
-        nullable=False
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True
     )
+    
     updated_by = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.id"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True
     )
     
@@ -77,30 +94,22 @@ class Diagram(Base):
         default=datetime.utcnow,
         index=True
     )
+    
     updated_at = Column(
         DateTime,
-        nullable=True,
-        onupdate=datetime.utcnow
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        index=True
     )
-    deleted_at = Column(DateTime, nullable=True)  # Soft delete
     
-    # Relationships
-    # NOTE: The 'model' relationship is created automatically by the backref 
-    # in Model.diagrams relationship, so we don't define it here
-    
-    creator = relationship(
-        "User",
-        foreign_keys=[created_by],
-        backref="created_diagrams"
-    )
-    updater = relationship(
-        "User",
-        foreign_keys=[updated_by]
-    )
-    # layouts relationship is defined in Layout model via backref
+    # Relationships - ✅ FIXED: Use back_populates to match Model.diagrams
+    model = relationship("Model", back_populates="diagrams")
+    creator = relationship("User", foreign_keys=[created_by], backref="created_diagrams")
+    updater = relationship("User", foreign_keys=[updated_by])
     
     def __repr__(self):
-        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation_type}')>"
+        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation}')>"
     
     def to_dict(self):
         """Convert diagram to dictionary"""
@@ -109,9 +118,10 @@ class Diagram(Base):
             'model_id': str(self.model_id),
             'name': self.name,
             'description': self.description,
-            'notation_type': self.notation_type,
-            'data': self.data,
-            'meta_data': self.meta_data,
+            'notation': self.notation,
+            'notation_config': self.notation_config or {},
+            'visible_concepts': [str(c) for c in (self.visible_concepts or [])],
+            'settings': self.settings or {},
             'created_by': str(self.created_by),
             'updated_by': str(self.updated_by) if self.updated_by else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -119,36 +129,31 @@ class Diagram(Base):
         }
     
     @property
-    def is_deleted(self):
-        """Check if diagram has been soft-deleted"""
-        return self.deleted_at is not None
-    
-    @property
-    def node_count(self):
-        """Get the number of nodes in this diagram"""
-        return len(self.data.get("nodes", [])) if self.data else 0
-    
-    @property
-    def edge_count(self):
-        """Get the number of edges in this diagram"""
-        return len(self.data.get("edges", [])) if self.data else 0
-    
-    @property
-    def layout_count(self):
-        """Get the number of layouts for this diagram"""
-        return len(self.layouts) if hasattr(self, 'layouts') else 0
+    def concept_count(self):
+        """Get the number of visible concepts"""
+        return len(self.visible_concepts) if self.visible_concepts else 0
     
     @property
     def is_uml(self):
         """Check if this is a UML diagram"""
-        return self.notation_type.startswith("uml_")
+        return self.notation.startswith("uml_")
     
     @property
     def is_bpmn(self):
         """Check if this is a BPMN diagram"""
-        return self.notation_type == "bpmn"
+        return self.notation == "bpmn"
     
     @property
     def is_er(self):
         """Check if this is an ER diagram"""
-        return self.notation_type == "er"
+        return self.notation == "er"
+    
+    @property
+    def notation_type(self):
+        """Compatibility property - frontend may still use notation_type"""
+        return self.notation
+    
+    @notation_type.setter
+    def notation_type(self, value):
+        """Compatibility setter - frontend may still set notation_type"""
+        self.notation = value

@@ -1,6 +1,6 @@
 # backend/app/models/model.py
 """
-Model Database Model - COMPLETE matching actual database schema
+Model Database Model - COMPLETE AND FIXED with diagrams relationship
 Path: backend/app/models/model.py
 """
 from datetime import datetime
@@ -33,13 +33,12 @@ class Model(Base):
     """
     Model represents a semantic business model
     
-    CRITICAL: Columns must match database/postgres/schema/04-models.sql
-    NOTE: Use meta_data attribute in Python code (maps to 'metadata' column in DB)
+    CRITICAL FIX: Added 'diagrams' relationship to fix mapper error
     """
     
     __tablename__ = "models"
     
-    # Primary key - UUID
+    # Primary key
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -47,11 +46,11 @@ class Model(Base):
         index=True,
     )
     
-    # Relationships - All foreign keys use UUID
+    # Relationships
     workspace_id = Column(
         UUID(as_uuid=True),
         ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,  # NOT NULL in database
+        nullable=False,
         index=True
     )
     
@@ -66,13 +65,13 @@ class Model(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    # Model type - Using SQLEnum for PostgreSQL ENUM with proper value handling
+    # Model type
     type = Column(
         SQLEnum(
             ModelType,
             name="model_type",
             create_type=False,
-            native_enum=False,  # ✅ Use enum values, not names
+            native_enum=False,
             values_callable=lambda x: [e.value for e in x]
         ),
         nullable=False,
@@ -80,13 +79,13 @@ class Model(Base):
         index=True
     )
     
-    # Status and versioning
+    # Model status
     status = Column(
         SQLEnum(
             ModelStatus,
             name="model_status",
             create_type=False,
-            native_enum=False,  # ✅ Use enum values, not names
+            native_enum=False,
             values_callable=lambda x: [e.value for e in x]
         ),
         nullable=False,
@@ -94,14 +93,11 @@ class Model(Base):
         index=True
     )
     
-    version = Column(Integer, default=1, nullable=False)
+    # Versioning
+    version = Column(Integer, nullable=False, default=1)
     
-    # Tags for categorization
-    tags = Column(ARRAY(String), nullable=False, default=list)
-    
-    # CRITICAL FIX: 'metadata' is reserved by SQLAlchemy
-    # Use 'meta_data' in Python but map to 'metadata' column in database
-    # DO NOT add @property for metadata - it will shadow SQLAlchemy's class attribute
+    # Metadata
+    tags = Column(ARRAY(String), nullable=True, default=list)
     meta_data = Column('metadata', JSONB, nullable=False, default=dict)
     
     # Ownership
@@ -122,15 +118,13 @@ class Model(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Publishing info
     last_edited_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True
     )
-    
     last_edited_at = Column(DateTime, nullable=True)
-    
-    # Publishing info
     published_at = Column(DateTime, nullable=True)
     published_by = Column(
         UUID(as_uuid=True),
@@ -138,13 +132,16 @@ class Model(Base):
         nullable=True
     )
     
-    # Relationships
+    # Relationships - CRITICAL FIX: Added diagrams relationship
     workspace = relationship("Workspace", foreign_keys=[workspace_id], backref="models")
     folder = relationship("Folder", foreign_keys=[folder_id], backref="models")
     creator = relationship("User", foreign_keys=[created_by], backref="created_models")
     updater = relationship("User", foreign_keys=[updated_by])
-    last_editor = relationship("User", foreign_keys=[last_edited_by])  # ✅ FIXED: Use column name
+    last_editor = relationship("User", foreign_keys=[last_edited_by])
     publisher = relationship("User", foreign_keys=[published_by])
+    
+    # ✅ CRITICAL FIX: Define diagrams relationship for Diagram.back_populates
+    diagrams = relationship("Diagram", back_populates="model", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Model(id={self.id}, name='{self.name}', type='{self.type.value if isinstance(self.type, ModelType) else self.type}')>"
@@ -161,7 +158,7 @@ class Model(Base):
             'workspace_id': str(self.workspace_id),
             'folder_id': str(self.folder_id) if self.folder_id else None,
             'tags': self.tags or [],
-            'metadata': self.meta_data,  # Return as 'metadata' in API responses
+            'metadata': self.meta_data,
             'created_by': str(self.created_by),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

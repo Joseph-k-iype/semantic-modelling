@@ -1,13 +1,12 @@
 # backend/app/api/v1/endpoints/diagrams.py
 """
-Diagram management endpoints - COMPLETE AND FIXED
+Diagram Management Endpoints - COMPLETE AND PRODUCTION READY
 Path: backend/app/api/v1/endpoints/diagrams.py
 """
-
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from datetime import datetime
 import uuid
@@ -15,13 +14,12 @@ import structlog
 
 from app.db.session import get_db
 from app.models.diagram import Diagram
-from app.models.model import Model
+from app.models.model import Model, ModelType
 from app.models.workspace import Workspace, WorkspaceType
 from app.models.user import User
-from app.core.auth import get_current_user
+from app.api.deps import get_current_user
 
 logger = structlog.get_logger(__name__)
-
 router = APIRouter()
 
 
@@ -29,36 +27,40 @@ router = APIRouter()
 # REQUEST/RESPONSE SCHEMAS
 # ============================================================================
 
-class NodeDataRequest(BaseModel):
-    type: str
-    position: Dict[str, float]
-    data: Dict[str, Any]
-    notation: str
-
-
-class EdgeDataRequest(BaseModel):
-    source: str
-    target: str
-    type: str
-    data: Dict[str, Any]
-    notation: str
-
-
 class DiagramCreateRequest(BaseModel):
+    """Request schema for creating a diagram"""
     name: str
-    notation_type: str  # er, uml_class, bpmn, etc.
-    model_id: str | None = None  # Optional - will create new model if not provided
-    model_name: str | None = None
-    workspace_id: str | None = None  # Optional - will use personal workspace if not provided
+    notation_type: str  # Frontend uses notation_type
+    description: Optional[str] = None
+    model_id: Optional[str] = None
+    model_name: Optional[str] = None
+    workspace_id: Optional[str] = None
+
+
+class DiagramUpdateRequest(BaseModel):
+    """Request schema for updating a diagram"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    notation_config: Optional[Dict[str, Any]] = None
+    visible_concepts: Optional[List[str]] = None
+    settings: Optional[Dict[str, Any]] = None
 
 
 class DiagramResponse(BaseModel):
+    """Response schema for diagram"""
     id: str
     name: str
-    notation_type: str
+    notation: str
+    notation_type: str  # For frontend compatibility
     model_id: str
-    nodes: List[Dict[str, Any]]
-    edges: List[Dict[str, Any]]
+    description: Optional[str] = None
+    notation_config: Dict[str, Any] = {}
+    visible_concepts: List[str] = []
+    settings: Dict[str, Any] = {}
+    created_by: str
+    updated_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
 
 # ============================================================================
@@ -69,19 +71,11 @@ async def get_or_create_personal_workspace(
     db: AsyncSession,
     user: User
 ) -> Workspace:
-    """
-    Get user's personal workspace or create it if it doesn't exist
-    
-    CRITICAL FIX: Now that we use native_enum=False in the model,
-    we can compare directly with the enum member and SQLAlchemy
-    will use the value automatically
-    """
-    # Try to find existing personal workspace
-    # ✅ With native_enum=False, we can now use the enum directly
+    """Get user's personal workspace or create it"""
     result = await db.execute(
         select(Workspace).where(
             Workspace.created_by == user.id,
-            Workspace.type == WorkspaceType.PERSONAL  # ✅ SQLAlchemy converts to "personal"
+            Workspace.type == WorkspaceType.PERSONAL
         )
     )
     workspace = result.scalar_one_or_none()
@@ -94,7 +88,7 @@ async def get_or_create_personal_workspace(
     workspace = Workspace(
         name=f"{user.username}'s Workspace",
         description="Personal workspace",
-        type=WorkspaceType.PERSONAL,  # ✅ SQLAlchemy stores as "personal"
+        type=WorkspaceType.PERSONAL,
         created_by=user.id,
         settings={},
         is_active=True
@@ -103,15 +97,33 @@ async def get_or_create_personal_workspace(
     await db.flush()
     
     logger.info("Created personal workspace", user_id=str(user.id), workspace_id=str(workspace.id))
-    
     return workspace
+
+
+def diagram_to_response(diagram: Diagram) -> DiagramResponse:
+    """Convert diagram model to response schema"""
+    return DiagramResponse(
+        id=str(diagram.id),
+        name=diagram.name,
+        notation=diagram.notation,
+        notation_type=diagram.notation,  # Frontend compatibility
+        model_id=str(diagram.model_id),
+        description=diagram.description,
+        notation_config=diagram.notation_config or {},
+        visible_concepts=[str(c) for c in (diagram.visible_concepts or [])],
+        settings=diagram.settings or {},
+        created_by=str(diagram.created_by),
+        updated_by=str(diagram.updated_by) if diagram.updated_by else None,
+        created_at=diagram.created_at,
+        updated_at=diagram.updated_at
+    )
 
 
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
 
-@router.post("/", response_model=DiagramResponse)
+@router.post("/", response_model=DiagramResponse, status_code=status.HTTP_201_CREATED)
 async def create_diagram(
     diagram_data: DiagramCreateRequest,
     db: AsyncSession = Depends(get_db),
@@ -120,9 +132,7 @@ async def create_diagram(
     """
     Create a new diagram (and model if needed)
     
-    FIXED: 
-    - Workspace enum now properly configured to use values
-    - Can use enum members directly in comparisons
+    If model_id is not provided, creates a new model in the user's personal workspace.
     """
     try:
         model_id = diagram_data.model_id
@@ -133,31 +143,33 @@ async def create_diagram(
             if diagram_data.workspace_id:
                 workspace_id = uuid.UUID(diagram_data.workspace_id)
             else:
-                # Get or create personal workspace
                 workspace = await get_or_create_personal_workspace(db, current_user)
                 workspace_id = workspace.id
             
             model_name = diagram_data.model_name or f"Model for {diagram_data.name}"
             
-            # Create new model with required workspace_id
+            # Create new model
             new_model = Model(
                 name=model_name,
                 description=f"Auto-generated model for diagram: {diagram_data.name}",
-                type=diagram_data.notation_type,
-                workspace_id=workspace_id,  # ✅ REQUIRED field
+                type=ModelType.ER if diagram_data.notation_type == "ER" else ModelType.UML,
+                workspace_id=workspace_id,
                 created_by=current_user.id,
             )
             db.add(new_model)
             await db.flush()
-            model_id = new_model.id
-            logger.info("Created new model", model_id=str(model_id), workspace_id=str(workspace_id))
+            model_id = str(new_model.id)
+            logger.info("Created new model", model_id=model_id, workspace_id=str(workspace_id))
         
-        # Create diagram
+        # Create diagram with correct column names
         new_diagram = Diagram(
-            model_id=model_id,
+            model_id=uuid.UUID(model_id),
             name=diagram_data.name,
-            notation_type=diagram_data.notation_type,
-            data={"nodes": [], "edges": []},
+            description=diagram_data.description,
+            notation=diagram_data.notation_type,  # Store as 'notation'
+            notation_config={},
+            visible_concepts=[],
+            settings={},
             created_by=current_user.id,
         )
         
@@ -165,16 +177,9 @@ async def create_diagram(
         await db.commit()
         await db.refresh(new_diagram)
         
-        logger.info("Created diagram", diagram_id=str(new_diagram.id))
+        logger.info("Created diagram", diagram_id=str(new_diagram.id), notation=new_diagram.notation)
         
-        return DiagramResponse(
-            id=str(new_diagram.id),
-            name=new_diagram.name,
-            notation_type=new_diagram.notation_type,
-            model_id=str(new_diagram.model_id),
-            nodes=[],
-            edges=[]
-        )
+        return diagram_to_response(new_diagram)
         
     except Exception as e:
         logger.error("Error creating diagram", error=str(e), error_type=type(e).__name__)
@@ -182,6 +187,60 @@ async def create_diagram(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create diagram: {str(e)}"
+        )
+
+
+@router.get("/", response_model=List[DiagramResponse])
+async def list_diagrams(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all diagrams for the current user"""
+    result = await db.execute(
+        select(Diagram)
+        .where(Diagram.created_by == current_user.id)
+        .offset(skip)
+        .limit(limit)
+        .order_by(Diagram.created_at.desc())
+    )
+    diagrams = result.scalars().all()
+    
+    logger.info("Diagrams listed", count=len(diagrams), user_id=str(current_user.id))
+    
+    return [diagram_to_response(d) for d in diagrams]
+
+
+@router.get("/models/{model_id}/diagrams", response_model=List[DiagramResponse])
+async def list_diagrams_by_model(
+    model_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all diagrams for a specific model"""
+    try:
+        model_uuid = uuid.UUID(model_id)
+        
+        result = await db.execute(
+            select(Diagram).where(Diagram.model_id == model_uuid)
+        )
+        diagrams = result.scalars().all()
+        
+        logger.info("Diagrams listed by model", model_id=model_id, count=len(diagrams))
+        
+        return [diagram_to_response(d) for d in diagrams]
+        
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid model ID format"
+        )
+    except Exception as e:
+        logger.error("Error listing diagrams", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list diagrams"
         )
 
 
@@ -206,26 +265,9 @@ async def get_diagram(
                 detail="Diagram not found"
             )
         
-        # Check if diagram is soft-deleted (if deleted_at exists)
-        if hasattr(diagram, 'deleted_at') and diagram.deleted_at is not None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
+        logger.info("Diagram retrieved", diagram_id=diagram_id)
         
-        # Get nodes and edges from data
-        data = diagram.data or {}
-        nodes = data.get('nodes', [])
-        edges = data.get('edges', [])
-        
-        return DiagramResponse(
-            id=str(diagram.id),
-            name=diagram.name,
-            notation_type=diagram.notation_type,
-            model_id=str(diagram.model_id),
-            nodes=nodes,
-            edges=edges
-        )
+        return diagram_to_response(diagram)
         
     except ValueError:
         raise HTTPException(
@@ -242,291 +284,76 @@ async def get_diagram(
         )
 
 
-@router.get("/", response_model=List[DiagramResponse])
-async def list_diagrams(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """List all diagrams for the current user"""
-    result = await db.execute(
-        select(Diagram)
-        .where(Diagram.created_by == current_user.id)
-        .offset(skip)
-        .limit(limit)
-        .order_by(Diagram.created_at.desc())
-    )
-    diagrams = result.scalars().all()
-    
-    logger.info("Diagrams listed", count=len(diagrams), user_id=str(current_user.id))
-    
-    return [
-        DiagramResponse(
-            id=str(d.id),
-            name=d.name,
-            notation_type=d.notation_type,
-            model_id=str(d.model_id),
-            nodes=d.data.get('nodes', []) if d.data else [],
-            edges=d.data.get('edges', []) if d.data else []
-        )
-        for d in diagrams
-    ]
-
-
-@router.get("/models/{model_id}/diagrams", response_model=List[DiagramResponse])
-async def list_diagrams_by_model(
-    model_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """List all diagrams for a model"""
-    try:
-        model_uuid = uuid.UUID(model_id)
-        
-        result = await db.execute(
-            select(Diagram).where(Diagram.model_id == model_uuid)
-        )
-        diagrams = result.scalars().all()
-        
-        # Filter out soft-deleted diagrams if column exists
-        diagrams = [d for d in diagrams if not (hasattr(d, 'deleted_at') and d.deleted_at)]
-        
-        return [
-            DiagramResponse(
-                id=str(d.id),
-                name=d.name,
-                notation_type=d.notation_type,
-                model_id=str(d.model_id),
-                nodes=d.data.get('nodes', []) if d.data else [],
-                edges=d.data.get('edges', []) if d.data else []
-            )
-            for d in diagrams
-        ]
-        
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid model ID format"
-        )
-    except Exception as e:
-        logger.error("Error listing diagrams", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list diagrams"
-        )
-
-
 @router.put("/{diagram_id}", response_model=DiagramResponse)
 async def update_diagram(
     diagram_id: str,
-    diagram_data: Dict[str, Any],
+    diagram_data: DiagramUpdateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Update diagram"""
     try:
         diagram_uuid = uuid.UUID(diagram_id)
+        
+        result = await db.execute(
+            select(Diagram).where(Diagram.id == diagram_uuid)
+        )
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        # Update fields
+        if diagram_data.name is not None:
+            diagram.name = diagram_data.name
+        if diagram_data.description is not None:
+            diagram.description = diagram_data.description
+        if diagram_data.notation_config is not None:
+            diagram.notation_config = diagram_data.notation_config
+        if diagram_data.settings is not None:
+            diagram.settings = diagram_data.settings
+        if diagram_data.visible_concepts is not None:
+            diagram.visible_concepts = [
+                uuid.UUID(c) if isinstance(c, str) else c 
+                for c in diagram_data.visible_concepts
+            ]
+        
+        diagram.updated_by = current_user.id
+        diagram.updated_at = datetime.utcnow()
+        
+        await db.commit()
+        await db.refresh(diagram)
+        
+        logger.info("Updated diagram", diagram_id=diagram_id)
+        
+        return diagram_to_response(diagram)
+        
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid diagram ID format"
         )
-    
-    result = await db.execute(
-        select(Diagram).where(Diagram.id == diagram_uuid)
-    )
-    diagram = result.scalar_one_or_none()
-    
-    if not diagram:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Diagram not found"
-        )
-    
-    # Update fields
-    if "name" in diagram_data:
-        diagram.name = diagram_data["name"]
-    if "data" in diagram_data:
-        diagram.data = diagram_data["data"]
-    
-    await db.commit()
-    await db.refresh(diagram)
-    
-    logger.info("Diagram updated", diagram_id=diagram_id)
-    
-    return DiagramResponse(
-        id=str(diagram.id),
-        name=diagram.name,
-        notation_type=diagram.notation_type,
-        model_id=str(diagram.model_id),
-        nodes=diagram.data.get("nodes", []),
-        edges=diagram.data.get("edges", [])
-    )
-
-
-@router.put("/{diagram_id}/nodes/{node_id}")
-async def update_node(
-    diagram_id: str,
-    node_id: str,
-    node_data: NodeDataRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Update or create a node"""
-    try:
-        diagram_uuid = uuid.UUID(diagram_id)
-        
-        result = await db.execute(
-            select(Diagram).where(Diagram.id == diagram_uuid)
-        )
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Get existing data
-        data = diagram.data or {}
-        nodes = data.get('nodes', [])
-        
-        # Update or add node
-        node_dict = {
-            'id': node_id,
-            'type': node_data.type,
-            'position': node_data.position,
-            'data': node_data.data
-        }
-        
-        node_exists = False
-        for i, node in enumerate(nodes):
-            if node['id'] == node_id:
-                nodes[i] = node_dict
-                node_exists = True
-                break
-        
-        if not node_exists:
-            nodes.append(node_dict)
-        
-        # Update diagram
-        data['nodes'] = nodes
-        diagram.data = data
-        diagram.updated_by = current_user.id
-        diagram.updated_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        logger.info("Updated node", diagram_id=diagram_id, node_id=node_id)
-        
-        return {
-            'success': True,
-            'node_id': node_id,
-            'message': 'Node updated successfully'
-        }
-        
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid ID format"
-        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error updating node", error=str(e))
+        logger.error("Error updating diagram", error=str(e))
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update node: {str(e)}"
+            detail=f"Failed to update diagram: {str(e)}"
         )
 
 
-@router.put("/{diagram_id}/edges/{edge_id}")
-async def update_edge(
-    diagram_id: str,
-    edge_id: str,
-    edge_data: EdgeDataRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Update or create an edge"""
-    try:
-        diagram_uuid = uuid.UUID(diagram_id)
-        
-        result = await db.execute(
-            select(Diagram).where(Diagram.id == diagram_uuid)
-        )
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Get existing data
-        data = diagram.data or {}
-        edges = data.get('edges', [])
-        
-        # Update or add edge
-        edge_dict = {
-            'id': edge_id,
-            'source': edge_data.source,
-            'target': edge_data.target,
-            'type': edge_data.type,
-            'data': edge_data.data
-        }
-        
-        edge_exists = False
-        for i, edge in enumerate(edges):
-            if edge['id'] == edge_id:
-                edges[i] = edge_dict
-                edge_exists = True
-                break
-        
-        if not edge_exists:
-            edges.append(edge_dict)
-        
-        # Update diagram
-        data['edges'] = edges
-        diagram.data = data
-        diagram.updated_by = current_user.id
-        diagram.updated_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        logger.info("Updated edge", diagram_id=diagram_id, edge_id=edge_id)
-        
-        return {
-            'success': True,
-            'edge_id': edge_id,
-            'message': 'Edge updated successfully'
-        }
-        
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid ID format"
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error updating edge", error=str(e))
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update edge: {str(e)}"
-        )
-
-
-@router.delete("/{diagram_id}")
+@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_diagram(
     diagram_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a diagram (soft delete if column exists, hard delete otherwise)"""
+    """Delete diagram (hard delete)"""
     try:
         diagram_uuid = uuid.UUID(diagram_id)
         
@@ -541,22 +368,10 @@ async def delete_diagram(
                 detail="Diagram not found"
             )
         
-        # Check if soft delete is supported
-        if hasattr(diagram, 'deleted_at'):
-            # Soft delete
-            diagram.deleted_at = datetime.utcnow()
-        else:
-            # Hard delete
-            await db.delete(diagram)
-        
+        await db.delete(diagram)
         await db.commit()
         
         logger.info("Deleted diagram", diagram_id=diagram_id)
-        
-        return {
-            'success': True,
-            'message': 'Diagram deleted successfully'
-        }
         
     except ValueError:
         raise HTTPException(
@@ -571,4 +386,64 @@ async def delete_diagram(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete diagram: {str(e)}"
+        )
+
+
+@router.post("/{diagram_id}/duplicate", response_model=DiagramResponse)
+async def duplicate_diagram(
+    diagram_id: str,
+    new_name: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Duplicate an existing diagram"""
+    try:
+        diagram_uuid = uuid.UUID(diagram_id)
+        
+        result = await db.execute(
+            select(Diagram).where(Diagram.id == diagram_uuid)
+        )
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        # Create duplicate
+        duplicate_name = new_name or f"{diagram.name} (Copy)"
+        
+        new_diagram = Diagram(
+            model_id=diagram.model_id,
+            name=duplicate_name,
+            description=diagram.description,
+            notation=diagram.notation,
+            notation_config=diagram.notation_config,
+            visible_concepts=diagram.visible_concepts.copy() if diagram.visible_concepts else [],
+            settings=diagram.settings.copy() if diagram.settings else {},
+            created_by=current_user.id,
+        )
+        
+        db.add(new_diagram)
+        await db.commit()
+        await db.refresh(new_diagram)
+        
+        logger.info("Duplicated diagram", original_id=diagram_id, new_id=str(new_diagram.id))
+        
+        return diagram_to_response(new_diagram)
+        
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram ID format"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error duplicating diagram", error=str(e))
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to duplicate diagram: {str(e)}"
         )
