@@ -1,5 +1,7 @@
+# backend/app/api/v1/endpoints/workspaces.py
 """
 Workspace management endpoints - FIXED for ENUM type
+Path: backend/app/api/v1/endpoints/workspaces.py
 """
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -65,12 +67,21 @@ async def create_workspace(
     )
     
     db.add(workspace)
-    await db.commit()
-    await db.refresh(workspace)
     
-    logger.info("Workspace created", workspace_id=str(workspace.id), name=workspace.name)
-    
-    return workspace
+    try:
+        await db.commit()
+        await db.refresh(workspace)
+        
+        logger.info("Workspace created", workspace_id=str(workspace.id), name=workspace.name)
+        
+        return workspace
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to create workspace", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create workspace: {str(e)}"
+        )
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
@@ -79,8 +90,16 @@ async def get_workspace(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Get workspace by ID"""
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid workspace ID format"
+        )
+    
     result = await db.execute(
-        select(Workspace).where(Workspace.id == workspace_id)
+        select(Workspace).where(Workspace.id == workspace_uuid)
     )
     workspace = result.scalar_one_or_none()
     
@@ -102,8 +121,16 @@ async def update_workspace(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """Update workspace"""
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid workspace ID format"
+        )
+    
     result = await db.execute(
-        select(Workspace).where(Workspace.id == workspace_id)
+        select(Workspace).where(Workspace.id == workspace_uuid)
     )
     workspace = result.scalar_one_or_none()
     
@@ -118,12 +145,20 @@ async def update_workspace(
     for field, value in update_data.items():
         setattr(workspace, field, value)
     
-    await db.commit()
-    await db.refresh(workspace)
-    
-    logger.info("Workspace updated", workspace_id=workspace_id)
-    
-    return workspace
+    try:
+        await db.commit()
+        await db.refresh(workspace)
+        
+        logger.info("Workspace updated", workspace_id=workspace_id)
+        
+        return workspace
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to update workspace", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update workspace: {str(e)}"
+        )
 
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -132,8 +167,16 @@ async def delete_workspace(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete workspace"""
+    try:
+        workspace_uuid = uuid.UUID(workspace_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid workspace ID format"
+        )
+    
     result = await db.execute(
-        select(Workspace).where(Workspace.id == workspace_id)
+        select(Workspace).where(Workspace.id == workspace_uuid)
     )
     workspace = result.scalar_one_or_none()
     
@@ -143,7 +186,15 @@ async def delete_workspace(
             detail="Workspace not found"
         )
     
-    await db.delete(workspace)
-    await db.commit()
-    
-    logger.info("Workspace deleted", workspace_id=workspace_id)
+    try:
+        await db.delete(workspace)
+        await db.commit()
+        
+        logger.info("Workspace deleted", workspace_id=workspace_id)
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to delete workspace", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete workspace: {str(e)}"
+        )

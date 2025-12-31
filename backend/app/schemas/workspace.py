@@ -1,14 +1,16 @@
+# backend/app/schemas/workspace.py
 """
-Workspace Pydantic schemas - Matching actual database models
+Workspace Pydantic schemas - FIXED for ENUM type compatibility
+Path: backend/app/schemas/workspace.py
 """
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict, field_serializer
 from enum import Enum
 
 
 class WorkspaceType(str, Enum):
-    """Workspace type enumeration"""
+    """Workspace type enumeration - must match database and model"""
     PERSONAL = "personal"
     TEAM = "team"
     COMMON = "common"
@@ -22,7 +24,11 @@ class WorkspaceBase(BaseModel):
 
 
 class WorkspaceCreate(WorkspaceBase):
-    """Schema for creating a workspace"""
+    """
+    Schema for creating a workspace
+    
+    FIXED: Properly handles WorkspaceType enum conversion
+    """
     pass
 
 
@@ -33,13 +39,34 @@ class WorkspaceUpdate(BaseModel):
 
 
 class WorkspaceResponse(WorkspaceBase):
-    """Workspace response schema"""
+    """
+    Workspace response schema
+    
+    FIXED: Ensures type is serialized as string value
+    """
     id: str
     created_by: str
+    settings: Dict[str, Any] = {}
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
     
-    model_config = ConfigDict(from_attributes=True)
+    @field_serializer('type')
+    def serialize_type(self, value: WorkspaceType, _info) -> str:
+        """Serialize WorkspaceType enum to string"""
+        if isinstance(value, WorkspaceType):
+            return value.value
+        return str(value)
+    
+    @field_serializer('id', 'created_by')
+    def serialize_uuid(self, value, _info) -> str:
+        """Serialize UUID to string"""
+        return str(value)
+    
+    model_config = ConfigDict(
+        from_attributes=True,
+        use_enum_values=False  # Don't automatically convert enums to values
+    )
 
 
 class WorkspaceMemberRole(str, Enum):

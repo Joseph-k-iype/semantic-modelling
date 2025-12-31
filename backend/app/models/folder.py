@@ -1,6 +1,6 @@
 # backend/app/models/folder.py
 """
-Folder Database Model - FIXED to match actual database schema
+Folder Database Model - COMPLETE matching database schema
 Path: backend/app/models/folder.py
 """
 from datetime import datetime
@@ -17,7 +17,7 @@ class Folder(Base):
     Folder model for organizing models within workspaces
     
     CRITICAL: Column names MUST match database schema in 03-folders.sql
-    Database has: workspace_id, parent_id, position, path, color, icon, created_by
+    Database columns: workspace_id, parent_id, position, path, color, icon, created_by
     """
     
     __tablename__ = "folders"
@@ -30,7 +30,7 @@ class Folder(Base):
         index=True,
     )
     
-    # Relationships to workspace and parent folder - MUST match database exactly
+    # Relationships to workspace and parent folder
     workspace_id = Column(
         UUID(as_uuid=True),
         ForeignKey("workspaces.id", ondelete="CASCADE"),
@@ -54,7 +54,7 @@ class Folder(Base):
     icon = Column(String(100), nullable=True)
     
     # Materialized path for efficient queries
-    path = Column(Text, nullable=False)
+    path = Column(Text, nullable=False, default='')
     
     # Display order for sorting (called 'position' in database)
     position = Column(Integer, nullable=False, default=0)
@@ -80,6 +80,7 @@ class Folder(Base):
     )
     workspace = relationship("Workspace", backref="folders")
     creator = relationship("User", foreign_keys=[created_by], backref="created_folders")
+    # models relationship is defined in Model model via backref
     
     def __repr__(self):
         return f"<Folder(id={self.id}, name='{self.name}', workspace_id='{self.workspace_id}')>"
@@ -88,10 +89,10 @@ class Folder(Base):
         """Convert model to dictionary"""
         return {
             'id': str(self.id),
-            'name': self.name,
-            'description': self.description,
             'workspace_id': str(self.workspace_id),
             'parent_id': str(self.parent_id) if self.parent_id else None,
+            'name': self.name,
+            'description': self.description,
             'color': self.color,
             'icon': self.icon,
             'path': self.path,
@@ -102,15 +103,11 @@ class Folder(Base):
         }
     
     @property
-    def full_path(self):
-        """Get the full path of this folder"""
-        if self.parent:
-            return f"{self.parent.full_path}/{self.name}"
-        return self.name
+    def depth(self):
+        """Get folder depth based on path"""
+        return len(self.path.split('/')) - 1 if self.path else 0
     
     @property
-    def depth(self):
-        """Get the depth level of this folder (0 for root folders)"""
-        if self.parent:
-            return self.parent.depth + 1
-        return 0
+    def has_children(self):
+        """Check if folder has subfolders"""
+        return len(self.children) > 0 if hasattr(self, 'children') else False

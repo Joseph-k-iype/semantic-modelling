@@ -1,6 +1,6 @@
 # backend/app/models/model.py
 """
-Model Database Model - COMPLETE AND FIXED with diagrams relationship
+Model Database Model - COMPLETE matching actual database schema
 Path: backend/app/models/model.py
 """
 from datetime import datetime
@@ -13,7 +13,11 @@ from app.db.base import Base
 
 
 class Model(Base):
-    """Model represents a semantic business model"""
+    """
+    Model represents a semantic business model
+    
+    CRITICAL: Columns must match database/postgres/schema/04-models.sql
+    """
     
     __tablename__ = "models"
     
@@ -29,7 +33,7 @@ class Model(Base):
     workspace_id = Column(
         UUID(as_uuid=True),
         ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=False,  # NOT NULL in database
         index=True
     )
     
@@ -51,8 +55,8 @@ class Model(Base):
     # status options: draft, in_review, published, archived
     version = Column(Integer, default=1, nullable=False)
     
-    # Tags for categorization (PostgreSQL array)
-    tags = Column(ARRAY(String), default=list)
+    # Tags for categorization (PostgreSQL TEXT array in database)
+    tags = Column(ARRAY(Text), default=list)
     
     # Metadata (JSONB for flexible storage)
     metadata_col = mapped_column("metadata", JSONB, default=dict)
@@ -81,13 +85,22 @@ class Model(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
     last_edited_at = Column(DateTime, nullable=True)
-    deleted_at = Column(DateTime, nullable=True)  # Soft delete
     
-    # Relationships
-    # CRITICAL: This is what was missing!
+    # Publishing info (from database schema)
+    published_at = Column(DateTime, nullable=True)
+    published_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    
+    # ❌ REMOVED: deleted_at does NOT exist in database schema
+    # The database schema does not have soft delete for models
+    
+    # Relationships - Using backref to avoid circular dependency
     diagrams = relationship(
         "Diagram",
-        back_populates="model",
+        backref="model",
         cascade="all, delete-orphan",
         lazy="dynamic"
     )
@@ -97,6 +110,7 @@ class Model(Base):
     creator = relationship("User", foreign_keys=[created_by], backref="created_models")
     updater = relationship("User", foreign_keys=[updated_by])
     last_editor = relationship("User", foreign_keys=[last_edited_by])
+    publisher = relationship("User", foreign_keys=[published_by])
     
     def __repr__(self):
         return f"<Model(id={self.id}, name='{self.name}', type='{self.type}')>"
@@ -116,12 +130,13 @@ class Model(Base):
             'created_by': str(self.created_by),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'published_at': self.published_at.isoformat() if self.published_at else None,
         }
     
     @property
-    def is_deleted(self):
-        """Check if model has been soft-deleted"""
-        return self.deleted_at is not None
+    def is_published(self):
+        """Check if model has been published"""
+        return self.published_at is not None
     
     @property
     def diagram_count(self):

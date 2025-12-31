@@ -1,23 +1,26 @@
 # backend/app/models/diagram.py
 """
-Diagram Database Model - COMPLETE AND FIXED
+Diagram Database Model - COMPLETE with all properties and methods
 Path: backend/app/models/diagram.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
 
 from app.db.base import Base
 
 
 class Diagram(Base):
-    """Diagram model - visual projections of semantic models"""
+    """
+    Diagram model representing visual projections of semantic models
+    Multiple diagrams can represent the same model with different notations/views
+    """
     
     __tablename__ = "diagrams"
     
-    # Primary key - use UUID for better distribution and security
+    # Primary key
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -25,7 +28,7 @@ class Diagram(Base):
         index=True,
     )
     
-    # Parent model - diagrams are projections of models
+    # Parent model relationship
     model_id = Column(
         UUID(as_uuid=True),
         ForeignKey("models.id", ondelete="CASCADE"),
@@ -34,32 +37,25 @@ class Diagram(Base):
     )
     
     # Diagram identity
-    name = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # Notation type - defines what visual language is used
+    # Notation type - er, uml_class, uml_sequence, bpmn, etc.
     notation_type = Column(String(100), nullable=False, index=True)
-    # Supported types: er, uml_class, uml_sequence, uml_activity, uml_state,
-    # uml_component, uml_deployment, bpmn, graph, custom
     
-    # Diagram data stored as JSON
-    # Contains: nodes, edges, viewport settings, notation-specific config
+    # Diagram data - nodes, edges, and other visual elements
+    # Using 'data' as column name - no conflict with Python dict
     data = Column(
         JSONB,
         nullable=False,
         default=lambda: {
             "nodes": [],
             "edges": [],
-            "viewport": {
-                "x": 0,
-                "y": 0,
-                "zoom": 1.0
-            }
+            "viewport": {"x": 0, "y": 0, "zoom": 1}
         }
     )
     
-    # Diagram metadata (validation results, statistics, etc.)
-    # Using column name 'meta_data' to avoid conflict with SQLAlchemy's metadata
+    # Metadata - using column name 'meta_data' to avoid conflict with SQLAlchemy's metadata
     meta_data = Column('metadata', JSONB, nullable=False, default=dict)
     
     # Ownership
@@ -89,7 +85,9 @@ class Diagram(Base):
     deleted_at = Column(DateTime, nullable=True)  # Soft delete
     
     # Relationships
-    model = relationship("Model", back_populates="diagrams")
+    # NOTE: The 'model' relationship is created automatically by the backref 
+    # in Model.diagrams relationship, so we don't define it here
+    
     creator = relationship(
         "User",
         foreign_keys=[created_by],
@@ -103,6 +101,22 @@ class Diagram(Base):
     
     def __repr__(self):
         return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation_type}')>"
+    
+    def to_dict(self):
+        """Convert diagram to dictionary"""
+        return {
+            'id': str(self.id),
+            'model_id': str(self.model_id),
+            'name': self.name,
+            'description': self.description,
+            'notation_type': self.notation_type,
+            'data': self.data,
+            'meta_data': self.meta_data,
+            'created_by': str(self.created_by),
+            'updated_by': str(self.updated_by) if self.updated_by else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
     
     @property
     def is_deleted(self):

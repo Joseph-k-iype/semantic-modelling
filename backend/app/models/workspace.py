@@ -1,11 +1,11 @@
 # backend/app/models/workspace.py
 """
-Workspace Database Model - FIXED for PostgreSQL ENUM type
+Workspace Database Model - FIXED with correct relationships
 Path: backend/app/models/workspace.py
 """
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Boolean, Enum as SQLEnum
-from sqlalchemy.orm import relationship, mapped_column
+from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
 import enum
@@ -66,8 +66,13 @@ class Workspace(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships
+    # Relationships - CRITICAL FIX: Use backref instead of back_populates
+    # This creates the relationship on User automatically without needing to define it there
     owner = relationship("User", foreign_keys=[created_by], backref="owned_workspaces")
+    
+    # Other relationships use backref to avoid circular imports
+    # models = relationship("Model", backref="workspace", cascade="all, delete-orphan")
+    # folders = relationship("Folder", backref="workspace", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Workspace(id={self.id}, name='{self.name}', type='{self.type.value}')>"

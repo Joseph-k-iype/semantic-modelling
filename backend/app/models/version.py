@@ -1,6 +1,6 @@
 # backend/app/models/version.py
 """
-Version Database Model - FIXED with UUID types
+Version Database Model - COMPLETE for model versioning
 Path: backend/app/models/version.py
 """
 from datetime import datetime
@@ -13,16 +13,19 @@ from app.db.base import Base
 
 
 class Version(Base):
-    """Version model for tracking model/diagram versions"""
+    """
+    Version model for tracking model/diagram versions
+    Enables version history, rollback, and comparison
+    """
     
     __tablename__ = "versions"
     
-    # Add unique constraint for entity + version number
+    # Unique constraint for entity + version number
     __table_args__ = (
         UniqueConstraint('entity_type', 'entity_id', 'version_number', name='uq_entity_version'),
     )
     
-    # Primary key - FIXED: UUID type
+    # Primary key - UUID type
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -34,7 +37,7 @@ class Version(Base):
     entity_type = Column(String(50), nullable=False, index=True)
     # Supported types: model, diagram
     
-    # FIXED: UUID for entity_id to match models/diagrams
+    # UUID for entity_id to match models/diagrams
     entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     
     # Version info
@@ -42,21 +45,21 @@ class Version(Base):
     name = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     
-    # Tags for semantic versioning or custom tags (JSONB for better performance)
+    # Tags for semantic versioning or custom tags
     tags = Column(JSONB, nullable=True, default=list)
     # Example: ["v1.0.0", "stable", "production"]
     
-    # Snapshot data - complete state at this version (JSONB)
+    # Snapshot data - complete state at this version
     snapshot_data = Column(JSONB, nullable=False, default=dict)
     
-    # Change summary (JSONB)
+    # Change summary
     changes = Column(JSONB, nullable=True, default=dict)
     # Example: {"added": [], "modified": [], "removed": []}
     
-    # Version metadata (JSONB, using mapped_column to avoid conflict with 'metadata')
+    # Version metadata (using mapped_column to avoid conflict with 'metadata')
     meta_data = mapped_column("metadata", JSONB, nullable=False, default=dict)
     
-    # Audit - FIXED: UUID type to match User model
+    # Audit - UUID type to match User model
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     created_by = Column(
         UUID(as_uuid=True),
@@ -80,7 +83,10 @@ class Version(Base):
             'version_number': self.version_number,
             'name': self.name,
             'description': self.description,
-            'tags': self.tags,
+            'tags': self.tags if self.tags else [],
+            'snapshot_data': self.snapshot_data,
+            'changes': self.changes,
+            'meta_data': self.meta_data,
             'created_by': str(self.created_by),
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
