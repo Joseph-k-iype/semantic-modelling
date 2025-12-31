@@ -57,7 +57,7 @@ class Diagram(Base):
         server_default='{}'
     )
     
-    # Which concepts from the model are visible in this diagram
+    # Visible concepts from semantic model (as UUIDs)
     visible_concepts = Column(
         ARRAY(UUID(as_uuid=True)),
         nullable=False,
@@ -65,7 +65,7 @@ class Diagram(Base):
         server_default='{}'
     )
     
-    # Diagram-specific settings
+    # Additional settings
     settings = Column(
         JSONB,
         nullable=False,
@@ -73,7 +73,14 @@ class Diagram(Base):
         server_default='{}'
     )
     
-    # Ownership
+    # Soft delete support
+    deleted_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True
+    )
+    
+    # Ownership and audit fields
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
@@ -83,77 +90,68 @@ class Diagram(Base):
     
     updated_by = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=True
     )
     
-    # Timestamps
     created_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
         index=True
     )
     
     updated_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        index=True
+        onupdate=datetime.utcnow
     )
     
-    # Relationships - ✅ FIXED: Use back_populates to match Model.diagrams
-    model = relationship("Model", back_populates="diagrams")
-    creator = relationship("User", foreign_keys=[created_by], backref="created_diagrams")
-    updater = relationship("User", foreign_keys=[updated_by])
+    # Relationships
+    model = relationship(
+        "Model",
+        back_populates="diagrams",
+        lazy="select"
+    )
     
-    def __repr__(self):
-        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation}')>"
+    layouts = relationship(
+        "Layout",
+        back_populates="diagram",
+        cascade="all, delete-orphan",
+        lazy="select",
+        order_by="Layout.is_default.desc(), Layout.created_at.desc()"
+    )
     
-    def to_dict(self):
+    creator = relationship(
+        "User",
+        foreign_keys=[created_by],
+        lazy="select"
+    )
+    
+    updater = relationship(
+        "User",
+        foreign_keys=[updated_by],
+        lazy="select"
+    )
+    
+    def __repr__(self) -> str:
+        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation}', model_id={self.model_id})>"
+    
+    def to_dict(self) -> dict:
         """Convert diagram to dictionary"""
         return {
-            'id': str(self.id),
-            'model_id': str(self.model_id),
-            'name': self.name,
-            'description': self.description,
-            'notation': self.notation,
-            'notation_config': self.notation_config or {},
-            'visible_concepts': [str(c) for c in (self.visible_concepts or [])],
-            'settings': self.settings or {},
-            'created_by': str(self.created_by),
-            'updated_by': str(self.updated_by) if self.updated_by else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "id": str(self.id),
+            "model_id": str(self.model_id),
+            "name": self.name,
+            "description": self.description,
+            "notation": self.notation,
+            "notation_config": self.notation_config,
+            "visible_concepts": [str(c) for c in (self.visible_concepts or [])],
+            "settings": self.settings,
+            "created_by": str(self.created_by),
+            "updated_by": str(self.updated_by) if self.updated_by else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None
         }
-    
-    @property
-    def concept_count(self):
-        """Get the number of visible concepts"""
-        return len(self.visible_concepts) if self.visible_concepts else 0
-    
-    @property
-    def is_uml(self):
-        """Check if this is a UML diagram"""
-        return self.notation.startswith("uml_")
-    
-    @property
-    def is_bpmn(self):
-        """Check if this is a BPMN diagram"""
-        return self.notation == "bpmn"
-    
-    @property
-    def is_er(self):
-        """Check if this is an ER diagram"""
-        return self.notation == "er"
-    
-    @property
-    def notation_type(self):
-        """Compatibility property - frontend may still use notation_type"""
-        return self.notation
-    
-    @notation_type.setter
-    def notation_type(self, value):
-        """Compatibility setter - frontend may still set notation_type"""
-        self.notation = value

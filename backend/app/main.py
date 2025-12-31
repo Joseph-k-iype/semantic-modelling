@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE AND FIXED
+FastAPI main application entry point - COMPLETE WITH ASYNC FIX
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager
@@ -23,36 +23,37 @@ logger = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context manager for startup/shutdown events
+    Lifespan context manager for startup/shutdown events - FIXED FOR ASYNC
     """
     # Startup
-    logger.info("=" * 80)
+    logger.info("\n" + "=" * 80)
     logger.info("🚀 Starting Enterprise Modeling Platform API")
     logger.info("=" * 80)
-    logger.info(f"📍 Environment: {settings.ENVIRONMENT}")
-    logger.info(f"🔧 Debug Mode: {settings.DEBUG}")
-    logger.info(f"🌐 API Version: {settings.VERSION}")
-    logger.info(f"📡 Host: {settings.HOST}:{settings.PORT}")
-    logger.info(f"🔗 Database: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}")
-    logger.info(f"📊 FalkorDB: {settings.FALKORDB_HOST}:{settings.FALKORDB_PORT}")
-    logger.info(f"⚡ Redis: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
-    logger.info(f"🔐 CORS Origins: {', '.join(settings.cors_origins_list)}")
-    logger.info("=" * 80)
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
+    logger.info(f"Debug Mode: {settings.DEBUG}")
+    logger.info(f"API Version: {settings.VERSION}")
+    logger.info("=" * 80 + "\n")
     
-    # Test database connection (async)
+    # Initialize database
     try:
-        from app.db.session import engine
+        from app.db.session import init_db, engine
+        
+        await init_db()
+        
+        # Test connection
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
         logger.info("✅ PostgreSQL connected successfully")
     except Exception as e:
         logger.error(f"❌ PostgreSQL connection error: {str(e)}")
     
-    # Test FalkorDB connection
+    # Test FalkorDB connection - FIXED: Use async init
     try:
-        from app.graph.client import get_graph_client
-        graph_client = get_graph_client()
-        if graph_client.is_connected():
+        from app.graph.client import init_graph_client, get_graph_client
+        
+        connected = await init_graph_client()  # FIXED: await the async init
+        
+        if connected:
             logger.info("✅ FalkorDB connected successfully")
         else:
             logger.warning("⚠️  FalkorDB connection failed - graph features will be disabled")

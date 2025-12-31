@@ -1,5 +1,6 @@
 -- database/postgres/schema/06-layouts.sql
 -- Layouts table - user-controlled layout configurations
+-- FIXED: Removed automatic trigger to prevent greenlet errors
 
 -- Layout engines enum
 CREATE TYPE layout_engine AS ENUM ('manual', 'layered', 'force_directed', 
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS layouts (
     -- Whether this is the default layout for the diagram
     is_default BOOLEAN DEFAULT FALSE NOT NULL,
     
+    -- Soft delete support
+    deleted_at TIMESTAMP WITH TIME ZONE,
+    
     -- Ownership
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -39,6 +43,7 @@ CREATE INDEX idx_layouts_engine ON layouts(engine);
 CREATE INDEX idx_layouts_is_default ON layouts(is_default);
 CREATE INDEX idx_layouts_created_by ON layouts(created_by);
 CREATE INDEX idx_layouts_created_at ON layouts(created_at);
+CREATE INDEX idx_layouts_deleted_at ON layouts(deleted_at);
 
 -- Triggers
 CREATE TRIGGER update_layouts_updated_at
@@ -55,7 +60,8 @@ BEGIN
         UPDATE layouts 
         SET is_default = FALSE 
         WHERE diagram_id = NEW.diagram_id 
-        AND id != NEW.id;
+        AND id != NEW.id
+        AND deleted_at IS NULL;
     END IF;
     RETURN NEW;
 END;
@@ -67,20 +73,8 @@ CREATE TRIGGER ensure_default_layout
     WHEN (NEW.is_default = TRUE)
     EXECUTE FUNCTION ensure_single_default_layout();
 
--- Function to create initial layout when diagram is created
-CREATE OR REPLACE FUNCTION create_initial_layout()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO layouts (diagram_id, name, engine, is_default, created_by)
-    VALUES (NEW.id, 'Default Layout', 'manual', TRUE, NEW.created_by);
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER create_diagram_initial_layout
-    AFTER INSERT ON diagrams
-    FOR EACH ROW
-    EXECUTE FUNCTION create_initial_layout();
+-- REMOVED: Automatic layout creation trigger (causes greenlet errors)
+-- Layout creation now handled in application code for better control
 
 -- View for diagrams with layout information
 CREATE OR REPLACE VIEW diagrams_with_layouts AS
@@ -102,10 +96,11 @@ SELECT
     u_created.full_name as created_by_name,
     u_updated.full_name as updated_by_name
 FROM diagrams d
-LEFT JOIN layouts l ON d.id = l.diagram_id AND l.is_default = TRUE
-LEFT JOIN layouts l_all ON d.id = l_all.diagram_id
+LEFT JOIN layouts l ON d.id = l.diagram_id AND l.is_default = TRUE AND l.deleted_at IS NULL
+LEFT JOIN layouts l_all ON d.id = l_all.diagram_id AND l_all.deleted_at IS NULL
 LEFT JOIN users u_created ON d.created_by = u_created.id
 LEFT JOIN users u_updated ON d.updated_by = u_updated.id
+WHERE d.deleted_at IS NULL
 GROUP BY d.id, l.id, u_created.id, u_updated.id;
 
 -- Comments

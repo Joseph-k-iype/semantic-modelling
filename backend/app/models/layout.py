@@ -1,6 +1,6 @@
 # backend/app/models/layout.py
 """
-Layout Database Model - COMPLETE matching database schema
+Layout Database Model - COMPLETE matching updated schema
 Path: backend/app/models/layout.py
 """
 from datetime import datetime
@@ -43,7 +43,21 @@ class Layout(Base):
     # Layout engine type
     # Supported engines: manual, layered, force_directed, bpmn_swimlane, 
     # uml_sequence, state_machine, hierarchical
-    layout_engine = Column(String(100), nullable=False, index=True, default='manual')
+    layout_engine = Column(
+        String(100), 
+        nullable=False, 
+        index=True, 
+        default='manual',
+        name='engine'  # Database column name
+    )
+    
+    # Engine-specific configuration
+    engine_config = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default='{}'
+    )
     
     # Layout data stored as JSONB
     # Contains: node positions, edge routes, constraints, viewport, etc.
@@ -59,82 +73,85 @@ class Layout(Base):
                 "y": 0,
                 "zoom": 1.0
             }
-        }
+        },
+        name='positions'  # Database column name (legacy)
     )
     
-    # Settings - is this the default layout for the diagram?
-    is_default = Column(Boolean, default=False, nullable=False, index=True)
-    is_locked = Column(Boolean, default=False, nullable=False)
+    # Layout constraints (pinned nodes, locked sections, etc.)
+    constraints = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default='{}'
+    )
     
-    # Ownership
+    # Is this the default layout for the diagram?
+    is_default = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        index=True
+    )
+    
+    # Soft delete support
+    deleted_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True
+    )
+    
+    # Ownership and audit fields
     created_by = Column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False
-    )
-    updated_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True
     )
     
-    # Timestamps
     created_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=False,
         default=datetime.utcnow,
         index=True
     )
+    
     updated_at = Column(
-        DateTime,
-        nullable=True,
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
     
     # Relationships
-    diagram = relationship("Diagram", backref="layouts")
+    diagram = relationship(
+        "Diagram",
+        back_populates="layouts",
+        lazy="select"
+    )
+    
     creator = relationship(
         "User",
         foreign_keys=[created_by],
-        backref="created_layouts"
-    )
-    updater = relationship(
-        "User",
-        foreign_keys=[updated_by]
+        lazy="select"
     )
     
-    def __repr__(self):
-        return f"<Layout(id={self.id}, name='{self.name}', engine='{self.layout_engine}', default={self.is_default})>"
+    def __repr__(self) -> str:
+        return f"<Layout(id={self.id}, name='{self.name}', diagram_id={self.diagram_id}, engine='{self.layout_engine}', is_default={self.is_default})>"
     
-    def to_dict(self):
+    def to_dict(self) -> dict:
         """Convert layout to dictionary"""
         return {
-            'id': str(self.id),
-            'diagram_id': str(self.diagram_id),
-            'name': self.name,
-            'description': self.description,
-            'layout_engine': self.layout_engine,
-            'layout_data': self.layout_data,
-            'is_default': self.is_default,
-            'is_locked': self.is_locked,
-            'created_by': str(self.created_by),
-            'updated_by': str(self.updated_by) if self.updated_by else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "id": str(self.id),
+            "diagram_id": str(self.diagram_id),
+            "name": self.name,
+            "description": self.description,
+            "engine": self.layout_engine,
+            "engine_config": self.engine_config,
+            "layout_data": self.layout_data,
+            "constraints": self.constraints,
+            "is_default": self.is_default,
+            "created_by": str(self.created_by),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None
         }
-    
-    @property
-    def node_count(self):
-        """Get the number of nodes in this layout"""
-        return len(self.layout_data.get("nodes", {})) if self.layout_data else 0
-    
-    @property
-    def edge_count(self):
-        """Get the number of edges in this layout"""
-        return len(self.layout_data.get("edges", {})) if self.layout_data else 0
-    
-    @property
-    def has_constraints(self):
-        """Check if layout has any constraints"""
-        constraints = self.layout_data.get("constraints", {}) if self.layout_data else {}
-        return len(constraints) > 0

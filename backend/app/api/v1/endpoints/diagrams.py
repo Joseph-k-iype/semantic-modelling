@@ -1,7 +1,7 @@
 # backend/app/api/v1/endpoints/diagrams.py
 """
 Diagram Management Endpoints - COMPLETE AND FIXED
-FIXED: Proper async/await handling to prevent greenlet errors
+FIXED: Proper async/await handling and layout creation to prevent greenlet errors
 Path: backend/app/api/v1/endpoints/diagrams.py
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -16,6 +16,7 @@ import structlog
 
 from app.db.session import get_db
 from app.models.diagram import Diagram
+from app.models.layout import Layout
 from app.models.model import Model, ModelType, ModelStatus
 from app.models.workspace import Workspace, WorkspaceType
 from app.models.user import User
@@ -78,7 +79,8 @@ async def get_or_create_personal_workspace(
     stmt = select(Workspace).where(
         and_(
             Workspace.created_by == user.id,
-            Workspace.type == WorkspaceType.PERSONAL
+            Workspace.type == WorkspaceType.PERSONAL,
+            Workspace.deleted_at.is_(None)
         )
     )
     result = await db.execute(stmt)
@@ -137,7 +139,7 @@ async def create_diagram(
     """
     Create a new diagram (and model if needed)
     
-    FIXED: Robust handling of duplicate model/diagram names with proper async
+    FIXED: Proper async session handling and layout creation
     """
     try:
         # Get or create personal workspace
@@ -147,140 +149,101 @@ async def create_diagram(
         # ====================================================================
         # STEP 1: Handle model creation/lookup
         # ====================================================================
+        model = None
         if diagram_data.model_id:
             # Use provided model
             try:
                 model_uuid = uuid.UUID(diagram_data.model_id)
-                stmt = select(Model).where(Model.id == model_uuid)
+                stmt = select(Model).where(
+                    and_(
+                        Model.id == model_uuid,
+                        Model.deleted_at.is_(None)
+                    )
+                )
                 result = await db.execute(stmt)
                 model = result.scalar_one_or_none()
                 
                 if not model:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Model not found: {diagram_data.model_id}"
+                        detail=f"Model {diagram_data.model_id} not found"
                     )
-                    
-                logger.info(
-                    "Using existing model",
-                    model_id=str(model.id),
-                    model_name=model.name
-                )
+                
+                logger.info("Using existing model", model_id=str(model.id))
+                
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid model ID format"
+                    detail="Invalid model_id format"
                 )
         else:
-            # Find unique model name with retry logic
-            base_model_name = diagram_data.model_name or f"Model for {diagram_data.name}"
-            model_name = base_model_name
-            counter = 1
+            # Create new model
+            model_name = diagram_data.model_name or diagram_data.name
+            
+            # Try to create model with unique name
             max_attempts = 10
-            model = None
+            counter = 1
             
             for attempt in range(max_attempts):
-                # Check if model exists
-                stmt = select(Model).where(
-                    and_(
-                        Model.workspace_id == workspace_id,
-                        Model.name == model_name
-                    )
-                )
-                result = await db.execute(stmt)
-                existing_model = result.scalar_one_or_none()
-                
-                if existing_model:
-                    # Model exists, use it
-                    model = existing_model
-                    logger.info(
-                        "Using existing model",
-                        model_id=str(model.id),
-                        model_name=model.name,
-                        attempt=attempt + 1
-                    )
-                    break
-                
-                # Try to create model
                 try:
+                    current_model_name = model_name if counter == 1 else f"{model_name} ({counter})"
+                    
                     model = Model(
-                        workspace_id=workspace_id,
-                        name=model_name,
-                        description=f"Auto-generated model for diagram: {diagram_data.name}",
-                        type=ModelType.ER,
+                        name=current_model_name,
+                        description=f"Model for {diagram_data.name}",
+                        type=ModelType.LOGICAL,
                         status=ModelStatus.DRAFT,
+                        workspace_id=workspace_id,
                         created_by=current_user.id,
-                        version=1,
-                        tags=[],
-                        metadata={}
+                        settings={}
                     )
+                    
                     db.add(model)
                     await db.flush()
                     await db.refresh(model)
                     
                     logger.info(
-                        "Created new model",
+                        "Created model",
                         model_id=str(model.id),
-                        model_name=model.name,
+                        name=current_model_name,
                         attempt=attempt + 1
                     )
                     break
                     
                 except IntegrityError:
-                    # Race condition
                     await db.rollback()
-                    model_name = f"{base_model_name} ({counter})"
                     counter += 1
-                    logger.warning(
-                        "Model name conflict, retrying",
-                        new_name=model_name,
-                        attempt=attempt + 1
-                    )
+                    if attempt == max_attempts - 1:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Could not create model after {max_attempts} attempts"
+                        )
                     continue
-            
-            if not model:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Could not create or find model after {max_attempts} attempts"
-                )
+        
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to create or find model"
+            )
         
         # ====================================================================
         # STEP 2: Create diagram with unique name handling
         # ====================================================================
         diagram_name = diagram_data.name
-        counter = 1
         max_attempts = 10
+        counter = 1
         diagram = None
         
         for attempt in range(max_attempts):
-            # Check if diagram name exists
-            stmt = select(Diagram).where(
-                and_(
-                    Diagram.model_id == model.id,
-                    Diagram.name == diagram_name
-                )
-            )
-            result = await db.execute(stmt)
-            existing_diagram = result.scalar_one_or_none()
-            
-            if existing_diagram:
-                # Name exists, try with counter
-                diagram_name = f"{diagram_data.name} ({counter})"
-                counter += 1
-                logger.info(
-                    "Diagram name exists, trying new name",
-                    original_name=diagram_data.name,
-                    new_name=diagram_name,
-                    attempt=attempt + 1
-                )
-                continue
-            
-            # Try to create diagram
             try:
+                # Generate unique name if needed
+                current_diagram_name = diagram_name if counter == 1 else f"{diagram_name} ({counter})"
+                
+                # Create diagram
                 diagram = Diagram(
-                    model_id=model.id,
-                    name=diagram_name,
+                    name=current_diagram_name,
                     description=diagram_data.description,
+                    model_id=model.id,
                     notation=diagram_data.notation_type,
                     notation_config={},
                     visible_concepts=[],
@@ -289,42 +252,111 @@ async def create_diagram(
                 )
                 
                 db.add(diagram)
-                await db.commit()
+                await db.flush()
                 await db.refresh(diagram)
                 
-                if diagram_name != diagram_data.name:
-                    logger.info(
-                        "Created diagram with modified name",
-                        original_name=diagram_data.name,
-                        final_name=diagram_name,
-                        diagram_id=str(diagram.id)
-                    )
-                else:
-                    logger.info(
-                        "Created diagram",
-                        diagram_id=str(diagram.id),
-                        name=diagram_name
-                    )
+                logger.info(
+                    "Created diagram",
+                    diagram_id=str(diagram.id),
+                    name=current_diagram_name,
+                    notation=diagram_data.notation_type,
+                    model_id=str(model.id),
+                    attempt=attempt + 1
+                )
                 break
                 
-            except IntegrityError:
+            except IntegrityError as e:
                 await db.rollback()
-                diagram_name = f"{diagram_data.name} ({counter})"
+                logger.warning(
+                    "Diagram name conflict, retrying",
+                    name=current_diagram_name,
+                    attempt=attempt + 1,
+                    error=str(e)
+                )
                 counter += 1
+                
+                if attempt == max_attempts - 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Could not create diagram after {max_attempts} attempts"
+                    )
                 continue
         
         if not diagram:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Could not create diagram after {max_attempts} attempts"
+                detail="Failed to create diagram"
             )
+        
+        # ====================================================================
+        # STEP 3: Create default layout (IMPORTANT - replaces DB trigger)
+        # ====================================================================
+        try:
+            layout = Layout(
+                diagram_id=diagram.id,
+                name="Default Layout",
+                description="Default manual layout",
+                layout_engine="manual",
+                layout_data={
+                    "nodes": {},
+                    "edges": {},
+                    "constraints": {},
+                    "viewport": {
+                        "x": 0,
+                        "y": 0,
+                        "zoom": 1.0
+                    }
+                },
+                is_default=True,
+                created_by=current_user.id
+            )
+            
+            db.add(layout)
+            await db.flush()
+            await db.refresh(layout)
+            
+            logger.info(
+                "Created default layout",
+                layout_id=str(layout.id),
+                diagram_id=str(diagram.id)
+            )
+            
+        except Exception as e:
+            logger.error(
+                "Failed to create default layout",
+                diagram_id=str(diagram.id),
+                error=str(e)
+            )
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create default layout: {str(e)}"
+            )
+        
+        # ====================================================================
+        # STEP 4: Commit everything together
+        # ====================================================================
+        await db.commit()
+        await db.refresh(diagram)
+        
+        logger.info(
+            "Diagram creation complete",
+            diagram_id=str(diagram.id),
+            model_id=str(model.id),
+            layout_id=str(layout.id)
+        )
         
         return diagram_to_response(diagram)
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error creating diagram", error=str(e), error_type=type(e).__name__)
+        logger.error(
+            "Error creating diagram",
+            error=str(e),
+            error_type=type(e).__name__,
+            diagram_name=diagram_data.name if diagram_data else None
+        )
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -336,14 +368,31 @@ async def create_diagram(
 async def list_diagrams(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
+    model_id: Optional[str] = Query(None, description="Filter by model ID"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """List all diagrams for the current user"""
     try:
         stmt = select(Diagram).where(
-            Diagram.created_by == current_user.id
-        ).offset(skip).limit(limit).order_by(Diagram.created_at.desc())
+            and_(
+                Diagram.created_by == current_user.id,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        
+        # Optional model filter
+        if model_id:
+            try:
+                model_uuid = uuid.UUID(model_id)
+                stmt = stmt.where(Diagram.model_id == model_uuid)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid model_id format"
+                )
+        
+        stmt = stmt.offset(skip).limit(limit).order_by(Diagram.created_at.desc())
         
         result = await db.execute(stmt)
         diagrams = result.scalars().all()
@@ -352,37 +401,8 @@ async def list_diagrams(
         
         return [diagram_to_response(d) for d in diagrams]
         
-    except Exception as e:
-        logger.error("Error listing diagrams", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list diagrams: {str(e)}"
-        )
-
-
-@router.get("/models/{model_id}/diagrams", response_model=List[DiagramResponse])
-async def list_diagrams_by_model(
-    model_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """List all diagrams for a specific model"""
-    try:
-        model_uuid = uuid.UUID(model_id)
-        
-        stmt = select(Diagram).where(Diagram.model_id == model_uuid)
-        result = await db.execute(stmt)
-        diagrams = result.scalars().all()
-        
-        logger.info("Diagrams listed by model", model_id=model_id, count=len(diagrams))
-        
-        return [diagram_to_response(d) for d in diagrams]
-        
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid model ID format"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Error listing diagrams", error=str(e))
         raise HTTPException(
@@ -400,90 +420,114 @@ async def get_diagram(
     """Get a specific diagram"""
     try:
         diagram_uuid = uuid.UUID(diagram_id)
-        
-        stmt = select(Diagram).where(Diagram.id == diagram_uuid)
-        result = await db.execute(stmt)
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        logger.info("Diagram retrieved", diagram_id=diagram_id)
-        
-        return diagram_to_response(diagram)
-        
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid diagram ID format"
+            detail="Invalid diagram_id format"
         )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error getting diagram", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get diagram: {str(e)}"
-        )
-
-
-@router.put("/{diagram_id}", response_model=DiagramResponse)
-async def update_diagram(
-    diagram_id: str,
-    diagram_data: DiagramUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Update diagram"""
+    
     try:
-        diagram_uuid = uuid.UUID(diagram_id)
-        
-        stmt = select(Diagram).where(Diagram.id == diagram_uuid)
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_uuid,
+                Diagram.deleted_at.is_(None)
+            )
+        )
         result = await db.execute(stmt)
         diagram = result.scalar_one_or_none()
         
         if not diagram:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
+                detail=f"Diagram {diagram_id} not found"
+            )
+        
+        # Check ownership
+        if diagram.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this diagram"
+            )
+        
+        logger.info("Diagram retrieved", diagram_id=diagram_id, user_id=str(current_user.id))
+        
+        return diagram_to_response(diagram)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error retrieving diagram", diagram_id=diagram_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve diagram: {str(e)}"
+        )
+
+
+@router.patch("/{diagram_id}", response_model=DiagramResponse)
+async def update_diagram(
+    diagram_id: str,
+    update_data: DiagramUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update a diagram"""
+    try:
+        diagram_uuid = uuid.UUID(diagram_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram_id format"
+        )
+    
+    try:
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_uuid,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Diagram {diagram_id} not found"
+            )
+        
+        # Check ownership
+        if diagram.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this diagram"
             )
         
         # Update fields
-        if diagram_data.name is not None:
-            diagram.name = diagram_data.name
-        if diagram_data.description is not None:
-            diagram.description = diagram_data.description
-        if diagram_data.notation_config is not None:
-            diagram.notation_config = diagram_data.notation_config
-        if diagram_data.settings is not None:
-            diagram.settings = diagram_data.settings
-        if diagram_data.visible_concepts is not None:
-            diagram.visible_concepts = [
-                uuid.UUID(c) if isinstance(c, str) else c 
-                for c in diagram_data.visible_concepts
-            ]
+        if update_data.name is not None:
+            diagram.name = update_data.name
+        if update_data.description is not None:
+            diagram.description = update_data.description
+        if update_data.notation_config is not None:
+            diagram.notation_config = update_data.notation_config
+        if update_data.visible_concepts is not None:
+            diagram.visible_concepts = [uuid.UUID(c) for c in update_data.visible_concepts]
+        if update_data.settings is not None:
+            diagram.settings = update_data.settings
         
         diagram.updated_by = current_user.id
+        diagram.updated_at = datetime.utcnow()
         
         await db.commit()
         await db.refresh(diagram)
         
-        logger.info("Diagram updated", diagram_id=diagram_id)
+        logger.info("Diagram updated", diagram_id=diagram_id, user_id=str(current_user.id))
         
         return diagram_to_response(diagram)
         
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid ID format"
-        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error updating diagram", error=str(e))
+        logger.error("Error updating diagram", diagram_id=diagram_id, error=str(e))
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -497,34 +541,51 @@ async def delete_diagram(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Delete a diagram"""
+    """Soft delete a diagram"""
     try:
         diagram_uuid = uuid.UUID(diagram_id)
-        
-        stmt = select(Diagram).where(Diagram.id == diagram_uuid)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram_id format"
+        )
+    
+    try:
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_uuid,
+                Diagram.deleted_at.is_(None)
+            )
+        )
         result = await db.execute(stmt)
         diagram = result.scalar_one_or_none()
         
         if not diagram:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
+                detail=f"Diagram {diagram_id} not found"
             )
         
-        await db.delete(diagram)
+        # Check ownership
+        if diagram.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this diagram"
+            )
+        
+        # Soft delete
+        diagram.deleted_at = datetime.utcnow()
+        
         await db.commit()
         
-        logger.info("Deleted diagram", diagram_id=diagram_id)
+        logger.info("Diagram deleted", diagram_id=diagram_id, user_id=str(current_user.id))
         
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid diagram ID format"
-        )
+        return None
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error deleting diagram", error=str(e))
+        logger.error("Error deleting diagram", diagram_id=diagram_id, error=str(e))
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -532,60 +593,76 @@ async def delete_diagram(
         )
 
 
-@router.post("/{diagram_id}/duplicate", response_model=DiagramResponse)
-async def duplicate_diagram(
+@router.get("/{diagram_id}/layouts")
+async def get_diagram_layouts(
     diagram_id: str,
-    new_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Duplicate an existing diagram"""
+    """Get all layouts for a diagram"""
     try:
         diagram_uuid = uuid.UUID(diagram_id)
-        
-        stmt = select(Diagram).where(Diagram.id == diagram_uuid)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram_id format"
+        )
+    
+    try:
+        # Verify diagram exists and user has access
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_uuid,
+                Diagram.deleted_at.is_(None)
+            )
+        )
         result = await db.execute(stmt)
         diagram = result.scalar_one_or_none()
         
         if not diagram:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
+                detail=f"Diagram {diagram_id} not found"
             )
         
-        # Create duplicate
-        duplicate_name = new_name or f"{diagram.name} (Copy)"
+        if diagram.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this diagram"
+            )
         
-        new_diagram = Diagram(
-            model_id=diagram.model_id,
-            name=duplicate_name,
-            description=diagram.description,
-            notation=diagram.notation,
-            notation_config=diagram.notation_config,
-            visible_concepts=diagram.visible_concepts.copy() if diagram.visible_concepts else [],
-            settings=diagram.settings.copy() if diagram.settings else {},
-            created_by=current_user.id,
-        )
+        # Get layouts
+        stmt = select(Layout).where(
+            and_(
+                Layout.diagram_id == diagram_uuid,
+                Layout.deleted_at.is_(None)
+            )
+        ).order_by(Layout.is_default.desc(), Layout.created_at.desc())
         
-        db.add(new_diagram)
-        await db.commit()
-        await db.refresh(new_diagram)
+        result = await db.execute(stmt)
+        layouts = result.scalars().all()
         
-        logger.info("Duplicated diagram", original_id=diagram_id, new_id=str(new_diagram.id))
+        logger.info("Layouts retrieved", diagram_id=diagram_id, count=len(layouts))
         
-        return diagram_to_response(new_diagram)
+        return [
+            {
+                "id": str(layout.id),
+                "name": layout.name,
+                "description": layout.description,
+                "engine": layout.layout_engine,
+                "is_default": layout.is_default,
+                "layout_data": layout.layout_data,
+                "created_at": layout.created_at,
+                "updated_at": layout.updated_at
+            }
+            for layout in layouts
+        ]
         
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid diagram ID format"
-        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error duplicating diagram", error=str(e))
-        await db.rollback()
+        logger.error("Error retrieving layouts", diagram_id=diagram_id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to duplicate diagram: {str(e)}"
+            detail=f"Failed to retrieve layouts: {str(e)}"
         )
