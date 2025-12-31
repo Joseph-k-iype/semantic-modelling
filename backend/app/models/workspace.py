@@ -1,6 +1,6 @@
 # backend/app/models/workspace.py
 """
-Workspace Database Model - FIXED with correct relationships
+Workspace Database Model - FIXED with proper enum value handling
 Path: backend/app/models/workspace.py
 """
 from datetime import datetime
@@ -24,7 +24,7 @@ class Workspace(Base):
     """
     Workspace model for organizing models and diagrams
     
-    CRITICAL FIX: Using SQLAlchemy Enum type to match PostgreSQL workspace_type ENUM
+    CRITICAL FIX: Using SQLAlchemy Enum type with native_enum=False to use enum values
     """
     
     __tablename__ = "workspaces"
@@ -41,10 +41,16 @@ class Workspace(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # CRITICAL FIX: Using SQLAlchemy Enum type for PostgreSQL ENUM
-    # This properly casts to the workspace_type ENUM in database
+    # CRITICAL FIX: Using native_enum=False forces SQLAlchemy to use enum VALUES not NAMES
+    # This ensures 'personal' is used in SQL, not 'PERSONAL'
     type = Column(
-        SQLEnum(WorkspaceType, name="workspace_type", create_type=False),
+        SQLEnum(
+            WorkspaceType,
+            name="workspace_type",
+            create_type=False,
+            native_enum=False,  # ✅ KEY FIX: Use enum values, not names
+            values_callable=lambda x: [e.value for e in x]  # ✅ Explicitly use .value
+        ),
         nullable=False,
         default=WorkspaceType.PERSONAL,
         index=True

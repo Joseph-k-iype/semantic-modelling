@@ -4,7 +4,7 @@ Diagram management endpoints - COMPLETE AND FIXED
 Path: backend/app/api/v1/endpoints/diagrams.py
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Dict, Any
@@ -69,26 +69,32 @@ async def get_or_create_personal_workspace(
     db: AsyncSession,
     user: User
 ) -> Workspace:
-    """Get user's personal workspace or create it if it doesn't exist"""
+    """
+    Get user's personal workspace or create it if it doesn't exist
+    
+    CRITICAL FIX: Now that we use native_enum=False in the model,
+    we can compare directly with the enum member and SQLAlchemy
+    will use the value automatically
+    """
     # Try to find existing personal workspace
-    # CRITICAL FIX: Use .value to get the string value "personal", not the enum name "PERSONAL"
+    # ✅ With native_enum=False, we can now use the enum directly
     result = await db.execute(
         select(Workspace).where(
             Workspace.created_by == user.id,
-            Workspace.type == WorkspaceType.PERSONAL.value  # ✅ FIXED: Use .value
+            Workspace.type == WorkspaceType.PERSONAL  # ✅ SQLAlchemy converts to "personal"
         )
     )
     workspace = result.scalar_one_or_none()
     
     if workspace:
+        logger.info("Found existing personal workspace", user_id=str(user.id), workspace_id=str(workspace.id))
         return workspace
     
     # Create personal workspace
-    # CRITICAL FIX: Use WorkspaceType.PERSONAL (the enum), SQLAlchemy will convert it properly
     workspace = Workspace(
         name=f"{user.username}'s Workspace",
         description="Personal workspace",
-        type=WorkspaceType.PERSONAL,  # ✅ This is correct - SQLAlchemy enum column handles it
+        type=WorkspaceType.PERSONAL,  # ✅ SQLAlchemy stores as "personal"
         created_by=user.id,
         settings={},
         is_active=True
@@ -115,8 +121,8 @@ async def create_diagram(
     Create a new diagram (and model if needed)
     
     FIXED: 
-    - Use WorkspaceType.PERSONAL.value for WHERE clause comparison
-    - Use WorkspaceType.PERSONAL for INSERT (SQLAlchemy converts it)
+    - Workspace enum now properly configured to use values
+    - Can use enum members directly in comparisons
     """
     try:
         model_id = diagram_data.model_id
@@ -171,7 +177,7 @@ async def create_diagram(
         )
         
     except Exception as e:
-        logger.error("Error creating diagram", error=str(e))
+        logger.error("Error creating diagram", error=str(e), error_type=type(e).__name__)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -236,6 +242,38 @@ async def get_diagram(
         )
 
 
+@router.get("/", response_model=List[DiagramResponse])
+async def list_diagrams(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """List all diagrams for the current user"""
+    result = await db.execute(
+        select(Diagram)
+        .where(Diagram.created_by == current_user.id)
+        .offset(skip)
+        .limit(limit)
+        .order_by(Diagram.created_at.desc())
+    )
+    diagrams = result.scalars().all()
+    
+    logger.info("Diagrams listed", count=len(diagrams), user_id=str(current_user.id))
+    
+    return [
+        DiagramResponse(
+            id=str(d.id),
+            name=d.name,
+            notation_type=d.notation_type,
+            model_id=str(d.model_id),
+            nodes=d.data.get('nodes', []) if d.data else [],
+            edges=d.data.get('edges', []) if d.data else []
+        )
+        for d in diagrams
+    ]
+
+
 @router.get("/models/{model_id}/diagrams", response_model=List[DiagramResponse])
 async def list_diagrams_by_model(
     model_id: str,
@@ -277,6 +315,54 @@ async def list_diagrams_by_model(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list diagrams"
         )
+
+
+@router.put("/{diagram_id}", response_model=DiagramResponse)
+async def update_diagram(
+    diagram_id: str,
+    diagram_data: Dict[str, Any],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update diagram"""
+    try:
+        diagram_uuid = uuid.UUID(diagram_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram ID format"
+        )
+    
+    result = await db.execute(
+        select(Diagram).where(Diagram.id == diagram_uuid)
+    )
+    diagram = result.scalar_one_or_none()
+    
+    if not diagram:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagram not found"
+        )
+    
+    # Update fields
+    if "name" in diagram_data:
+        diagram.name = diagram_data["name"]
+    if "data" in diagram_data:
+        diagram.data = diagram_data["data"]
+    
+    await db.commit()
+    await db.refresh(diagram)
+    
+    logger.info("Diagram updated", diagram_id=diagram_id)
+    
+    return DiagramResponse(
+        id=str(diagram.id),
+        name=diagram.name,
+        notation_type=diagram.notation_type,
+        model_id=str(diagram.model_id),
+        nodes=diagram.data.get("nodes", []),
+        edges=diagram.data.get("edges", [])
+    )
 
 
 @router.put("/{diagram_id}/nodes/{node_id}")

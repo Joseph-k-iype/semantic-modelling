@@ -52,9 +52,15 @@ class WorkspaceMember(Base):
         index=True
     )
     
-    # Member role - Using SQLEnum for PostgreSQL ENUM
+    # Member role - Using SQLEnum for PostgreSQL ENUM with proper value handling
     role = Column(
-        SQLEnum(WorkspaceMemberRole, name="user_role", create_type=False),
+        SQLEnum(
+            WorkspaceMemberRole,
+            name="user_role",
+            create_type=False,
+            native_enum=False,  # ✅ Use enum values, not names
+            values_callable=lambda x: [e.value for e in x]
+        ),
         nullable=False,
         default=WorkspaceMemberRole.VIEWER,
         index=True
@@ -75,12 +81,12 @@ class WorkspaceMember(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    workspace = relationship("Workspace", back_populates="members")
-    user = relationship("User", back_populates="workspace_memberships")
+    workspace = relationship("Workspace", foreign_keys=[workspace_id], backref="members")
+    user = relationship("User", foreign_keys=[user_id], backref="workspace_memberships")
     
-    # Constraints
+    # Unique constraint - user can only be a member once per workspace
     __table_args__ = (
-        UniqueConstraint('workspace_id', 'user_id', name='unique_workspace_user'),
+        UniqueConstraint('workspace_id', 'user_id', name='unique_workspace_member'),
     )
     
     def __repr__(self):
