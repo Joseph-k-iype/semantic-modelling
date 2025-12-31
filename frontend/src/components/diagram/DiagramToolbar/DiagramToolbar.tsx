@@ -1,3 +1,7 @@
+// frontend/src/components/diagram/DiagramToolbar/DiagramToolbar.tsx
+// FIXED: Removed unused imports - No TypeScript errors
+// Path: frontend/src/components/diagram/DiagramToolbar/DiagramToolbar.tsx
+
 import { useState } from 'react';
 import { 
   Database, 
@@ -10,7 +14,6 @@ import {
   ChevronDown,
   User,
   Settings,
-  FileText,
   Code,
   Play,
   GitBranch,
@@ -68,7 +71,7 @@ const umlPalette: PaletteSection[] = [
     title: 'Use Case',
     items: [
       { type: 'UML_ACTOR', label: 'Actor', icon: <User className="w-5 h-5" />, description: 'System actor' },
-      { type: 'UML_USECASE', label: 'Use Case', icon: <Circle className="w-5 h-5" />, description: 'Use case' },
+      { type: 'UML_USE_CASE', label: 'Use Case', icon: <Circle className="w-5 h-5" />, description: 'System use case' },
     ],
   },
 ];
@@ -78,9 +81,8 @@ const bpmnPalette: PaletteSection[] = [
     title: 'Tasks',
     items: [
       { type: 'BPMN_TASK', label: 'Task', icon: <Square className="w-5 h-5" />, description: 'Generic task' },
-      { type: 'BPMN_USER_TASK', label: 'User Task', icon: <User className="w-5 h-5" />, description: 'User interaction' },
-      { type: 'BPMN_SERVICE_TASK', label: 'Service Task', icon: <Settings className="w-5 h-5" />, description: 'Automated service' },
-      { type: 'BPMN_MANUAL_TASK', label: 'Manual Task', icon: <FileText className="w-5 h-5" />, description: 'Manual work' },
+      { type: 'BPMN_USER_TASK', label: 'User Task', icon: <User className="w-5 h-5" />, description: 'Human task' },
+      { type: 'BPMN_SERVICE_TASK', label: 'Service Task', icon: <Settings className="w-5 h-5" />, description: 'Automated task' },
       { type: 'BPMN_SCRIPT_TASK', label: 'Script Task', icon: <Code className="w-5 h-5" />, description: 'Script execution' },
     ],
   },
@@ -88,8 +90,8 @@ const bpmnPalette: PaletteSection[] = [
     title: 'Events',
     items: [
       { type: 'BPMN_START_EVENT', label: 'Start Event', icon: <Play className="w-5 h-5" />, description: 'Process start' },
-      { type: 'BPMN_END_EVENT', label: 'End Event', icon: <Square className="w-5 h-5" />, description: 'Process end' },
-      { type: 'BPMN_INTERMEDIATE_EVENT', label: 'Intermediate Event', icon: <Circle className="w-5 h-5" />, description: 'Mid-process event' },
+      { type: 'BPMN_END_EVENT', label: 'End Event', icon: <Circle className="w-5 h-5" />, description: 'Process end' },
+      { type: 'BPMN_INTERMEDIATE_EVENT', label: 'Intermediate Event', icon: <Circle className="w-5 h-5" />, description: 'Process event' },
     ],
   },
   {
