@@ -1,24 +1,30 @@
 # backend/app/models/workspace.py
 """
-Workspace Database Model - FIXED to match actual database schema
+Workspace Database Model - FIXED for PostgreSQL ENUM type
 Path: backend/app/models/workspace.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Boolean, Enum as SQLEnum
 from sqlalchemy.orm import relationship, mapped_column
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
+import enum
 
 from app.db.base import Base
+
+
+class WorkspaceType(str, enum.Enum):
+    """Workspace type enumeration - must match database ENUM"""
+    PERSONAL = "personal"
+    TEAM = "team"
+    COMMON = "common"
 
 
 class Workspace(Base):
     """
     Workspace model for organizing models and diagrams
     
-    CRITICAL: Column names MUST match database schema in 02-workspaces.sql
-    Database has: type, created_by, settings, is_active
-    NOT: workspace_type, owner_id
+    CRITICAL FIX: Using SQLAlchemy Enum type to match PostgreSQL workspace_type ENUM
     """
     
     __tablename__ = "workspaces"
@@ -35,15 +41,17 @@ class Workspace(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # FIXED: Column name is 'type' in database, not 'workspace_type'
-    # Using mapped_column to map Python attribute to different database column
-    workspace_type = mapped_column("type", String(50), nullable=False, default="personal", index=True)
-    # workspace_type options: personal, team, common
+    # CRITICAL FIX: Using SQLAlchemy Enum type for PostgreSQL ENUM
+    # This properly casts to the workspace_type ENUM in database
+    type = Column(
+        SQLEnum(WorkspaceType, name="workspace_type", create_type=False),
+        nullable=False,
+        default=WorkspaceType.PERSONAL,
+        index=True
+    )
     
-    # FIXED: Column name is 'created_by' in database, not 'owner_id'
-    # Using mapped_column to map Python attribute to different database column
-    owner_id = mapped_column(
-        "created_by",
+    # FIXED: Column name is 'created_by' in database
+    created_by = Column(
         UUID(as_uuid=True), 
         ForeignKey("users.id", ondelete="RESTRICT"), 
         nullable=False, 
@@ -59,10 +67,10 @@ class Workspace(Base):
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    owner = relationship("User", foreign_keys=[owner_id], backref="owned_workspaces")
+    owner = relationship("User", foreign_keys=[created_by], backref="owned_workspaces")
     
     def __repr__(self):
-        return f"<Workspace(id={self.id}, name='{self.name}', type='{self.workspace_type}')>"
+        return f"<Workspace(id={self.id}, name='{self.name}', type='{self.type.value}')>"
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -70,8 +78,8 @@ class Workspace(Base):
             'id': str(self.id),
             'name': self.name,
             'description': self.description,
-            'workspace_type': self.workspace_type,
-            'owner_id': str(self.owner_id),
+            'type': self.type.value if isinstance(self.type, WorkspaceType) else self.type,
+            'created_by': str(self.created_by),
             'settings': self.settings,
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,

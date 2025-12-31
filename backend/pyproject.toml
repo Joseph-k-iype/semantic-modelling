@@ -34,9 +34,10 @@ falkordb = "^1.2.2"
 
 # Authentication & Security
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+bcrypt = "4.0.1"
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
-bcrypt = "^4.2.1"
 python-dateutil = "^2.9.0"
+
 
 # WebSocket
 websockets = "^14.1"

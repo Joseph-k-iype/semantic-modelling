@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE AND FIXED with CORS
+FastAPI main application entry point - COMPLETE AND FIXED
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager

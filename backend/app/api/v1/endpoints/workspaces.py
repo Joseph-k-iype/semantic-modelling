@@ -1,5 +1,5 @@
 """
-Workspace management endpoints
+Workspace management endpoints - FIXED for ENUM type
 """
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -7,10 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import structlog
 import uuid
-from datetime import datetime
 
 from app.db.session import get_db
-from app.models.workspace import Workspace
+from app.models.workspace import Workspace, WorkspaceType
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate, WorkspaceResponse
 
 logger = structlog.get_logger(__name__)
@@ -43,15 +42,26 @@ async def create_workspace(
     workspace_in: WorkspaceCreate,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """Create new workspace"""
+    """
+    Create new workspace
+    
+    FIXED: Properly handles WorkspaceType enum
+    """
     # Mock user ID - replace with actual authenticated user
-    mock_user_id = str(uuid.uuid4())
+    mock_user_id = uuid.uuid4()
+    
+    # CRITICAL FIX: Convert string to WorkspaceType enum
+    workspace_type = workspace_in.type
+    if isinstance(workspace_type, str):
+        workspace_type = WorkspaceType(workspace_type)
     
     workspace = Workspace(
         name=workspace_in.name,
         description=workspace_in.description,
-        type=workspace_in.type.value,
+        type=workspace_type,  # Now properly a WorkspaceType enum
         created_by=mock_user_id,
+        settings={},
+        is_active=True,
     )
     
     db.add(workspace)
@@ -103,11 +113,11 @@ async def update_workspace(
             detail="Workspace not found"
         )
     
+    # Update fields
     update_data = workspace_in.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(workspace, field, value)
     
-    workspace.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(workspace)
     
@@ -116,11 +126,11 @@ async def update_workspace(
     return workspace
 
 
-@router.delete("/{workspace_id}")
+@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_workspace(
     workspace_id: str,
     db: AsyncSession = Depends(get_db),
-) -> Any:
+) -> None:
     """Delete workspace"""
     result = await db.execute(
         select(Workspace).where(Workspace.id == workspace_id)
@@ -137,5 +147,3 @@ async def delete_workspace(
     await db.commit()
     
     logger.info("Workspace deleted", workspace_id=workspace_id)
-    
-    return {"message": f"Workspace {workspace_id} deleted successfully"}

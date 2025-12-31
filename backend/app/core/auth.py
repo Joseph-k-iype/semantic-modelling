@@ -1,12 +1,16 @@
 # backend/app/core/auth.py
-
+"""
+Authentication and Authorization Utilities - FIXED for AsyncSession
+Path: backend/app/core/auth.py
+"""
 from datetime import datetime, timedelta
 from typing import Optional, Union, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -81,10 +85,12 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Get the current authenticated user from JWT token.
+    
+    FIXED: Changed from synchronous db.query() to async select() pattern
     
     Args:
         token: JWT token from Authorization header
@@ -112,8 +118,10 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    # Query user from database
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    # FIXED: Use async SQLAlchemy pattern instead of db.query()
+    stmt = select(User).where(User.id == int(user_id))
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     
     if user is None:
         raise credentials_exception
@@ -173,9 +181,11 @@ async def get_current_superuser(
     return current_user
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
+async def authenticate_user(db: AsyncSession, email: str, password: str) -> Optional[User]:
     """
     Authenticate a user with email and password.
+    
+    FIXED: Changed from synchronous db.query() to async select() pattern
     
     Args:
         db: Database session
@@ -185,7 +195,10 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
     Returns:
         User object if authentication successful, None otherwise
     """
-    user = db.query(User).filter(User.email == email).first()
+    # FIXED: Use async SQLAlchemy pattern
+    stmt = select(User).where(User.email == email)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     
     if not user:
         return None
@@ -217,7 +230,7 @@ def create_access_token_for_user(user: User) -> str:
 # Optional user dependency (returns None if not authenticated)
 async def get_optional_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> Optional[User]:
     """
     Get the current user if authenticated, otherwise return None.

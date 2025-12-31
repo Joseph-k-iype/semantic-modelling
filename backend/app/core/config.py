@@ -1,6 +1,6 @@
 # backend/app/core/config.py
 """
-Application configuration settings - COMPLETE FIX with all JWT settings
+Application configuration settings - COMPLETE FIX with all settings
 Single source of truth for all configuration
 Path: backend/app/core/config.py
 """
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     ALLOWED_HOSTS: str = Field(default="*")
     
     # ========================================================================
-    # CORS CONFIGURATION
+    # CORS CONFIGURATION - CRITICAL FIX
     # ========================================================================
     CORS_ORIGINS: str = Field(
         default="http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
@@ -150,78 +150,65 @@ class Settings(BaseSettings):
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
     
     # ========================================================================
-    # SECURITY & AUTHENTICATION - CRITICAL FIX: Added missing JWT settings
+    # SECURITY & AUTHENTICATION - CRITICAL FIX: All JWT settings included
     # ========================================================================
-    SECRET_KEY: str = Field(default="your-super-secret-key-change-this-in-production-please")
+    SECRET_KEY: str = Field(default="your-super-secret-key-change-this-in-production-please-make-it-at-least-32-characters")
     ALGORITHM: str = Field(default="HS256")
     
-    # CRITICAL FIX: Added missing token expiration settings
+    # Token expiration settings
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7)
     
     # Password hashing
     BCRYPT_ROUNDS: int = Field(default=12)
     
-    # JWT Settings (alternative names, kept for backward compatibility)
+    # JWT Settings (alternative names for backward compatibility)
     JWT_SECRET_KEY: Optional[str] = Field(default=None)
     JWT_ALGORITHM: str = Field(default="HS256")
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: Optional[int] = Field(default=None)
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: Optional[int] = Field(default=None)
     
-    def __init__(self, **kwargs):
-        """Initialize settings and handle JWT aliases"""
-        super().__init__(**kwargs)
-        
+    def model_post_init(self, __context: Any) -> None:
+        """Post initialization to handle JWT aliases"""
         # If JWT_ prefixed versions are provided, use them
-        if self.JWT_SECRET_KEY and not kwargs.get('SECRET_KEY'):
+        if self.JWT_SECRET_KEY:
             self.SECRET_KEY = self.JWT_SECRET_KEY
-        
-        if self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES and not kwargs.get('ACCESS_TOKEN_EXPIRE_MINUTES'):
+        if self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES:
             self.ACCESS_TOKEN_EXPIRE_MINUTES = self.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-        
-        if self.JWT_REFRESH_TOKEN_EXPIRE_DAYS and not kwargs.get('REFRESH_TOKEN_EXPIRE_DAYS'):
+        if self.JWT_REFRESH_TOKEN_EXPIRE_DAYS:
             self.REFRESH_TOKEN_EXPIRE_DAYS = self.JWT_REFRESH_TOKEN_EXPIRE_DAYS
     
     # ========================================================================
     # EMAIL CONFIGURATION (Optional)
     # ========================================================================
-    SMTP_HOST: str = Field(default="smtp.gmail.com")
+    SMTP_HOST: Optional[str] = Field(default=None)
     SMTP_PORT: int = Field(default=587)
-    SMTP_USER: str = Field(default="")
-    SMTP_PASSWORD: str = Field(default="")
-    SMTP_FROM: str = Field(default="noreply@modelingplatform.com")
-    SMTP_FROM_NAME: str = Field(default="Enterprise Modeling Platform")
+    SMTP_USER: Optional[str] = Field(default=None)
+    SMTP_PASSWORD: Optional[str] = Field(default=None)
+    SMTP_TLS: bool = Field(default=True)
+    
+    EMAILS_FROM_EMAIL: Optional[str] = Field(default=None)
+    EMAILS_FROM_NAME: Optional[str] = Field(default="Enterprise Modeling Platform")
     
     # ========================================================================
-    # FILE UPLOAD
+    # WEBSOCKET CONFIGURATION
     # ========================================================================
-    UPLOAD_DIR: str = Field(default="/app/uploads")
-    MAX_UPLOAD_SIZE: int = Field(default=10485760)  # 10 MB
-    ALLOWED_UPLOAD_EXTENSIONS: str = Field(default=".jpg,.jpeg,.png,.gif,.svg,.pdf,.json,.xml,.xmi")
-    
-    @property
-    def allowed_extensions_list(self) -> List[str]:
-        """Get allowed upload extensions as a list"""
-        return [ext.strip() for ext in self.ALLOWED_UPLOAD_EXTENSIONS.split(",")]
-    
-    # ========================================================================
-    # WEBSOCKET
-    # ========================================================================
-    WEBSOCKET_HEARTBEAT_INTERVAL: int = Field(default=30)
-    WEBSOCKET_TIMEOUT: int = Field(default=60)
     WS_MESSAGE_QUEUE_SIZE: int = Field(default=100)
+    WS_HEARTBEAT_INTERVAL: int = Field(default=30)
+    WS_CONNECTION_TIMEOUT: int = Field(default=60)
     
     # ========================================================================
-    # COLLABORATION
+    # FILE UPLOAD CONFIGURATION
     # ========================================================================
-    PRESENCE_TIMEOUT: int = Field(default=60)
-    LOCK_TIMEOUT: int = Field(default=300)
+    MAX_UPLOAD_SIZE: int = Field(default=10485760)  # 10 MB
+    ALLOWED_EXTENSIONS: List[str] = Field(default=["jpg", "jpeg", "png", "gif", "pdf", "svg", "json", "xml"])
+    UPLOAD_DIR: str = Field(default="uploads")
     
     # ========================================================================
     # RATE LIMITING
     # ========================================================================
     RATE_LIMIT_ENABLED: bool = Field(default=True)
-    RATE_LIMIT_REQUESTS: int = Field(default=100)
+    RATE_LIMIT_PER_MINUTE: int = Field(default=100)
     RATE_LIMIT_WINDOW: int = Field(default=60)
     
     # ========================================================================
