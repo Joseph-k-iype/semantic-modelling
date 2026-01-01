@@ -1,129 +1,164 @@
 # backend/app/models/audit_log.py
 """
-Audit Log Database Model - MATCHES database/postgres/schema/10-audit_logs.sql EXACTLY
+Audit Log Database Model - COMPLETE Implementation
 Path: backend/app/models/audit_log.py
+
+Comprehensive audit logging for all system actions.
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.orm import relationship
 import uuid
+import enum
 
 from app.db.base import Base
+
+
+class AuditLogAction(str, enum.Enum):
+    """Audit log action types"""
+    # User actions
+    USER_LOGIN = "USER_LOGIN"
+    USER_LOGOUT = "USER_LOGOUT"
+    USER_REGISTER = "USER_REGISTER"
+    USER_UPDATE = "USER_UPDATE"
+    USER_DELETE = "USER_DELETE"
+    
+    # Workspace actions
+    WORKSPACE_CREATE = "WORKSPACE_CREATE"
+    WORKSPACE_UPDATE = "WORKSPACE_UPDATE"
+    WORKSPACE_DELETE = "WORKSPACE_DELETE"
+    WORKSPACE_MEMBER_ADD = "WORKSPACE_MEMBER_ADD"
+    WORKSPACE_MEMBER_REMOVE = "WORKSPACE_MEMBER_REMOVE"
+    WORKSPACE_MEMBER_UPDATE = "WORKSPACE_MEMBER_UPDATE"
+    
+    # Model actions
+    MODEL_CREATE = "MODEL_CREATE"
+    MODEL_UPDATE = "MODEL_UPDATE"
+    MODEL_DELETE = "MODEL_DELETE"
+    MODEL_PUBLISH = "MODEL_PUBLISH"
+    MODEL_VERSION_CREATE = "MODEL_VERSION_CREATE"
+    
+    # Diagram actions
+    DIAGRAM_CREATE = "DIAGRAM_CREATE"
+    DIAGRAM_UPDATE = "DIAGRAM_UPDATE"
+    DIAGRAM_DELETE = "DIAGRAM_DELETE"
+    DIAGRAM_EXPORT = "DIAGRAM_EXPORT"
+    
+    # Folder actions
+    FOLDER_CREATE = "FOLDER_CREATE"
+    FOLDER_UPDATE = "FOLDER_UPDATE"
+    FOLDER_DELETE = "FOLDER_DELETE"
+    FOLDER_MOVE = "FOLDER_MOVE"
+    
+    # Layout actions
+    LAYOUT_CREATE = "LAYOUT_CREATE"
+    LAYOUT_UPDATE = "LAYOUT_UPDATE"
+    LAYOUT_DELETE = "LAYOUT_DELETE"
+    LAYOUT_APPLY = "LAYOUT_APPLY"
+    
+    # Comment actions
+    COMMENT_CREATE = "COMMENT_CREATE"
+    COMMENT_UPDATE = "COMMENT_UPDATE"
+    COMMENT_DELETE = "COMMENT_DELETE"
+    COMMENT_RESOLVE = "COMMENT_RESOLVE"
+    
+    # Publish workflow actions
+    PUBLISH_REQUEST_CREATE = "PUBLISH_REQUEST_CREATE"
+    PUBLISH_REQUEST_APPROVE = "PUBLISH_REQUEST_APPROVE"
+    PUBLISH_REQUEST_REJECT = "PUBLISH_REQUEST_REJECT"
+    PUBLISH_REQUEST_CANCEL = "PUBLISH_REQUEST_CANCEL"
+    
+    # Security actions
+    PASSWORD_CHANGE = "PASSWORD_CHANGE"
+    PASSWORD_RESET = "PASSWORD_RESET"
+    TOKEN_REFRESH = "TOKEN_REFRESH"
+    PERMISSION_CHANGE = "PERMISSION_CHANGE"
 
 
 class AuditLog(Base):
     """
     Audit log model for tracking all system actions
     
-    CRITICAL: Matches database/postgres/schema/10-audit_logs.sql EXACTLY
+    Provides comprehensive audit trail for compliance and debugging.
+    Logs who did what, when, where, and what changed.
     """
     
     __tablename__ = "audit_logs"
     
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        index=True,
-    )
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     
-    # Who performed the action
-    user_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
+    # Action information
+    action = Column(
+        SQLEnum(
+            AuditLogAction,
+            name="audit_log_action",
+            create_type=False,
+            native_enum=False,
+            values_callable=lambda x: [e.value for e in x]
+        ),
+        nullable=False,
         index=True
     )
     
-    user_email = Column(String(255), nullable=True)  # Denormalized for deleted users
-    
-    # What was done
-    action = Column(String(100), nullable=False, index=True)  # Uses audit_action enum in DB
-    entity_type = Column(String(100), nullable=True, index=True)
+    # Entity reference (polymorphic)
+    entity_type = Column(String(50), nullable=True, index=True)  # e.g., "MODEL", "WORKSPACE"
     entity_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     
-    # Detailed changes
-    old_values = Column(JSONB, nullable=True)
-    new_values = Column(JSONB, nullable=True)
+    # Actor (who performed the action)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
-    # Context
-    workspace_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
-    )
-    
-    # Request details
-    ip_address = Column(INET, nullable=True, index=True)
+    # Request metadata
+    ip_address = Column(INET, nullable=True)
     user_agent = Column(Text, nullable=True)
-    request_id = Column(String(100), nullable=True, index=True)
+    request_id = Column(String(255), nullable=True, index=True)  # For correlating related actions
     
-    # Timestamp
-    created_at = Column(
-        DateTime,
-        nullable=False,
-        default=datetime.utcnow,
-        index=True
-    )
+    # Change tracking
+    old_values = Column(JSONB, nullable=True)  # State before action
+    new_values = Column(JSONB, nullable=True)  # State after action
+    changes = Column(JSONB, nullable=True)  # Summary of what changed
     
-    # Additional metadata - using meta_data to avoid SQLAlchemy's reserved 'metadata'
-    meta_data = Column('metadata', JSONB, nullable=True, default=dict)
+    # Additional context
+    meta_data = Column(JSONB, default=dict, server_default='{}')
     
-    # Success or failure
-    success = Column(Boolean, nullable=True, default=True)
+    # Result
+    success = Column(Boolean, default=True, nullable=False, index=True)
     error_message = Column(Text, nullable=True)
     
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    
+    # Composite indexes for common queries
+    __table_args__ = (
+        Index('idx_audit_logs_user_action', 'user_id', 'action'),
+        Index('idx_audit_logs_entity', 'entity_type', 'entity_id'),
+        Index('idx_audit_logs_created_at_desc', created_at.desc()),
+        Index('idx_audit_logs_action_created_at', 'action', 'created_at'),
+    )
+    
     # Relationships
-    user = relationship("User", foreign_keys=[user_id], backref="audit_logs")
-    workspace = relationship("Workspace", foreign_keys=[workspace_id], backref="audit_logs")
+    user = relationship("User")
     
     def __repr__(self):
-        return f"<AuditLog(id={self.id}, action='{self.action}', entity_type='{self.entity_type}')>"
+        return f"<AuditLog(id={self.id}, action='{self.action.value}', user_id={self.user_id})>"
     
     def to_dict(self):
-        """Convert to dictionary"""
+        """Convert model to dictionary"""
         return {
             'id': str(self.id),
-            'user_id': str(self.user_id) if self.user_id else None,
-            'user_email': self.user_email,
-            'action': self.action,
+            'action': self.action.value,
             'entity_type': self.entity_type,
             'entity_id': str(self.entity_id) if self.entity_id else None,
-            'old_values': self.old_values,
-            'new_values': self.new_values,
-            'workspace_id': str(self.workspace_id) if self.workspace_id else None,
+            'user_id': str(self.user_id) if self.user_id else None,
             'ip_address': str(self.ip_address) if self.ip_address else None,
             'user_agent': self.user_agent,
             'request_id': self.request_id,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'metadata': self.meta_data,
+            'old_values': self.old_values,
+            'new_values': self.new_values,
+            'changes': self.changes,
+            'meta_data': self.meta_data,
             'success': self.success,
             'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }
-    
-    @property
-    def is_create_action(self):
-        """Check if this is a create action"""
-        return self.action == "create"
-    
-    @property
-    def is_update_action(self):
-        """Check if this is an update action"""
-        return self.action == "update"
-    
-    @property
-    def is_delete_action(self):
-        """Check if this is a delete action"""
-        return self.action == "delete"
-    
-    @property
-    def is_publish_action(self):
-        """Check if this is a publish action"""
-        return self.action in ["publish_request", "publish_approve", "publish_reject"]
-    
-    @property
-    def is_successful(self):
-        """Check if the action was successful"""
-        return self.success is True

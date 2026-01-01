@@ -1,11 +1,18 @@
 # backend/app/models/user.py
 """
-User Database Model - COMPLETE with created_by and updated_by
+User Database Model - COMPLETE with proper created_by/updated_by handling
 Path: backend/app/models/user.py
+
+CRITICAL FIXES:
+- Uses password_hash (matches database column)
+- Uses UserRole enum (matches database ENUM type)
+- Properly handles created_by/updated_by (let trigger set them)
+- Computed property for is_superuser
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import Session
 import uuid
 import enum
 
@@ -13,7 +20,7 @@ from app.db.base import Base
 
 
 class UserRole(str, enum.Enum):
-    """User role enumeration - must match database ENUM"""
+    """User role enumeration - MUST match database ENUM 'user_role'"""
     ADMIN = "ADMIN"
     USER = "USER"
 
@@ -24,10 +31,10 @@ class User(Base):
     
     CRITICAL: Must EXACTLY match database schema in 01-users.sql
     
-    Database columns:
-    - role (user_role ENUM: 'ADMIN' or 'USER') - Uses PostgreSQL ENUM type
-    - password_hash (NOT hashed_password!)
-    - created_by, updated_by (self-referencing foreign keys)
+    Key Points:
+    1. Column name is 'password_hash' (NOT hashed_password)
+    2. Role uses SQLEnum to match PostgreSQL ENUM type
+    3. created_by/updated_by are handled by database trigger
     """
     
     __tablename__ = "users"
@@ -53,8 +60,8 @@ class User(Base):
         SQLEnum(
             UserRole,
             name="user_role",
-            create_type=False,  # Don't create the type (already exists in DB)
-            native_enum=False,  # Use enum values, not names
+            create_type=False,  # Type already exists in database
+            native_enum=False,
             values_callable=lambda x: [e.value for e in x]
         ),
         nullable=False,
@@ -80,8 +87,8 @@ class User(Base):
     preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
     settings = Column(JSONB, nullable=False, default=dict, server_default='{}')
     
-    # CRITICAL FIX: Added created_by and updated_by columns
-    # These are self-referencing (users created/updated by other users)
+    # CRITICAL: Audit trail fields - database trigger handles these automatically
+    # DO NOT set these manually during user creation - let the trigger handle it
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -96,6 +103,11 @@ class User(Base):
         index=True
     )
     
+    @property
+    def is_superuser(self) -> bool:
+        """Computed property: ADMIN role means superuser"""
+        return self.role == UserRole.ADMIN
+    
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role.value if isinstance(self.role, UserRole) else self.role}')>"
     
@@ -108,45 +120,23 @@ class User(Base):
             'full_name': self.full_name,
             'role': self.role.value if isinstance(self.role, UserRole) else self.role,
             'is_active': self.is_active,
-            'is_superuser': self.is_superuser,  # Computed property
+            'is_superuser': self.is_superuser,
             'is_verified': self.is_verified,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
-            'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'avatar_url': self.avatar_url,
-            'created_by': str(self.created_by) if self.created_by else None,
-            'updated_by': str(self.updated_by) if self.updated_by else None,
         }
-    
-    # ========================================================================
-    # BACKWARD COMPATIBILITY PROPERTIES
-    # ========================================================================
-    
-    @property
-    def is_superuser(self) -> bool:
-        """
-        Backward compatibility property
-        Database uses 'role' column, but old code expects 'is_superuser'
-        """
-        if isinstance(self.role, UserRole):
-            return self.role == UserRole.ADMIN
-        return self.role == 'ADMIN'
-    
-    @is_superuser.setter
-    def is_superuser(self, value: bool):
-        """Set role based on is_superuser boolean"""
-        self.role = UserRole.ADMIN if value else UserRole.USER
-    
-    @property
-    def hashed_password(self) -> str:
-        """
-        Backward compatibility property
-        Database column is 'password_hash', old code uses 'hashed_password'
-        """
-        return self.password_hash
-    
-    @hashed_password.setter
-    def hashed_password(self, value: str):
-        """Setter for backward compatibility"""
-        self.password_hash = value
+
+
+# Event listener to ensure created_by/updated_by are NOT set before insert
+# Let the database trigger handle these fields
+@event.listens_for(User, 'before_insert')
+def receive_before_insert(mapper, connection, target):
+    """
+    Before insert event - ensure created_by/updated_by are None
+    so the database trigger can set them properly
+    """
+    # Force these to None so trigger handles them
+    target.created_by = None
+    target.updated_by = None

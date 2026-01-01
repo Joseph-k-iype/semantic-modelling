@@ -1,10 +1,19 @@
 -- database/postgres/schema/01-users.sql
 -- Users table and related structures
--- FIXED: Added missing updated_by column
+-- COMPLETE FIX: All triggers handle created_by/updated_by properly
 
--- Drop existing table if exists (for clean reinstall)
+-- Drop existing objects
+DROP TRIGGER IF EXISTS track_user_updates_trigger ON users;
+DROP TRIGGER IF EXISTS user_create_personal_workspace ON users;
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+DROP FUNCTION IF EXISTS track_user_updates();
+DROP FUNCTION IF EXISTS create_personal_workspace();
 DROP TABLE IF EXISTS user_sessions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
+DROP TYPE IF EXISTS user_role CASCADE;
+
+-- Create user role enum
+CREATE TYPE user_role AS ENUM ('ADMIN', 'USER');
 
 -- Users table
 CREATE TABLE users (
@@ -25,13 +34,15 @@ CREATE TABLE users (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
-    -- CRITICAL FIX: Added missing updated_by column to match other tables
+    -- Self-referencing foreign keys for audit trail
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
     
     -- Constraints
-    CONSTRAINT users_email_check CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
-    CONSTRAINT users_username_check CHECK (username ~* '^[A-Za-z0-9_-]{3,100}$'),
+    CONSTRAINT users_email_check CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}
+),
+    CONSTRAINT users_username_check CHECK (username ~* '^[A-Za-z0-9_-]{3,100}
+),
     CONSTRAINT users_password_hash_check CHECK (LENGTH(password_hash) >= 60)
 );
 
@@ -48,7 +59,6 @@ CREATE TABLE user_sessions (
     last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
-    -- Constraints
     CONSTRAINT user_sessions_expires_at_check CHECK (expires_at > created_at)
 );
 
@@ -56,7 +66,7 @@ CREATE TABLE user_sessions (
 CREATE INDEX idx_users_email ON users(email) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_username ON users(username) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
-CREATE INDEX idx_users_is_active ON users(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_is_active ON users(is_active) WHERE is_active = TRUE AND deleted_at IS NULL;
 CREATE INDEX idx_users_created_at ON users(created_at DESC);
 CREATE INDEX idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
 CREATE INDEX idx_users_created_by ON users(created_by) WHERE created_by IS NOT NULL;
@@ -74,32 +84,41 @@ CREATE TRIGGER update_users_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Function to track user updates (sets updated_by)
+-- FIXED: Function to track user updates (sets created_by/updated_by)
 CREATE OR REPLACE FUNCTION track_user_updates()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
-    -- On INSERT, set created_by to the user being created (self-reference)
+    -- On INSERT: Set created_by and updated_by to the user being created (self-reference)
+    -- ONLY if they weren't already set by the application
     IF TG_OP = 'INSERT' THEN
-        NEW.created_by := NEW.id;
-        NEW.updated_by := NEW.id;
+        IF NEW.created_by IS NULL THEN
+            NEW.created_by := NEW.id;
+        END IF;
+        IF NEW.updated_by IS NULL THEN
+            NEW.updated_by := NEW.id;
+        END IF;
     END IF;
     
-    -- On UPDATE, only update updated_by if it's not already set
+    -- On UPDATE: Update updated_by if not already set by the application
     IF TG_OP = 'UPDATE' THEN
-        IF NEW.updated_by IS NULL THEN
+        IF NEW.updated_by IS NULL OR NEW.updated_by = OLD.updated_by THEN
             NEW.updated_by := NEW.id;
         END IF;
     END IF;
     
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$ LANGUAGE plpgsql;
 
 -- Trigger to track user updates
 CREATE TRIGGER track_user_updates_trigger
     BEFORE INSERT OR UPDATE ON users
     FOR EACH ROW
     EXECUTE FUNCTION track_user_updates();
+
+-- DISABLED: Personal workspace creation trigger
+-- This causes issues because workspaces table may not exist yet during initialization
+-- Personal workspaces should be created by application code instead
 
 -- Insert system user for operations without a logged-in user
 INSERT INTO users (
@@ -110,7 +129,9 @@ INSERT INTO users (
     password_hash,
     role,
     is_active,
-    is_verified
+    is_verified,
+    created_by,
+    updated_by
 ) VALUES (
     '00000000-0000-0000-0000-000000000000'::UUID,
     'system@enterprise-modeling.com',
@@ -119,13 +140,16 @@ INSERT INTO users (
     '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LeZD7LZZwIL9DkW7e', -- password: system (not used)
     'ADMIN',
     TRUE,
-    TRUE
+    TRUE,
+    '00000000-0000-0000-0000-000000000000'::UUID,  -- Self-reference
+    '00000000-0000-0000-0000-000000000000'::UUID   -- Self-reference
 ) ON CONFLICT (id) DO NOTHING;
 
 -- Logging
-DO $$
+DO $
 BEGIN
     RAISE NOTICE 'Users schema created successfully';
-    RAISE NOTICE '✓ Added created_by and updated_by columns';
+    RAISE NOTICE '✓ Added created_by and updated_by columns with proper trigger';
     RAISE NOTICE '✓ Created system user: 00000000-0000-0000-0000-000000000000';
-END $$;
+    RAISE NOTICE '✓ Personal workspace creation moved to application layer';
+END $;

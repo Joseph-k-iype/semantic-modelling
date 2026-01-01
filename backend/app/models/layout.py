@@ -1,157 +1,149 @@
 # backend/app/models/layout.py
 """
-Layout Database Model - COMPLETE matching updated schema
+Layout Database Models - COMPLETE Implementation
 Path: backend/app/models/layout.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Text, ForeignKey, DateTime, Boolean
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
+import enum
 
 from app.db.base import Base
 
 
+class LayoutType(str, enum.Enum):
+    """Layout type enumeration"""
+    MANUAL = "MANUAL"
+    LAYERED = "LAYERED"
+    FORCE_DIRECTED = "FORCE_DIRECTED"
+    BPMN_SWIMLANE = "BPMN_SWIMLANE"
+    UML_SEQUENCE = "UML_SEQUENCE"
+    STATE_MACHINE = "STATE_MACHINE"
+
+
 class Layout(Base):
     """
-    Layout model for storing diagram layout configurations
-    User-controlled layouts for different diagram views
+    Layout model - user-controlled diagram layouts
+    
+    Layouts are independent of diagrams and can be switched/saved/restored.
+    Multiple layouts can exist for the same diagram.
     """
     
     __tablename__ = "layouts"
     
     # Primary key
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        index=True,
-    )
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     
-    # Parent diagram
-    diagram_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("diagrams.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
+    # Foreign key
+    diagram_id = Column(UUID(as_uuid=True), ForeignKey("diagrams.id", ondelete="CASCADE"), nullable=False, index=True)
     
-    # Layout identity
+    # Basic information
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    # Layout engine type
-    # Supported engines: manual, layered, force_directed, bpmn_swimlane, 
-    # uml_sequence, state_machine, hierarchical
-    layout_engine = Column(
-        String(100), 
-        nullable=False, 
-        index=True, 
-        default='manual',
-        name='engine'  # Database column name
+    # Layout type and algorithm
+    layout_type = Column(
+        SQLEnum(LayoutType, name="layout_type", create_type=False, native_enum=False, values_callable=lambda x: [e.value for e in x]),
+        nullable=False, index=True
     )
     
-    # Engine-specific configuration
-    engine_config = Column(
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default='{}'
-    )
+    # Layout data (node positions, edge routing)
+    layout_data = Column(JSONB, default=dict, server_default='{}')
     
-    # Layout data stored as JSONB
-    # Contains: node positions, edge routes, constraints, viewport, etc.
-    layout_data = Column(
-        JSONB,
-        nullable=False,
-        default=lambda: {
-            "nodes": {},      # Node positions: {node_id: {x, y, width, height}}
-            "edges": {},      # Edge routes: {edge_id: {points: [{x, y}]}}
-            "constraints": {}, # Layout constraints
-            "viewport": {     # Viewport settings
-                "x": 0,
-                "y": 0,
-                "zoom": 1.0
-            }
-        },
-        name='positions'  # Database column name (legacy)
-    )
+    # Layout constraints and settings
+    constraints = Column(JSONB, default=dict, server_default='{}')
+    settings = Column(JSONB, default=dict, server_default='{}')
     
-    # Layout constraints (pinned nodes, locked sections, etc.)
-    constraints = Column(
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default='{}'
-    )
+    # Status
+    is_active = Column(Boolean, default=False, nullable=False, index=True)  # Currently active layout
+    is_auto_apply = Column(Boolean, default=False, nullable=False)  # Auto-apply on diagram load
     
-    # Is this the default layout for the diagram?
-    is_default = Column(
-        Boolean,
-        nullable=False,
-        default=False,
-        index=True
-    )
+    # Timestamps
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Soft delete support
-    deleted_at = Column(
-        DateTime(timezone=True),
-        nullable=True,
-        index=True
-    )
+    # Audit trail
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     
-    # Ownership and audit fields
-    created_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True
-    )
-    
-    created_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=datetime.utcnow,
-        index=True
-    )
-    
-    updated_at = Column(
-        DateTime(timezone=True),
-        nullable=False,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("LENGTH(TRIM(name)) >= 1 AND LENGTH(name) <= 255", name="layouts_name_check"),
+        UniqueConstraint('diagram_id', 'name', 'deleted_at', name='layouts_unique_name'),
     )
     
     # Relationships
-    diagram = relationship(
-        "Diagram",
-        back_populates="layouts",
-        lazy="select"
-    )
+    diagram = relationship("Diagram", back_populates="layouts")
+    snapshots = relationship("LayoutSnapshot", back_populates="layout", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
+    updater = relationship("User", foreign_keys=[updated_by])
     
-    creator = relationship(
-        "User",
-        foreign_keys=[created_by],
-        lazy="select"
-    )
+    def __repr__(self):
+        return f"<Layout(id={self.id}, name='{self.name}', type='{self.layout_type.value}')>"
     
-    def __repr__(self) -> str:
-        return f"<Layout(id={self.id}, name='{self.name}', diagram_id={self.diagram_id}, engine='{self.layout_engine}', is_default={self.is_default})>"
-    
-    def to_dict(self) -> dict:
-        """Convert layout to dictionary"""
+    def to_dict(self):
+        """Convert model to dictionary"""
         return {
-            "id": str(self.id),
-            "diagram_id": str(self.diagram_id),
-            "name": self.name,
-            "description": self.description,
-            "engine": self.layout_engine,
-            "engine_config": self.engine_config,
-            "layout_data": self.layout_data,
-            "constraints": self.constraints,
-            "is_default": self.is_default,
-            "created_by": str(self.created_by),
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None
+            'id': str(self.id),
+            'diagram_id': str(self.diagram_id),
+            'name': self.name,
+            'description': self.description,
+            'layout_type': self.layout_type.value,
+            'layout_data': self.layout_data,
+            'constraints': self.constraints,
+            'settings': self.settings,
+            'is_active': self.is_active,
+            'is_auto_apply': self.is_auto_apply,
+            'created_by': str(self.created_by),
+            'updated_by': str(self.updated_by) if self.updated_by else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class LayoutSnapshot(Base):
+    """Layout snapshot for history and rollback"""
+    
+    __tablename__ = "layout_snapshots"
+    
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Foreign key
+    layout_id = Column(UUID(as_uuid=True), ForeignKey("layouts.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Snapshot information
+    snapshot_name = Column(String(255), nullable=True)
+    layout_data = Column(JSONB, nullable=False)
+    meta_data = Column(JSONB, default=dict, server_default='{}')
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("snapshot_name IS NULL OR LENGTH(TRIM(snapshot_name)) >= 1", name="layout_snapshots_snapshot_name_check"),
+    )
+    
+    # Relationships
+    layout = relationship("Layout", back_populates="snapshots")
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<LayoutSnapshot(id={self.id}, layout_id={self.layout_id})>"
+    
+    def to_dict(self):
+        """Convert model to dictionary"""
+        return {
+            'id': str(self.id),
+            'layout_id': str(self.layout_id),
+            'snapshot_name': self.snapshot_name,
+            'layout_data': self.layout_data,
+            'meta_data': self.meta_data,
+            'created_by': str(self.created_by),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }

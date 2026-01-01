@@ -1,12 +1,12 @@
 # backend/app/models/version.py
 """
-Version Database Model - COMPLETE for model versioning
+Version Database Model - COMPLETE Implementation
 Path: backend/app/models/version.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer, UniqueConstraint
-from sqlalchemy.orm import relationship, mapped_column
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship
 import uuid
 
 from app.db.base import Base
@@ -14,100 +14,75 @@ from app.db.base import Base
 
 class Version(Base):
     """
-    Version model for tracking model/diagram versions
-    Enables version history, rollback, and comparison
+    Version model for tracking model history and changes
+    
+    Versions are immutable snapshots of models at specific points in time.
     """
     
     __tablename__ = "versions"
     
-    # Unique constraint for entity + version number
-    __table_args__ = (
-        UniqueConstraint('entity_type', 'entity_id', 'version_number', name='uq_entity_version'),
-    )
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     
-    # Primary key - UUID type
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        index=True,
-    )
+    # Foreign key
+    model_id = Column(UUID(as_uuid=True), ForeignKey("models.id", ondelete="CASCADE"), nullable=False, index=True)
     
-    # Versioned entity
-    entity_type = Column(String(50), nullable=False, index=True)
-    # Supported types: model, diagram
+    # Version information
+    version_number = Column(String(20), nullable=False, index=True)  # e.g., "1.0.0", "2.1.3"
+    version_tag = Column(String(100), nullable=True)  # e.g., "v1.0-beta"
     
-    # UUID for entity_id to match models/diagrams
-    entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    # Snapshot data
+    snapshot_data = Column(JSONB, nullable=False)  # Complete model snapshot
+    diagram_snapshots = Column(JSONB, default=list, server_default='[]')  # All diagram snapshots
     
-    # Version info
-    version_number = Column(Integer, nullable=False, index=True)
-    name = Column(String(255), nullable=True)
-    description = Column(Text, nullable=True)
+    # Change information
+    change_summary = Column(Text, nullable=True)
+    change_log = Column(JSONB, default=list, server_default='[]')  # Detailed changes
     
-    # Tags for semantic versioning or custom tags
-    tags = Column(JSONB, nullable=True, default=list)
-    # Example: ["v1.0.0", "stable", "production"]
+    # Statistics at this version
+    statistics_snapshot = Column(JSONB, default=dict, server_default='{}')
     
-    # Snapshot data - complete state at this version
-    snapshot_data = Column(JSONB, nullable=False, default=dict)
+    # Parent version (for tracking lineage)
+    parent_version_id = Column(UUID(as_uuid=True), ForeignKey("versions.id", ondelete="SET NULL"), nullable=True, index=True)
     
-    # Change summary
-    changes = Column(JSONB, nullable=True, default=dict)
-    # Example: {"added": [], "modified": [], "removed": []}
+    # Commit information
+    commit_message = Column(Text, nullable=True)
+    commit_hash = Column(String(64), nullable=True, unique=True, index=True)  # SHA256 hash
     
-    # Version metadata (using mapped_column to avoid conflict with 'metadata')
-    meta_data = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    # Publishing information
+    is_published = Column(Boolean, default=False, nullable=False)
+    published_to_workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True)
     
-    # Audit - UUID type to match User model
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    created_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=False,
-        index=True
-    )
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
     
     # Relationships
-    creator = relationship("User", foreign_keys=[created_by], backref="versions_created")
+    model = relationship("Model", back_populates="versions")
+    parent_version = relationship("Version", remote_side=[id], backref="child_versions")
+    creator = relationship("User")
+    published_to_workspace = relationship("Workspace")
     
     def __repr__(self):
-        return f"<Version(id={self.id}, entity={self.entity_type}:{self.entity_id}, version={self.version_number})>"
+        return f"<Version(id={self.id}, model_id={self.model_id}, version='{self.version_number}')>"
     
     def to_dict(self):
         """Convert model to dictionary"""
         return {
             'id': str(self.id),
-            'entity_type': self.entity_type,
-            'entity_id': str(self.entity_id),
+            'model_id': str(self.model_id),
             'version_number': self.version_number,
-            'name': self.name,
-            'description': self.description,
-            'tags': self.tags if self.tags else [],
+            'version_tag': self.version_tag,
             'snapshot_data': self.snapshot_data,
-            'changes': self.changes,
-            'meta_data': self.meta_data,
+            'diagram_snapshots': self.diagram_snapshots,
+            'change_summary': self.change_summary,
+            'change_log': self.change_log,
+            'statistics_snapshot': self.statistics_snapshot,
+            'parent_version_id': str(self.parent_version_id) if self.parent_version_id else None,
+            'commit_message': self.commit_message,
+            'commit_hash': self.commit_hash,
+            'is_published': self.is_published,
+            'published_to_workspace_id': str(self.published_to_workspace_id) if self.published_to_workspace_id else None,
             'created_by': str(self.created_by),
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
-    
-    @property
-    def version_tag(self):
-        """Get the first tag as version identifier"""
-        return self.tags[0] if self.tags else f"v{self.version_number}"
-    
-    @property
-    def is_tagged(self):
-        """Check if this version has any tags"""
-        return bool(self.tags)
-    
-    @property
-    def change_count(self):
-        """Get total number of changes in this version"""
-        if not self.changes:
-            return 0
-        return (
-            len(self.changes.get("added", [])) +
-            len(self.changes.get("modified", [])) +
-            len(self.changes.get("removed", []))
-        )

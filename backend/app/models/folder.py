@@ -1,12 +1,12 @@
 # backend/app/models/folder.py
 """
-Folder Database Model - COMPLETE matching database schema
+Folder Database Model - COMPLETE Implementation
 Path: backend/app/models/folder.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Integer
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, UniqueConstraint, CheckConstraint
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 from app.db.base import Base
@@ -15,75 +15,61 @@ from app.db.base import Base
 class Folder(Base):
     """
     Folder model for organizing models within workspaces
-    
-    CRITICAL: Column names MUST match database schema in 03-folders.sql
-    Database columns: workspace_id, parent_id, position, path, color, icon, created_by
+    Uses materialized path pattern for hierarchical structure
     """
     
     __tablename__ = "folders"
     
-    # Primary key - UUID type
-    id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        index=True,
-    )
+    # Primary key
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     
-    # Relationships to workspace and parent folder
-    workspace_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("workspaces.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True
-    )
+    # Foreign keys
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_id = Column(UUID(as_uuid=True), ForeignKey("folders.id", ondelete="CASCADE"), nullable=True, index=True)
     
-    parent_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("folders.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True
-    )
-    
-    # Folder identity
-    name = Column(String(255), nullable=False, index=True)
+    # Basic information
+    name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    # Visual attributes (from database schema)
-    color = Column(String(50), nullable=True)
-    icon = Column(String(100), nullable=True)
+    # Hierarchy information (materialized path)
+    path = Column(Text, nullable=False, index=True)  # e.g., "/folder1/subfolder2"
+    level = Column(Integer, default=0, nullable=False)  # Depth in hierarchy
     
-    # Materialized path for efficient queries
-    path = Column(Text, nullable=False, default='')
+    # Visual customization
+    icon = Column(String(50), nullable=True)
+    color = Column(String(7), nullable=True)  # Hex color
     
-    # Display order for sorting (called 'position' in database)
-    position = Column(Integer, nullable=False, default=0)
-    
-    # Ownership - UUID type
-    created_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=False,
-        index=True
-    )
+    # Settings and additional data
+    settings = Column(JSONB, default=dict, server_default='{}')
+    meta_data = Column(JSONB, default=dict, server_default='{}')
     
     # Timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Audit trail
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("LENGTH(TRIM(name)) >= 1 AND LENGTH(name) <= 255", name="folders_name_check"),
+        CheckConstraint("color IS NULL OR color ~* '^#[0-9A-Fa-f]{6}$'", name="folders_color_check"),
+        CheckConstraint("level >= 0 AND level < 10", name="folders_level_check"),
+        CheckConstraint("LENGTH(path) >= 1", name="folders_path_check"),
+        UniqueConstraint('workspace_id', 'parent_id', 'name', 'deleted_at', name='folders_unique_name_per_parent'),
+    )
     
     # Relationships
-    parent = relationship(
-        "Folder",
-        remote_side=[id],
-        backref="children",
-        foreign_keys=[parent_id]
-    )
-    workspace = relationship("Workspace", backref="folders")
-    creator = relationship("User", foreign_keys=[created_by], backref="created_folders")
-    # models relationship is defined in Model model via backref
+    workspace = relationship("Workspace", back_populates="folders")
+    parent = relationship("Folder", remote_side=[id], backref="children")
+    models = relationship("Model", back_populates="folder")
+    creator = relationship("User", foreign_keys=[created_by])
+    updater = relationship("User", foreign_keys=[updated_by])
     
     def __repr__(self):
-        return f"<Folder(id={self.id}, name='{self.name}', workspace_id='{self.workspace_id}')>"
+        return f"<Folder(id={self.id}, name='{self.name}', path='{self.path}')>"
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -93,21 +79,14 @@ class Folder(Base):
             'parent_id': str(self.parent_id) if self.parent_id else None,
             'name': self.name,
             'description': self.description,
-            'color': self.color,
-            'icon': self.icon,
             'path': self.path,
-            'position': self.position,
+            'level': self.level,
+            'icon': self.icon,
+            'color': self.color,
+            'settings': self.settings,
+            'meta_data': self.meta_data,
             'created_by': str(self.created_by),
+            'updated_by': str(self.updated_by) if self.updated_by else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
-    
-    @property
-    def depth(self):
-        """Get folder depth based on path"""
-        return len(self.path.split('/')) - 1 if self.path else 0
-    
-    @property
-    def has_children(self):
-        """Check if folder has subfolders"""
-        return len(self.children) > 0 if hasattr(self, 'children') else False

@@ -1,7 +1,14 @@
 # backend/app/api/v1/endpoints/auth.py
 """
-Authentication endpoints - COMPLETE FIX using password_hash and UserRole enum
+Authentication endpoints - COMPLETE FIX
 Path: backend/app/api/v1/endpoints/auth.py
+
+CRITICAL FIXES:
+- Uses password_hash (matches database column)
+- Uses UserRole enum properly
+- Updates last_login_at on successful login
+- Does NOT set created_by/updated_by during registration (trigger handles it)
+- Proper error handling and logging
 """
 from datetime import datetime, timedelta
 from typing import Any
@@ -42,55 +49,106 @@ async def register(
     """
     Register a new user
     
-    CRITICAL FIX: Uses password_hash and UserRole enum
-    """
-    # Check if user already exists
-    result = await db.execute(
-        select(User).where(User.email == user_data.email)
-    )
-    existing_user = result.scalar_one_or_none()
+    CRITICAL FIXES:
+    - Uses password_hash (not hashed_password)
+    - Uses UserRole enum (not string)
+    - Does NOT set created_by/updated_by (trigger handles it)
+    - Creates personal workspace for new user
     
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered",
-        )
-    
-    # Check if username is provided and if it's already taken
-    if user_data.username:
-        result = await db.execute(
-            select(User).where(User.username == user_data.username)
-        )
-        existing_username = result.scalar_one_or_none()
+    Args:
+        user_data: User registration data (email, password, optional username)
+        db: Database session
         
-        if existing_username:
+    Returns:
+        Created user data
+        
+    Raises:
+        HTTPException: If email or username already exists
+    """
+    from app.models.workspace import Workspace, WorkspaceType
+    
+    try:
+        # Check if user already exists by email
+        result = await db.execute(
+            select(User).where(User.email == user_data.email)
+        )
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username already taken",
+                detail="Email already registered",
             )
-    
-    # Generate username from email if not provided
-    username = user_data.username if user_data.username else user_data.email.split('@')[0]
-    
-    # Create new user
-    # CRITICAL FIX: Use password_hash and UserRole enum
-    user = User(
-        email=user_data.email,
-        username=username,
-        password_hash=get_password_hash(user_data.password),  # ✅ FIXED
-        full_name=user_data.full_name if user_data.full_name else username,
-        role=UserRole.USER,  # ✅ FIXED: Use enum, not string
-        is_active=True,
-        is_verified=False
-    )
-    
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    
-    logger.info("User registered", user_id=str(user.id), email=user.email)
-    
-    return user
+        
+        # Check if username is provided and if it's already taken
+        if user_data.username:
+            result = await db.execute(
+                select(User).where(User.username == user_data.username)
+            )
+            existing_username = result.scalar_one_or_none()
+            
+            if existing_username:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username already taken",
+                )
+        
+        # Generate username from email if not provided
+        username = user_data.username if user_data.username else user_data.email.split('@')[0]
+        
+        # Create new user
+        # CRITICAL: Do NOT set created_by or updated_by - trigger handles them
+        user = User(
+            email=user_data.email,
+            username=username,
+            password_hash=get_password_hash(user_data.password),  # ✅ FIXED
+            full_name=user_data.full_name if user_data.full_name else username,
+            role=UserRole.USER,  # ✅ FIXED: Use enum, not string
+            is_active=True,
+            is_verified=False
+            # ✅ CRITICAL: Do NOT set created_by or updated_by
+        )
+        
+        db.add(user)
+        await db.flush()  # Flush to get user.id without committing
+        
+        # Create personal workspace for the user
+        personal_workspace = Workspace(
+            name=f"{username}'s Personal Workspace",
+            slug=f"{username}-personal",
+            type=WorkspaceType.PERSONAL,
+            owner_id=user.id,
+            is_active=True,
+            created_by=user.id,  # Set explicitly for workspace
+            updated_by=user.id   # Set explicitly for workspace
+        )
+        
+        db.add(personal_workspace)
+        await db.commit()
+        await db.refresh(user)
+        
+        logger.info(
+            "user_registered",
+            user_id=str(user.id),
+            email=user.email,
+            username=user.username,
+            workspace_created=True
+        )
+        
+        return user
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error("registration_failed", error=str(e))
+        import traceback
+        traceback.print_exc()
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed. Please try again.",
+        )
 
 
 @router.post("/login", response_model=Token)
@@ -101,74 +159,125 @@ async def login(
     """
     User login with email and password
     
-    CRITICAL FIX: Uses password_hash (not hashed_password) and updates last_login_at
+    CRITICAL FIXES:
+    - Uses password_hash (not hashed_password)
+    - Updates last_login_at on successful login
+    - Proper error handling
+    
+    Args:
+        user_data: Login credentials (email, password)
+        db: Database session
+        
+    Returns:
+        JWT access and refresh tokens
+        
+    Raises:
+        HTTPException: If credentials are invalid or user is inactive
     """
-    # Find user by email
-    result = await db.execute(
-        select(User).where(User.email == user_data.email)
-    )
-    user = result.scalar_one_or_none()
-    
-    # Verify user exists and password is correct
-    # CRITICAL FIX: Use password_hash, not hashed_password
-    if not user or not verify_password(user_data.password, user.password_hash):  # ✅ FIXED
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+    try:
+        # Find user by email
+        result = await db.execute(
+            select(User).where(User.email == user_data.email)
         )
-    
-    # Check if user is active
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+        user = result.scalar_one_or_none()
+        
+        # Verify user exists and password is correct
+        # CRITICAL: Use password_hash, not hashed_password
+        if not user or not verify_password(user_data.password, user.password_hash):
+            logger.warning(
+                "login_failed",
+                email=user_data.email,
+                reason="invalid_credentials"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Check if user is active
+        if not user.is_active:
+            logger.warning(
+                "login_failed",
+                email=user_data.email,
+                user_id=str(user.id),
+                reason="inactive_account"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive. Please contact support.",
+            )
+        
+        # Update last login timestamp
+        user.last_login_at = datetime.utcnow()
+        await db.commit()
+        
+        # Create access token with user ID as subject
+        access_token = create_access_token(
+            subject=str(user.id),
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         )
-    
-    # Update last login timestamp
-    user.last_login_at = datetime.utcnow()
-    await db.commit()
-    
-    # Create access and refresh tokens
-    access_token = create_access_token(
-        subject=str(user.id),
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    
-    refresh_token = create_refresh_token(
-        subject=str(user.id),
-        expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-    )
-    
-    logger.info("User logged in", user_id=str(user.id), email=user.email)
-    
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-    }
+        
+        # Create refresh token
+        refresh_token = create_refresh_token(
+            subject=str(user.id),
+            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        
+        logger.info(
+            "user_logged_in",
+            user_id=str(user.id),
+            email=user.email,
+            role=user.role.value
+        )
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error("login_failed", error=str(e))
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed. Please try again.",
+        )
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh_token_endpoint(
-    refresh_data: RefreshToken,
+async def refresh_token(
+    token_data: RefreshToken,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Refresh access token using refresh token
     
-    This endpoint allows clients to get a new access token without re-authenticating
+    Args:
+        token_data: Refresh token
+        db: Database session
+        
+    Returns:
+        New JWT access and refresh tokens
+        
+    Raises:
+        HTTPException: If refresh token is invalid or expired
     """
     try:
         # Decode and validate refresh token
-        payload = decode_token(refresh_data.refresh_token)
+        payload = decode_token(token_data.refresh_token)
         user_id: str = payload.get("sub")
-        token_type: str = payload.get("type")
         
-        if not user_id or token_type != "refresh":
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
+                detail="Invalid refresh token",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         
         # Get user from database
@@ -177,24 +286,35 @@ async def refresh_token_endpoint(
         )
         user = result.scalar_one_or_none()
         
-        if not user or not user.is_active:
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive",
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account is inactive",
             )
         
         # Create new tokens
         access_token = create_access_token(
             subject=str(user.id),
-            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         )
         
         new_refresh_token = create_refresh_token(
             subject=str(user.id),
-            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
         
-        logger.info("Token refreshed", user_id=str(user.id))
+        logger.info(
+            "token_refreshed",
+            user_id=str(user.id),
+            email=user.email
+        )
         
         return {
             "access_token": access_token,
@@ -202,37 +322,53 @@ async def refresh_token_endpoint(
             "token_type": "bearer",
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error("Token refresh failed", error=str(e))
+        logger.error("token_refresh_failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
+            detail="Could not refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-@router.post("/logout")
-async def logout(
-    current_user: User = Depends(get_current_user)
-) -> Any:
-    """
-    Logout endpoint
-    
-    Note: Since we're using JWT tokens, actual logout happens client-side
-    by deleting the tokens. This endpoint is here for API consistency
-    and can be used for logging/analytics.
-    """
-    logger.info("User logged out", user_id=str(current_user.id), email=current_user.email)
-    return {"message": "Successfully logged out"}
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ) -> Any:
     """
-    Get current authenticated user information
+    Get current user information
     
-    This endpoint requires authentication and returns the current user's profile.
+    Args:
+        current_user: Current authenticated user
+        
+    Returns:
+        User information
     """
-    logger.info("User info retrieved", user_id=str(current_user.id), email=current_user.email)
     return current_user
+
+
+@router.post("/logout")
+async def logout(
+    current_user: User = Depends(get_current_user),
+) -> Any:
+    """
+    Logout current user
+    
+    Note: In a stateless JWT setup, logout is primarily client-side
+    (removing tokens from storage). This endpoint is for logging purposes.
+    
+    Args:
+        current_user: Current authenticated user
+        
+    Returns:
+        Success message
+    """
+    logger.info(
+        "user_logged_out",
+        user_id=str(current_user.id),
+        email=current_user.email
+    )
+    
+    return {"message": "Successfully logged out"}
