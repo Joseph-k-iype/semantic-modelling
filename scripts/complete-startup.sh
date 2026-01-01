@@ -1,29 +1,31 @@
 #!/bin/bash
 # scripts/complete-startup.sh
-# Complete startup script for Enterprise Modeling Platform - FIXED VERSION
-# Handles all initialization, database setup, and service startup
+# Complete startup script for Enterprise Modeling Platform
+# Handles all initialization, dependency checks, and service startup
 
-set -e
+set -e  # Exit on any error
 
-# Colors for output
+# ============================================================================
+# Color Definitions
+# ============================================================================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Helper functions
+# ============================================================================
+# Helper Functions
+# ============================================================================
 print_header() {
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
     echo -e "${CYAN} $1${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
-    echo ""
 }
 
 print_step() {
-    echo -e "${BLUE}➜${NC} $1"
+    echo -e "${YELLOW}➜${NC} $1"
 }
 
 print_success() {
@@ -38,23 +40,10 @@ print_warning() {
     echo -e "${YELLOW}⚠${NC}  $1"
 }
 
-# Banner
-clear
-echo -e "${CYAN}"
-echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║                                                           ║"
-echo "║        Enterprise Modeling Platform                       ║"
-echo "║        Complete Initialization & Startup                  ║"
-echo "║                Version 1.0.0                              ║"
-echo "║                                                           ║"
-echo "╚═══════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-echo ""
-
 # ============================================================================
-# STEP 1: Prerequisites Check
+# STEP 1: Verify Prerequisites
 # ============================================================================
-print_header "Step 1: Checking Prerequisites"
+print_header "Step 1: Verifying Prerequisites"
 
 print_step "Checking Docker..."
 if ! command -v docker &> /dev/null; then
@@ -102,12 +91,25 @@ print_success "Directories created"
 print_header "Step 4: Verifying Required Files"
 
 print_step "Checking database initialization files..."
-if [ ! -f "database/postgres/init/01-init-db.sql" ]; then
-    print_error "Missing database/postgres/init/01-init-db.sql"
-    print_error "Please ensure all SQL schema files are in place"
+
+# Check for 00-create-user-and-db.sh
+if [ ! -f "database/postgres/init/00-create-user-and-db.sh" ]; then
+    print_error "Missing database/postgres/init/00-create-user-and-db.sh"
+    print_error "This file creates the 'modeling' user and 'modeling_platform' database"
     exit 1
 fi
-print_success "Database init file found"
+
+# Make sure it's executable
+chmod +x database/postgres/init/00-create-user-and-db.sh
+
+# Check for 01-init-db.sql
+if [ ! -f "database/postgres/init/01-init-db.sql" ]; then
+    print_error "Missing database/postgres/init/01-init-db.sql"
+    print_error "This file creates extensions and enum types"
+    exit 1
+fi
+
+print_success "Database init files found and verified"
 
 print_step "Checking schema files..."
 SCHEMA_FILES=(
@@ -116,6 +118,11 @@ SCHEMA_FILES=(
     "database/postgres/schema/03-folders.sql"
     "database/postgres/schema/04-models.sql"
     "database/postgres/schema/05-diagrams.sql"
+    "database/postgres/schema/06-layouts.sql"
+    "database/postgres/schema/07-versions.sql"
+    "database/postgres/schema/08-publish_workflows.sql"
+    "database/postgres/schema/09-comments.sql"
+    "database/postgres/schema/10-audit_logs.sql"
 )
 
 for schema_file in "${SCHEMA_FILES[@]}"; do
@@ -162,8 +169,6 @@ until docker exec modeling-postgres pg_isready -U postgres > /dev/null 2>&1; do
     COUNTER=$((COUNTER + 1))
 done
 echo ""
-
-
 print_success "PostgreSQL is ready!"
 
 # ============================================================================
@@ -171,7 +176,8 @@ print_success "PostgreSQL is ready!"
 # ============================================================================
 print_header "Step 7: Verifying Database Setup"
 
-sleep 3
+# Wait for init scripts to complete
+sleep 5
 
 # Check if modeling user exists
 print_step "Checking modeling user..."
@@ -179,7 +185,9 @@ if docker exec modeling-postgres psql -U postgres -tAc "SELECT 1 FROM pg_roles W
     print_success "User 'modeling' exists"
 else
     print_error "User 'modeling' was not created!"
-    print_error "Check database/postgres/init/01-init-db.sql"
+    print_error "Check database/postgres/init/00-create-user-and-db.sh"
+    print_error "Viewing PostgreSQL logs:"
+    docker-compose -f docker-compose.dev.yml logs postgres
     exit 1
 fi
 
@@ -189,6 +197,8 @@ if docker exec modeling-postgres psql -U postgres -lqt | cut -d \| -f 1 | grep -
     print_success "Database 'modeling_platform' exists"
 else
     print_error "Database 'modeling_platform' was not created!"
+    print_error "Viewing PostgreSQL logs:"
+    docker-compose -f docker-compose.dev.yml logs postgres
     exit 1
 fi
 
@@ -198,7 +208,17 @@ if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "SELEC
     print_success "Connection successful"
 else
     print_error "Cannot connect with modeling user!"
+    print_error "Viewing PostgreSQL logs:"
+    docker-compose -f docker-compose.dev.yml logs postgres
     exit 1
+fi
+
+# Verify extensions and types were created
+print_step "Verifying database extensions..."
+if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dx" | grep -q "uuid-ossp"; then
+    print_success "Extensions created successfully"
+else
+    print_warning "Extensions may not be created yet"
 fi
 
 # ============================================================================
@@ -283,17 +303,17 @@ print_success "Redis is ready!"
 # ============================================================================
 # STEP 10: Start Backend
 # ============================================================================
-print_header "Step 10: Starting Backend API"
+print_header "Step 10: Starting Backend Service"
 
-print_step "Starting backend service..."
+print_step "Starting backend..."
 docker-compose -f docker-compose.dev.yml up -d backend
 sleep 5
 
-print_step "Waiting for backend to be ready (max 60 seconds)..."
+print_step "Waiting for backend to be ready (max 120 seconds)..."
 COUNTER=0
 until curl -f http://localhost:8000/health > /dev/null 2>&1; do
-    if [ $COUNTER -gt 30 ]; then
-        print_error "Backend failed to start!"
+    if [ $COUNTER -gt 60 ]; then
+        print_error "Backend failed to start within 120 seconds"
         print_error "Checking logs:"
         docker-compose -f docker-compose.dev.yml logs backend
         exit 1
@@ -410,14 +430,14 @@ echo "     Email:    test@example.com"
 echo "     Password: password123"
 echo ""
 echo "   Admin User:"
-echo "     Email:    admin@example.com"
-echo "     Password: admin123"
+echo "     Email:    admin@enterprise-modeling.com"
+echo "     Password: Admin@123"
 echo ""
 
 echo -e "${CYAN}🗄️  Database Info:${NC}"
 echo "   Host:     localhost:5432"
-echo "   Database: modeling_platform  ✓ (Correct)"
-echo "   User:     modeling"
+echo "   Database: modeling_platform  ✓"
+echo "   User:     modeling  ✓"
 echo "   Password: modeling_dev"
 echo ""
 
@@ -431,6 +451,7 @@ echo "   View logs:        docker-compose -f docker-compose.dev.yml logs -f"
 echo "   Stop services:    docker-compose -f docker-compose.dev.yml down"
 echo "   Restart backend:  docker-compose -f docker-compose.dev.yml restart backend"
 echo "   Database shell:   docker exec -it modeling-postgres psql -U modeling -d modeling_platform"
+echo "   Check tables:     docker exec -it modeling-postgres psql -U modeling -d modeling_platform -c '\dt'"
 echo ""
 
 echo -e "${CYAN}⚠️  Note:${NC}"

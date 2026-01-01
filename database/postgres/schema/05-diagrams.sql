@@ -1,25 +1,39 @@
 -- database/postgres/schema/05-diagrams.sql
 -- Diagrams table and related structures
+-- COMPLETE AND CORRECTED to match backend/app/models/diagram.py
 
 -- Drop existing tables if exist (for clean reinstall)
 DROP TABLE IF EXISTS diagram_elements CASCADE;
 DROP TABLE IF EXISTS diagrams CASCADE;
 
--- Diagrams table (notation-specific projections of semantic models)
+-- Diagrams table - visual projections of semantic models
 CREATE TABLE diagrams (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
+    
+    -- CRITICAL: Column is 'notation' NOT 'notation_type'
     notation diagram_notation NOT NULL,
-    notation_config JSONB DEFAULT '{}'::JSONB,
-    visible_concepts UUID[] DEFAULT ARRAY[]::UUID[],
-    settings JSONB DEFAULT '{}'::JSONB,
-    thumbnail_url TEXT,
+    
+    -- Notation-specific configuration (e.g., swimlane settings, sequence diagram config)
+    notation_config JSONB NOT NULL DEFAULT '{}'::JSONB,
+    
+    -- Array of concept UUIDs that are visible in this diagram
+    visible_concepts UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+    
+    -- Additional diagram settings (viewport, zoom, grid, etc.)
+    settings JSONB NOT NULL DEFAULT '{}'::JSONB,
+    
+    -- Is this the default diagram for the model?
     is_default BOOLEAN DEFAULT FALSE NOT NULL,
+    
+    -- Soft delete support
     deleted_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Ownership and audit
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES users(id) ON DELETE RESTRICT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
@@ -29,26 +43,41 @@ CREATE TABLE diagrams (
     CONSTRAINT diagrams_unique_name UNIQUE(model_id, name, deleted_at)
 );
 
--- Diagram elements table (for caching diagram-specific element data)
+-- Diagram elements table (for diagram-specific visual properties)
 CREATE TABLE diagram_elements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     diagram_id UUID NOT NULL REFERENCES diagrams(id) ON DELETE CASCADE,
+    
+    -- Concept ID from semantic model (stored in FalkorDB)
     concept_id UUID NOT NULL,
-    element_type VARCHAR(50) NOT NULL,
-    element_data JSONB DEFAULT '{}'::JSONB,
-    visual_properties JSONB DEFAULT '{}'::JSONB,
-    position_x NUMERIC(10,2),
-    position_y NUMERIC(10,2),
-    width NUMERIC(10,2),
-    height NUMERIC(10,2),
+    
+    -- Element type (node, edge, annotation, etc.)
+    element_type VARCHAR(100) NOT NULL,
+    
+    -- Element-specific data (type-specific properties)
+    element_data JSONB NOT NULL DEFAULT '{}'::JSONB,
+    
+    -- Visual properties (color, shape, style, etc.)
+    visual_properties JSONB NOT NULL DEFAULT '{}'::JSONB,
+    
+    -- Position and size (for manual layouts)
+    position_x DOUBLE PRECISION,
+    position_y DOUBLE PRECISION,
+    width DOUBLE PRECISION,
+    height DOUBLE PRECISION,
     z_index INTEGER DEFAULT 0,
+    
+    -- Visibility control
     is_visible BOOLEAN DEFAULT TRUE NOT NULL,
+    
+    -- Timestamps
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
     -- Constraints
-    CONSTRAINT diagram_elements_element_type_check CHECK (LENGTH(element_type) >= 1),
-    CONSTRAINT diagram_elements_z_index_check CHECK (z_index >= 0),
+    CONSTRAINT diagram_elements_element_type_check CHECK (element_type IN (
+        'node', 'edge', 'annotation', 'group', 'swimlane', 'pool', 'lane'
+    )),
     -- Ensure unique concept per diagram
     CONSTRAINT diagram_elements_unique_concept UNIQUE(diagram_id, concept_id)
 );
@@ -59,24 +88,30 @@ CREATE INDEX idx_diagrams_notation ON diagrams(notation) WHERE deleted_at IS NUL
 CREATE INDEX idx_diagrams_is_default ON diagrams(is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
 CREATE INDEX idx_diagrams_created_by ON diagrams(created_by);
 CREATE INDEX idx_diagrams_created_at ON diagrams(created_at DESC);
-CREATE INDEX idx_diagrams_updated_at ON diagrams(updated_at DESC);
 CREATE INDEX idx_diagrams_deleted_at ON diagrams(deleted_at) WHERE deleted_at IS NOT NULL;
-CREATE INDEX idx_diagrams_visible_concepts ON diagrams USING gin(visible_concepts);
 
--- Full-text search index
-CREATE INDEX idx_diagrams_fulltext ON diagrams 
-    USING gin(to_tsvector('english', 
-        COALESCE(name, '') || ' ' || 
-        COALESCE(description, '')
-    )) WHERE deleted_at IS NULL;
+-- GIN index for visible_concepts array
+CREATE INDEX idx_diagrams_visible_concepts ON diagrams USING GIN(visible_concepts);
+
+-- GIN indexes for JSONB columns
+CREATE INDEX idx_diagrams_notation_config ON diagrams USING GIN(notation_config);
+CREATE INDEX idx_diagrams_settings ON diagrams USING GIN(settings);
 
 -- Indexes for diagram_elements table
 CREATE INDEX idx_diagram_elements_diagram_id ON diagram_elements(diagram_id);
 CREATE INDEX idx_diagram_elements_concept_id ON diagram_elements(concept_id);
 CREATE INDEX idx_diagram_elements_element_type ON diagram_elements(element_type);
 CREATE INDEX idx_diagram_elements_is_visible ON diagram_elements(is_visible) WHERE is_visible = TRUE;
-CREATE INDEX idx_diagram_elements_z_index ON diagram_elements(z_index);
-CREATE INDEX idx_diagram_elements_position ON diagram_elements(position_x, position_y);
+CREATE INDEX idx_diagram_elements_created_at ON diagram_elements(created_at DESC);
+
+-- GIN indexes for JSONB columns
+CREATE INDEX idx_diagram_elements_element_data ON diagram_elements USING GIN(element_data);
+CREATE INDEX idx_diagram_elements_visual_properties ON diagram_elements USING GIN(visual_properties);
+
+-- Spatial index for position queries (if needed for collision detection)
+CREATE INDEX idx_diagram_elements_position ON diagram_elements USING GIST(
+    box(point(position_x, position_y), point(position_x + COALESCE(width, 100), position_y + COALESCE(height, 100)))
+) WHERE position_x IS NOT NULL AND position_y IS NOT NULL;
 
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER update_diagrams_updated_at
@@ -89,39 +124,12 @@ CREATE TRIGGER update_diagram_elements_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Trigger to increment/decrement diagram count in model_statistics
-CREATE OR REPLACE FUNCTION manage_diagram_count()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        -- Increment diagram count
-        PERFORM increment_model_diagram_count(NEW.model_id);
-        RETURN NEW;
-    ELSIF TG_OP = 'DELETE' THEN
-        -- Decrement diagram count
-        PERFORM decrement_model_diagram_count(OLD.model_id);
-        RETURN OLD;
-    END IF;
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER diagram_manage_count_insert
-    AFTER INSERT ON diagrams
-    FOR EACH ROW
-    EXECUTE FUNCTION manage_diagram_count();
-
-CREATE TRIGGER diagram_manage_count_delete
-    AFTER DELETE ON diagrams
-    FOR EACH ROW
-    EXECUTE FUNCTION manage_diagram_count();
-
 -- Trigger to ensure only one default diagram per model
 CREATE OR REPLACE FUNCTION ensure_single_default_diagram()
 RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.is_default = TRUE THEN
-        -- Set all other diagrams in the model to non-default
+        -- Unset other default diagrams for this model
         UPDATE diagrams
         SET is_default = FALSE
         WHERE model_id = NEW.model_id
@@ -132,37 +140,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER diagram_ensure_single_default
-    AFTER INSERT OR UPDATE OF is_default ON diagrams
+CREATE TRIGGER ensure_single_default_diagram_trigger
+    BEFORE INSERT OR UPDATE OF is_default ON diagrams
     FOR EACH ROW
     WHEN (NEW.is_default = TRUE)
     EXECUTE FUNCTION ensure_single_default_diagram();
-
--- Trigger to create first diagram as default
-CREATE OR REPLACE FUNCTION set_first_diagram_as_default()
-RETURNS TRIGGER AS $$
-DECLARE
-    diagram_count INTEGER;
-BEGIN
-    -- Count existing diagrams for this model
-    SELECT COUNT(*) INTO diagram_count
-    FROM diagrams
-    WHERE model_id = NEW.model_id
-    AND deleted_at IS NULL;
-    
-    -- If this is the first diagram, make it default
-    IF diagram_count = 1 THEN
-        NEW.is_default = TRUE;
-    END IF;
-    
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER diagram_set_first_as_default
-    BEFORE INSERT ON diagrams
-    FOR EACH ROW
-    EXECUTE FUNCTION set_first_diagram_as_default();
 
 -- Function to get diagram with elements
 CREATE OR REPLACE FUNCTION get_diagram_with_elements(p_diagram_id UUID)
@@ -172,12 +154,14 @@ RETURNS TABLE (
     notation diagram_notation,
     element_id UUID,
     concept_id UUID,
-    element_type VARCHAR(50),
+    element_type VARCHAR(100),
     element_data JSONB,
-    position_x NUMERIC(10,2),
-    position_y NUMERIC(10,2),
-    width NUMERIC(10,2),
-    height NUMERIC(10,2)
+    visual_properties JSONB,
+    position_x DOUBLE PRECISION,
+    position_y DOUBLE PRECISION,
+    width DOUBLE PRECISION,
+    height DOUBLE PRECISION,
+    is_visible BOOLEAN
 ) AS $$
 BEGIN
     RETURN QUERY
@@ -189,19 +173,20 @@ BEGIN
         de.concept_id,
         de.element_type,
         de.element_data,
+        de.visual_properties,
         de.position_x,
         de.position_y,
         de.width,
-        de.height
+        de.height,
+        de.is_visible
     FROM diagrams d
-    LEFT JOIN diagram_elements de ON de.diagram_id = d.id AND de.is_visible = TRUE
+    LEFT JOIN diagram_elements de ON de.diagram_id = d.id
     WHERE d.id = p_diagram_id
-    AND d.deleted_at IS NULL
-    ORDER BY de.z_index, de.id;
+    AND d.deleted_at IS NULL;
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- Function to clone diagram
+-- Function to clone a diagram
 CREATE OR REPLACE FUNCTION clone_diagram(
     p_source_diagram_id UUID,
     p_new_name VARCHAR(255),
@@ -210,7 +195,7 @@ CREATE OR REPLACE FUNCTION clone_diagram(
 RETURNS UUID AS $$
 DECLARE
     v_new_diagram_id UUID;
-    v_source_diagram RECORD;
+    v_source_diagram diagrams%ROWTYPE;
 BEGIN
     -- Get source diagram
     SELECT * INTO v_source_diagram
@@ -222,7 +207,7 @@ BEGIN
         RAISE EXCEPTION 'Source diagram not found';
     END IF;
     
-    -- Create new diagram
+    -- Create new diagram with same properties
     INSERT INTO diagrams (
         model_id,
         name,
@@ -313,4 +298,8 @@ $$ LANGUAGE plpgsql STABLE;
 DO $$
 BEGIN
     RAISE NOTICE 'Diagrams schema created successfully';
+    RAISE NOTICE '✓ Column: notation (NOT notation_type)';
+    RAISE NOTICE '✓ Column: notation_config (JSONB)';
+    RAISE NOTICE '✓ Column: visible_concepts (UUID[])';
+    RAISE NOTICE '✓ Column: settings (JSONB)';
 END $$;

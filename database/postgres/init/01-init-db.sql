@@ -1,7 +1,7 @@
 -- database/postgres/init/01-init-db.sql
 -- PostgreSQL Initialization Script for Enterprise Modeling Platform
 -- This script sets up extensions, custom types, and utility functions
--- Prerequisites: modeling_platform user and database must already exist (created by 00-*.sql/sh)
+-- Prerequisites: modeling user and modeling_platform database must already exist (created by 00-create-user-and-db.sh)
 
 -- Connect to modeling_platform database
 \c modeling_platform
@@ -27,6 +27,30 @@ END $$;
 
 DO $$ BEGIN
     CREATE TYPE workspace_type AS ENUM ('PERSONAL', 'TEAM', 'COMMON');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE model_type AS ENUM (
+        'ER',
+        'UML',
+        'BPMN',
+        'CUSTOM',
+        'MIXED'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE model_status AS ENUM (
+        'DRAFT',
+        'IN_REVIEW',
+        'APPROVED',
+        'PUBLISHED',
+        'ARCHIVED'
+    );
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
@@ -161,16 +185,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Grant necessary permissions to modeling_platform user
-GRANT ALL PRIVILEGES ON SCHEMA public TO modeling_platform;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO modeling_platform;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO modeling_platform;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO modeling_platform;
+-- Grant necessary permissions to modeling user
+GRANT ALL PRIVILEGES ON SCHEMA public TO modeling;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO modeling;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO modeling;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO modeling;
 
 -- Set default privileges for future objects
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO modeling_platform;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO modeling_platform;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO modeling_platform;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO modeling;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO modeling;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO modeling;
 
 -- Logging
 DO $$
@@ -182,6 +206,6 @@ BEGIN
     RAISE NOTICE '✓ Extensions: uuid-ossp, pgcrypto, pg_trgm, btree_gist';
     RAISE NOTICE '✓ Custom types: Created';
     RAISE NOTICE '✓ Utility functions: Created';
-    RAISE NOTICE '✓ Permissions: Granted to modeling_platform user';
+    RAISE NOTICE '✓ Permissions: Granted to modeling user';
     RAISE NOTICE '============================================';
 END $$;
