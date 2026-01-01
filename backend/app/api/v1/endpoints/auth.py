@@ -1,6 +1,6 @@
 # backend/app/api/v1/endpoints/auth.py
 """
-Authentication endpoints - COMPLETE FIX using password_hash
+Authentication endpoints - COMPLETE FIX using password_hash and UserRole enum
 Path: backend/app/api/v1/endpoints/auth.py
 """
 from datetime import datetime, timedelta
@@ -19,7 +19,7 @@ from app.core.security import (
 )
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.auth import (
     Token,
     RefreshToken,
@@ -42,7 +42,7 @@ async def register(
     """
     Register a new user
     
-    CRITICAL FIX: Uses password_hash (not hashed_password)
+    CRITICAL FIX: Uses password_hash and UserRole enum
     """
     # Check if user already exists
     result = await db.execute(
@@ -73,13 +73,13 @@ async def register(
     username = user_data.username if user_data.username else user_data.email.split('@')[0]
     
     # Create new user
-    # CRITICAL FIX: Use password_hash, not hashed_password
+    # CRITICAL FIX: Use password_hash and UserRole enum
     user = User(
         email=user_data.email,
         username=username,
         password_hash=get_password_hash(user_data.password),  # ✅ FIXED
         full_name=user_data.full_name if user_data.full_name else username,
-        role='USER',  # Default role
+        role=UserRole.USER,  # ✅ FIXED: Use enum, not string
         is_active=True,
         is_verified=False
     )
@@ -101,7 +101,7 @@ async def login(
     """
     User login with email and password
     
-    CRITICAL FIX: Uses password_hash (not hashed_password)
+    CRITICAL FIX: Uses password_hash (not hashed_password) and updates last_login_at
     """
     # Find user by email
     result = await db.execute(
@@ -122,54 +122,53 @@ async def login(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user",
+            detail="User account is inactive",
         )
     
-    # Update last login time
+    # Update last login timestamp
     user.last_login_at = datetime.utcnow()
     await db.commit()
     
     # Create access and refresh tokens
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    refresh_token_expires = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    
     access_token = create_access_token(
         subject=str(user.id),
-        expires_delta=access_token_expires
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
     
     refresh_token = create_refresh_token(
         subject=str(user.id),
-        expires_delta=refresh_token_expires
+        expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
     )
     
     logger.info("User logged in", user_id=str(user.id), email=user.email)
     
-    return Token(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer"
-    )
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh(
+async def refresh_token_endpoint(
     refresh_data: RefreshToken,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Refresh access token using refresh token
+    
+    This endpoint allows clients to get a new access token without re-authenticating
     """
     try:
-        # Decode refresh token
+        # Decode and validate refresh token
         payload = decode_token(refresh_data.refresh_token)
-        user_id = payload.get("sub")
-        token_type = payload.get("type")
+        user_id: str = payload.get("sub")
+        token_type: str = payload.get("type")
         
         if not user_id or token_type != "refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token",
+                detail="Invalid token type",
             )
         
         # Get user from database
@@ -185,53 +184,55 @@ async def refresh(
             )
         
         # Create new tokens
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        refresh_token_expires = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        
         access_token = create_access_token(
             subject=str(user.id),
-            expires_delta=access_token_expires
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         )
         
         new_refresh_token = create_refresh_token(
             subject=str(user.id),
-            expires_delta=refresh_token_expires
+            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
         )
         
         logger.info("Token refreshed", user_id=str(user.id))
         
-        return Token(
-            access_token=access_token,
-            refresh_token=new_refresh_token,
-            token_type="bearer"
-        )
+        return {
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer",
+        }
         
     except Exception as e:
         logger.error("Token refresh failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="Invalid refresh token",
         )
-
-
-@router.get("/me", response_model=UserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user),
-) -> Any:
-    """Get current user information"""
-    return current_user
 
 
 @router.post("/logout")
 async def logout(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user)
 ) -> Any:
     """
-    Logout current user
+    Logout endpoint
     
-    Note: With JWT, logout is primarily handled client-side by removing tokens.
-    This endpoint is here for consistency and future session management.
+    Note: Since we're using JWT tokens, actual logout happens client-side
+    by deleting the tokens. This endpoint is here for API consistency
+    and can be used for logging/analytics.
     """
-    logger.info("User logged out", user_id=str(current_user.id))
-    
+    logger.info("User logged out", user_id=str(current_user.id), email=current_user.email)
     return {"message": "Successfully logged out"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Get current authenticated user information
+    
+    This endpoint requires authentication and returns the current user's profile.
+    """
+    logger.info("User info retrieved", user_id=str(current_user.id), email=current_user.email)
+    return current_user

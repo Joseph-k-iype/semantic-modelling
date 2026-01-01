@@ -1,60 +1,31 @@
+# backend/app/api/v1/endpoints/users.py
 """
-User management endpoints
+User management endpoints - FIXED to use password_hash
+Path: backend/app/api/v1/endpoints/users.py
 """
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select
 import structlog
 
+from app.core.security import verify_password, get_password_hash
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserPasswordUpdate
-from app.core.security import get_password_hash, verify_password
+from app.schemas.user import UserResponse, UserUpdate, UserPasswordUpdate
+from app.api.deps import get_current_user
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/", response_model=List[UserResponse])
-async def list_users(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-) -> Any:
-    """List all users with pagination"""
-    result = await db.execute(
-        select(User)
-        .where(User.is_active == True)
-        .offset(skip)
-        .limit(limit)
-    )
-    users = result.scalars().all()
-    
-    logger.info("Users listed", count=len(users), skip=skip, limit=limit)
-    
-    return users
-
-
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(
-    db: AsyncSession = Depends(get_db),
+async def get_current_user_endpoint(
+    current_user: User = Depends(get_current_user)
 ) -> Any:
-    """Get current authenticated user"""
-    # Mock user for now - will be replaced with actual authentication
-    return {
-        "id": "00000000-0000-0000-0000-000000000000",
-        "email": "user@example.com",
-        "full_name": "Test User",
-        "is_active": True,
-        "is_superuser": False,
-        "avatar_url": None,
-        "preferences": {},
-        "created_at": "2024-01-01T00:00:00",
-        "updated_at": "2024-01-01T00:00:00",
-        "last_login_at": None,
-    }
+    """Get current user information"""
+    return current_user
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -74,18 +45,33 @@ async def get_user(
             detail="User not found"
         )
     
-    logger.info("User retrieved", user_id=user_id)
-    
     return user
+
+
+@router.get("/", response_model=List[UserResponse])
+async def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    """List all users"""
+    result = await db.execute(
+        select(User)
+        .where(User.is_active == True)
+        .offset(skip)
+        .limit(limit)
+    )
+    users = result.scalars().all()
+    return users
 
 
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: str,
-    user_in: UserUpdate,
+    user_data: UserUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """Update user"""
+    """Update user information"""
     result = await db.execute(
         select(User).where(User.id == user_id)
     )
@@ -97,7 +83,8 @@ async def update_user(
             detail="User not found"
         )
     
-    update_data = user_in.model_dump(exclude_unset=True)
+    # Update fields if provided
+    update_data = user_data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(user, field, value)
     
@@ -110,12 +97,16 @@ async def update_user(
 
 
 @router.put("/{user_id}/password")
-async def update_password(
+async def update_user_password(
     user_id: str,
     password_data: UserPasswordUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
-    """Update user password"""
+    """
+    Update user password
+    
+    CRITICAL FIX: Uses password_hash (not hashed_password)
+    """
     result = await db.execute(
         select(User).where(User.id == user_id)
     )
@@ -127,13 +118,17 @@ async def update_password(
             detail="User not found"
         )
     
-    if not verify_password(password_data.current_password, user.hashed_password):
+    # Verify current password
+    # CRITICAL FIX: Use password_hash, not hashed_password
+    if not verify_password(password_data.current_password, user.password_hash):  # ✅ FIXED
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect"
         )
     
-    user.hashed_password = get_password_hash(password_data.new_password)
+    # Update password
+    # CRITICAL FIX: Use password_hash, not hashed_password
+    user.password_hash = get_password_hash(password_data.new_password)  # ✅ FIXED
     await db.commit()
     
     logger.info("User password updated", user_id=user_id)

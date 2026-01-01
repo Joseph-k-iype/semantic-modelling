@@ -1,5 +1,6 @@
 -- database/postgres/schema/01-users.sql
 -- Users table and related structures
+-- FIXED: Added missing updated_by column
 
 -- Drop existing table if exists (for clean reinstall)
 DROP TABLE IF EXISTS user_sessions CASCADE;
@@ -23,6 +24,10 @@ CREATE TABLE users (
     deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    
+    -- CRITICAL FIX: Added missing updated_by column to match other tables
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
     
     -- Constraints
     CONSTRAINT users_email_check CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
@@ -54,59 +59,49 @@ CREATE INDEX idx_users_role ON users(role) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_is_active ON users(is_active) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_created_at ON users(created_at DESC);
 CREATE INDEX idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
-
--- Full-text search index
-CREATE INDEX idx_users_fulltext ON users 
-    USING gin(to_tsvector('english', 
-        COALESCE(full_name, '') || ' ' || 
-        COALESCE(username, '') || ' ' || 
-        COALESCE(email, '')
-    )) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_created_by ON users(created_by) WHERE created_by IS NOT NULL;
+CREATE INDEX idx_users_updated_by ON users(updated_by) WHERE updated_by IS NOT NULL;
 
 -- Indexes for user_sessions table
 CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
-CREATE INDEX idx_user_sessions_token_jti ON user_sessions(token_jti) WHERE is_active = TRUE;
-CREATE INDEX idx_user_sessions_refresh_token_jti ON user_sessions(refresh_token_jti) WHERE is_active = TRUE;
-CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at) WHERE is_active = TRUE;
-CREATE INDEX idx_user_sessions_last_activity_at ON user_sessions(last_activity_at DESC);
+CREATE INDEX idx_user_sessions_token_jti ON user_sessions(token_jti);
+CREATE INDEX idx_user_sessions_is_active ON user_sessions(is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
 
--- Trigger to update updated_at timestamp
-CREATE TRIGGER update_users_updated_at
+-- Trigger for updated_at
+CREATE TRIGGER update_users_updated_at 
     BEFORE UPDATE ON users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Trigger to update last_activity_at on user_sessions
-CREATE OR REPLACE FUNCTION update_session_activity()
+-- Function to track user updates (sets updated_by)
+CREATE OR REPLACE FUNCTION track_user_updates()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.last_activity_at = NOW();
+    -- On INSERT, set created_by to the user being created (self-reference)
+    IF TG_OP = 'INSERT' THEN
+        NEW.created_by := NEW.id;
+        NEW.updated_by := NEW.id;
+    END IF;
+    
+    -- On UPDATE, only update updated_by if it's not already set
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.updated_by IS NULL THEN
+            NEW.updated_by := NEW.id;
+        END IF;
+    END IF;
+    
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_user_sessions_activity
-    BEFORE UPDATE ON user_sessions
+-- Trigger to track user updates
+CREATE TRIGGER track_user_updates_trigger
+    BEFORE INSERT OR UPDATE ON users
     FOR EACH ROW
-    EXECUTE FUNCTION update_session_activity();
+    EXECUTE FUNCTION track_user_updates();
 
--- Function to clean expired sessions
-CREATE OR REPLACE FUNCTION cleanup_expired_sessions()
-RETURNS INTEGER AS $$
-DECLARE
-    deleted_count INTEGER;
-BEGIN
-    DELETE FROM user_sessions 
-    WHERE expires_at < NOW() 
-    OR (is_active = FALSE AND last_activity_at < NOW() - INTERVAL '30 days');
-    
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create default admin user (password: Admin@123)
--- Password hash is bcrypt hash of "Admin@123"
+-- Insert system user for operations without a logged-in user
 INSERT INTO users (
     id,
     email,
@@ -115,22 +110,22 @@ INSERT INTO users (
     password_hash,
     role,
     is_active,
-    is_verified,
-    email_verified_at
+    is_verified
 ) VALUES (
-    uuid_generate_v4(),
-    'admin@enterprise-modeling.com',
-    'admin',
-    'System Administrator',
-    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyGNzKqfNwXu',
+    '00000000-0000-0000-0000-000000000000'::UUID,
+    'system@enterprise-modeling.com',
+    'system',
+    'System User',
+    '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LeZD7LZZwIL9DkW7e', -- password: system (not used)
     'ADMIN',
     TRUE,
-    TRUE,
-    NOW()
-) ON CONFLICT (email) DO NOTHING;
+    TRUE
+) ON CONFLICT (id) DO NOTHING;
 
 -- Logging
 DO $$
 BEGIN
     RAISE NOTICE 'Users schema created successfully';
+    RAISE NOTICE '✓ Added created_by and updated_by columns';
+    RAISE NOTICE '✓ Created system user: 00000000-0000-0000-0000-000000000000';
 END $$;

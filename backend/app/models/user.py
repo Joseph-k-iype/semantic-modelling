@@ -1,14 +1,21 @@
 # backend/app/models/user.py
 """
-User Database Model - EXACT match to database schema
+User Database Model - COMPLETE with created_by and updated_by
 Path: backend/app/models/user.py
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Text
+from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
+import enum
 
 from app.db.base import Base
+
+
+class UserRole(str, enum.Enum):
+    """User role enumeration - must match database ENUM"""
+    ADMIN = "ADMIN"
+    USER = "USER"
 
 
 class User(Base):
@@ -18,8 +25,9 @@ class User(Base):
     CRITICAL: Must EXACTLY match database schema in 01-users.sql
     
     Database columns:
-    - role (user_role ENUM: 'ADMIN' or 'USER') - NOT is_superuser!
+    - role (user_role ENUM: 'ADMIN' or 'USER') - Uses PostgreSQL ENUM type
     - password_hash (NOT hashed_password!)
+    - created_by, updated_by (self-referencing foreign keys)
     """
     
     __tablename__ = "users"
@@ -40,9 +48,19 @@ class User(Base):
     # Password - CRITICAL: Database column is 'password_hash'
     password_hash = Column(String(255), nullable=False)
     
-    # Role - CRITICAL: Database uses 'role' ENUM, not 'is_superuser' boolean
-    # Values: 'ADMIN' or 'USER'
-    role = Column(String(10), nullable=False, default='USER', index=True)
+    # Role - CRITICAL: Must use SQLEnum to match PostgreSQL ENUM type
+    role = Column(
+        SQLEnum(
+            UserRole,
+            name="user_role",
+            create_type=False,  # Don't create the type (already exists in DB)
+            native_enum=False,  # Use enum values, not names
+            values_callable=lambda x: [e.value for e in x]
+        ),
+        nullable=False,
+        default=UserRole.USER,
+        index=True
+    )
     
     # Account status
     is_active = Column(Boolean, default=True, nullable=False, index=True)
@@ -62,8 +80,24 @@ class User(Base):
     preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
     settings = Column(JSONB, nullable=False, default=dict, server_default='{}')
     
+    # CRITICAL FIX: Added created_by and updated_by columns
+    # These are self-referencing (users created/updated by other users)
+    created_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    
+    updated_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+    
     def __repr__(self):
-        return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>"
+        return f"<User(id={self.id}, email='{self.email}', role='{self.role.value if isinstance(self.role, UserRole) else self.role}')>"
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -72,7 +106,7 @@ class User(Base):
             'email': self.email,
             'username': self.username,
             'full_name': self.full_name,
-            'role': self.role,
+            'role': self.role.value if isinstance(self.role, UserRole) else self.role,
             'is_active': self.is_active,
             'is_superuser': self.is_superuser,  # Computed property
             'is_verified': self.is_verified,
@@ -81,6 +115,8 @@ class User(Base):
             'last_login_at': self.last_login_at.isoformat() if self.last_login_at else None,
             'email_verified_at': self.email_verified_at.isoformat() if self.email_verified_at else None,
             'avatar_url': self.avatar_url,
+            'created_by': str(self.created_by) if self.created_by else None,
+            'updated_by': str(self.updated_by) if self.updated_by else None,
         }
     
     # ========================================================================
@@ -93,12 +129,14 @@ class User(Base):
         Backward compatibility property
         Database uses 'role' column, but old code expects 'is_superuser'
         """
+        if isinstance(self.role, UserRole):
+            return self.role == UserRole.ADMIN
         return self.role == 'ADMIN'
     
     @is_superuser.setter
     def is_superuser(self, value: bool):
         """Set role based on is_superuser boolean"""
-        self.role = 'ADMIN' if value else 'USER'
+        self.role = UserRole.ADMIN if value else UserRole.USER
     
     @property
     def hashed_password(self) -> str:

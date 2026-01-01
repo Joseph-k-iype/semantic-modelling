@@ -1,6 +1,6 @@
 # backend/init_database.py
 """
-Database Initialization Script - COMPLETE WORKING VERSION
+Database Initialization Script - FIXED with proper ENUM handling
 Path: backend/init_database.py
 """
 import asyncio
@@ -17,7 +17,7 @@ import uuid
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.workspace import Workspace, WorkspaceType
 from app.models.model import Model, ModelType, ModelStatus
 from app.core.security import get_password_hash
@@ -67,7 +67,7 @@ async def create_tables(engine):
 
 
 async def create_test_user(session: AsyncSession) -> User:
-    """Create test user"""
+    """Create test user - FIXED to use UserRole enum"""
     try:
         result = await session.execute(
             select(User).where(User.email == "test@example.com")
@@ -79,13 +79,15 @@ async def create_test_user(session: AsyncSession) -> User:
             logger.info(f"   Email: {existing_user.email}")
             return existing_user
         
+        # CRITICAL FIX: Use UserRole enum, not string
         test_user = User(
             email="test@example.com",
             username="testuser",
             full_name="Test User",
-            hashed_password=get_password_hash("password123"),
+            password_hash=get_password_hash("password123"),  # ✅ FIXED
+            role=UserRole.USER,  # ✅ FIXED: Use enum, not string
             is_active=True,
-            is_superuser=False
+            is_verified=True
         )
         
         session.add(test_user)
@@ -100,12 +102,14 @@ async def create_test_user(session: AsyncSession) -> User:
         
     except Exception as e:
         logger.error(f"❌ Failed to create test user: {e}")
+        import traceback
+        traceback.print_exc()
         await session.rollback()
         raise
 
 
 async def create_admin_user(session: AsyncSession) -> User:
-    """Create admin user"""
+    """Create admin user - FIXED to use UserRole enum"""
     try:
         result = await session.execute(
             select(User).where(User.email == "admin@example.com")
@@ -114,15 +118,18 @@ async def create_admin_user(session: AsyncSession) -> User:
         
         if existing_user:
             logger.info("Admin user already exists")
+            logger.info(f"   Email: {existing_user.email}")
             return existing_user
         
+        # CRITICAL FIX: Use UserRole enum, not string
         admin_user = User(
             email="admin@example.com",
             username="admin",
             full_name="Administrator",
-            hashed_password=get_password_hash("admin123"),
+            password_hash=get_password_hash("admin123"),  # ✅ FIXED
+            role=UserRole.ADMIN,  # ✅ FIXED: Use enum, not string
             is_active=True,
-            is_superuser=True
+            is_verified=True
         )
         
         session.add(admin_user)
@@ -137,6 +144,8 @@ async def create_admin_user(session: AsyncSession) -> User:
         
     except Exception as e:
         logger.error(f"❌ Failed to create admin user: {e}")
+        import traceback
+        traceback.print_exc()
         await session.rollback()
         raise
 
