@@ -1,6 +1,6 @@
 -- database/postgres/schema/05-diagrams.sql
 -- Path: database/postgres/schema/05-diagrams.sql
--- FIXED: Properly handle model_statistics updates
+-- COMPLETE: All existing features + missing columns (notation_config, settings, deleted_at)
 
 -- ============================================================================
 -- DIAGRAMS TABLE
@@ -14,8 +14,17 @@ CREATE TABLE IF NOT EXISTS diagrams (
     description TEXT,
     notation VARCHAR(50) NOT NULL, -- ER, UML_CLASS, UML_SEQUENCE, BPMN, etc.
     
+    -- ADDED: Notation configuration (diagram-specific settings)
+    notation_config JSONB DEFAULT '{}'::JSONB,
+    
     -- Visible concepts from the semantic model
     visible_concepts UUID[] DEFAULT '{}', -- Array of concept UUIDs
+    
+    -- ADDED: General diagram settings
+    settings JSONB DEFAULT '{}'::JSONB,
+    
+    -- ADDED: Soft delete support
+    deleted_at TIMESTAMP WITH TIME ZONE,
     
     -- Metadata
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -72,6 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_diagrams_created_by ON diagrams(created_by);
 CREATE INDEX IF NOT EXISTS idx_diagrams_created_at ON diagrams(created_at);
 CREATE INDEX IF NOT EXISTS idx_diagrams_updated_at ON diagrams(updated_at);
 CREATE INDEX IF NOT EXISTS idx_diagrams_name_search ON diagrams USING gin(to_tsvector('english', name));
+CREATE INDEX IF NOT EXISTS idx_diagrams_deleted_at ON diagrams(deleted_at);
 
 CREATE INDEX IF NOT EXISTS idx_diagram_snapshots_diagram_id ON diagram_snapshots(diagram_id);
 CREATE INDEX IF NOT EXISTS idx_diagram_snapshots_version ON diagram_snapshots(diagram_id, version);
@@ -137,3 +147,6 @@ COMMENT ON TABLE diagrams IS 'Visual projections of semantic models - diagrams n
 COMMENT ON TABLE diagram_snapshots IS 'Version history snapshots of diagrams';
 COMMENT ON TABLE diagram_validations IS 'Cached validation results for diagrams';
 COMMENT ON COLUMN diagrams.visible_concepts IS 'Array of concept UUIDs from the model that are visible in this diagram';
+COMMENT ON COLUMN diagrams.notation_config IS 'Notation-specific configuration (e.g., UML stereotypes, BPMN pools)';
+COMMENT ON COLUMN diagrams.settings IS 'General diagram settings (viewport, grid, snap, etc.)';
+COMMENT ON COLUMN diagrams.deleted_at IS 'Soft delete timestamp - diagram is deleted if not null';

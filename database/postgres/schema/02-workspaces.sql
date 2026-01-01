@@ -1,9 +1,18 @@
 -- database/postgres/schema/02-workspaces.sql
 -- Workspaces table - Organizational containers for models
+-- Path: database/postgres/schema/02-workspaces.sql
 
--- Workspace types enum
-CREATE TYPE workspace_type AS ENUM ('personal', 'team', 'common');
+-- Workspace types enum (created in init script, but safe to check)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workspace_type') THEN
+        CREATE TYPE workspace_type AS ENUM ('personal', 'team', 'common');
+    END IF;
+END $$;
 
+-- ============================================================================
+-- WORKSPACES TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS workspaces (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
@@ -25,13 +34,18 @@ CREATE TABLE IF NOT EXISTS workspaces (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     
+    -- Soft delete support
+    deleted_at TIMESTAMP WITH TIME ZONE,
+    
     -- For personal workspaces, ensure one per user
     CONSTRAINT unique_personal_workspace UNIQUE NULLS NOT DISTINCT (created_by, type) 
         DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT workspace_name_length CHECK (char_length(name) >= 1 AND char_length(name) <= 255)
 );
 
--- Workspace members table (for team and common workspaces)
+-- ============================================================================
+-- WORKSPACE MEMBERS TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS workspace_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -56,7 +70,9 @@ CREATE TABLE IF NOT EXISTS workspace_members (
     CONSTRAINT valid_role CHECK (role IN ('viewer', 'editor', 'publisher', 'admin'))
 );
 
--- Workspace invitations table
+-- ============================================================================
+-- WORKSPACE INVITATIONS TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS workspace_invitations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -81,11 +97,14 @@ CREATE TABLE IF NOT EXISTS workspace_invitations (
     CONSTRAINT valid_invitation_status CHECK (status IN ('pending', 'accepted', 'declined', 'expired'))
 );
 
--- Indexes
+-- ============================================================================
+-- INDEXES
+-- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_workspaces_created_by ON workspaces(created_by);
 CREATE INDEX IF NOT EXISTS idx_workspaces_type ON workspaces(type);
 CREATE INDEX IF NOT EXISTS idx_workspaces_is_active ON workspaces(is_active);
 CREATE INDEX IF NOT EXISTS idx_workspaces_created_at ON workspaces(created_at);
+CREATE INDEX IF NOT EXISTS idx_workspaces_deleted_at ON workspaces(deleted_at);
 
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace_id ON workspace_members(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_user_id ON workspace_members(user_id);
@@ -96,14 +115,19 @@ CREATE INDEX IF NOT EXISTS idx_workspace_invitations_email ON workspace_invitati
 CREATE INDEX IF NOT EXISTS idx_workspace_invitations_token ON workspace_invitations(token);
 CREATE INDEX IF NOT EXISTS idx_workspace_invitations_status ON workspace_invitations(status);
 
--- Trigger for updated_at
+-- ============================================================================
+-- TRIGGERS
+-- ============================================================================
 CREATE TRIGGER update_workspaces_updated_at
     BEFORE UPDATE ON workspaces
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Comments
+-- ============================================================================
+-- COMMENTS
+-- ============================================================================
 COMMENT ON TABLE workspaces IS 'Organizational containers for models and diagrams';
 COMMENT ON COLUMN workspaces.type IS 'Workspace type: personal, team, or common';
+COMMENT ON COLUMN workspaces.deleted_at IS 'Soft delete timestamp - workspace is deleted if not null';
 COMMENT ON TABLE workspace_members IS 'Users who have access to a workspace';
 COMMENT ON TABLE workspace_invitations IS 'Pending workspace invitations';

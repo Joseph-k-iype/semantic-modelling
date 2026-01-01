@@ -1,6 +1,6 @@
 # backend/app/models/workspace.py
 """
-Workspace Database Model - FIXED with proper enum value handling
+Workspace Database Model - COMPLETE WITH SOFT DELETE
 Path: backend/app/models/workspace.py
 """
 from datetime import datetime
@@ -24,7 +24,7 @@ class Workspace(Base):
     """
     Workspace model for organizing models and diagrams
     
-    CRITICAL FIX: Using SQLAlchemy Enum type with native_enum=False to use enum values
+    Supports soft delete via deleted_at column
     """
     
     __tablename__ = "workspaces"
@@ -41,22 +41,21 @@ class Workspace(Base):
     name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # CRITICAL FIX: Using native_enum=False forces SQLAlchemy to use enum VALUES not NAMES
-    # This ensures 'personal' is used in SQL, not 'PERSONAL'
+    # Workspace type using proper enum handling
     type = Column(
         SQLEnum(
             WorkspaceType,
             name="workspace_type",
             create_type=False,
-            native_enum=False,  # ✅ KEY FIX: Use enum values, not names
-            values_callable=lambda x: [e.value for e in x]  # ✅ Explicitly use .value
+            native_enum=False,  # Use enum values, not names
+            values_callable=lambda x: [e.value for e in x]
         ),
         nullable=False,
         default=WorkspaceType.PERSONAL,
         index=True
     )
     
-    # FIXED: Column name is 'created_by' in database
+    # Ownership
     created_by = Column(
         UUID(as_uuid=True), 
         ForeignKey("users.id", ondelete="RESTRICT"), 
@@ -72,16 +71,19 @@ class Workspace(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationships - CRITICAL FIX: Use backref instead of back_populates
-    # This creates the relationship on User automatically without needing to define it there
-    owner = relationship("User", foreign_keys=[created_by], backref="owned_workspaces")
+    # CRITICAL FIX: Add soft delete support
+    deleted_at = Column(DateTime, nullable=True, index=True)
     
-    # Other relationships use backref to avoid circular imports
-    # models = relationship("Model", backref="workspace", cascade="all, delete-orphan")
-    # folders = relationship("Folder", backref="workspace", cascade="all, delete-orphan")
+    # Relationships
+    owner = relationship("User", foreign_keys=[created_by], backref="owned_workspaces")
     
     def __repr__(self):
         return f"<Workspace(id={self.id}, name='{self.name}', type='{self.type.value}')>"
+    
+    @property
+    def is_deleted(self):
+        """Check if workspace has been soft-deleted"""
+        return self.deleted_at is not None
     
     def to_dict(self):
         """Convert model to dictionary"""
@@ -95,4 +97,5 @@ class Workspace(Base):
             'is_active': self.is_active,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
         }

@@ -1,6 +1,6 @@
 # backend/app/main.py
 """
-FastAPI main application entry point - COMPLETE WITH ASYNC FIX
+FastAPI main application entry point - COMPLETE WITH FALKORDB FIX
 Path: backend/app/main.py
 """
 from contextlib import asynccontextmanager
@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan context manager for startup/shutdown events - FIXED FOR ASYNC
+    Lifespan context manager for startup/shutdown events
     """
     # Startup
     logger.info("\n" + "=" * 80)
@@ -47,16 +47,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ PostgreSQL connection error: {str(e)}")
     
-    # Test FalkorDB connection - FIXED: Use async init
+    # Initialize FalkorDB connection - FIXED: Removed non-existent init_graph_client
     try:
-        from app.graph.client import init_graph_client, get_graph_client
+        from app.graph.client import get_graph_client
         
-        connected = await init_graph_client()  # FIXED: await the async init
+        # Get graph client (this automatically connects)
+        graph_client = get_graph_client()
         
-        if connected:
+        if graph_client.is_connected():
             logger.info("✅ FalkorDB connected successfully")
         else:
+            error_msg = graph_client.get_connection_error()
             logger.warning("⚠️  FalkorDB connection failed - graph features will be disabled")
+            if error_msg:
+                logger.warning(f"   Reason: {error_msg}")
     except Exception as e:
         logger.error(f"❌ FalkorDB connection error: {str(e)}")
     
@@ -194,9 +198,23 @@ async def readiness_check():
     except Exception as e:
         db_status = f"unhealthy: {str(e)}"
     
+    # Check FalkorDB
+    falkordb_status = "disabled"
+    try:
+        from app.graph.client import get_graph_client
+        graph_client = get_graph_client()
+        if graph_client.is_connected():
+            falkordb_status = "healthy"
+        else:
+            error_msg = graph_client.get_connection_error()
+            falkordb_status = f"unhealthy: {error_msg}" if error_msg else "disconnected"
+    except Exception as e:
+        falkordb_status = f"error: {str(e)}"
+    
     return {
         "status": "ready" if db_status == "healthy" else "not ready",
         "database": db_status,
+        "falkordb": falkordb_status,
         "version": settings.VERSION,
     }
 

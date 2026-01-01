@@ -1,7 +1,6 @@
 # backend/app/api/v1/endpoints/diagrams.py
 """
-Diagram Management Endpoints - COMPLETE AND FIXED
-FIXED: Proper async/await handling and layout creation to prevent greenlet errors
+Diagram Management Endpoints - COMPLETE WITH NOTATION MAPPING FIX
 Path: backend/app/api/v1/endpoints/diagrams.py
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -24,6 +23,90 @@ from app.api.deps import get_current_user
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
+
+
+# ============================================================================
+# NOTATION MAPPING - Maps frontend notation types to database values
+# ============================================================================
+
+NOTATION_MAPPING = {
+    # ER and Data Modeling
+    'ER': 'ER',
+    'LOGICAL': 'ER',  # Logical data models are ER diagrams
+    'PHYSICAL': 'ER',  # Physical data models are ER diagrams
+    'CONCEPTUAL': 'ER',  # Conceptual data models are ER diagrams
+    
+    # UML Diagrams
+    'UML_CLASS': 'UML_CLASS',
+    'UML-CLASS': 'UML_CLASS',
+    'UML_SEQUENCE': 'UML_SEQUENCE',
+    'UML-SEQUENCE': 'UML_SEQUENCE',
+    'UML_ACTIVITY': 'UML_ACTIVITY',
+    'UML-ACTIVITY': 'UML_ACTIVITY',
+    'UML_STATE_MACHINE': 'UML_STATE_MACHINE',
+    'UML-STATE-MACHINE': 'UML_STATE_MACHINE',
+    'UML_COMPONENT': 'UML_COMPONENT',
+    'UML-COMPONENT': 'UML_COMPONENT',
+    'UML_DEPLOYMENT': 'UML_DEPLOYMENT',
+    'UML-DEPLOYMENT': 'UML_DEPLOYMENT',
+    'UML_PACKAGE': 'UML_PACKAGE',
+    'UML-PACKAGE': 'UML_PACKAGE',
+    'UML_INTERACTION': 'UML_SEQUENCE',  # Interaction diagrams are sequence diagrams
+    'UML-INTERACTION': 'UML_SEQUENCE',
+    
+    # BPMN
+    'BPMN': 'BPMN',
+    
+    # Custom
+    'CUSTOM': 'CUSTOM',
+}
+
+
+def normalize_notation_type(notation_type: str) -> str:
+    """
+    Normalize notation type from frontend to database format
+    
+    Args:
+        notation_type: Frontend notation type (can be various formats)
+        
+    Returns:
+        Database-compatible notation type
+        
+    Raises:
+        ValueError: If notation type is not supported
+    """
+    # Convert to uppercase for case-insensitive matching
+    notation_upper = notation_type.upper().strip()
+    
+    # Map to database value
+    if notation_upper in NOTATION_MAPPING:
+        return NOTATION_MAPPING[notation_upper]
+    
+    # If not found, raise error with helpful message
+    raise ValueError(
+        f"Unsupported notation type: '{notation_type}'. "
+        f"Supported types: {', '.join(sorted(set(NOTATION_MAPPING.keys())))}"
+    )
+
+
+def get_model_type_from_notation(notation: str) -> ModelType:
+    """
+    Determine model type from notation
+    
+    Args:
+        notation: Normalized notation type
+        
+    Returns:
+        ModelType enum value
+    """
+    if notation.startswith('UML_'):
+        return ModelType.UML
+    elif notation == 'BPMN':
+        return ModelType.BPMN
+    elif notation == 'ER':
+        return ModelType.ER
+    else:
+        return ModelType.CUSTOM
 
 
 # ============================================================================
@@ -139,9 +222,25 @@ async def create_diagram(
     """
     Create a new diagram (and model if needed)
     
-    FIXED: Proper async session handling and layout creation
+    FIXED: Proper notation type normalization and async session handling
     """
     try:
+        # ====================================================================
+        # CRITICAL FIX: Normalize notation type
+        # ====================================================================
+        try:
+            normalized_notation = normalize_notation_type(diagram_data.notation_type)
+            logger.info(
+                "Normalized notation type",
+                input=diagram_data.notation_type,
+                output=normalized_notation
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
+        
         # Get or create personal workspace
         workspace = await get_or_create_personal_workspace(db, current_user)
         workspace_id = workspace.id
@@ -180,6 +279,9 @@ async def create_diagram(
             # Create new model
             model_name = diagram_data.model_name or diagram_data.name
             
+            # ✅ FIX: Determine model type from normalized notation
+            model_type = get_model_type_from_notation(normalized_notation)
+            
             # Try to create model with unique name
             max_attempts = 10
             counter = 1
@@ -191,11 +293,12 @@ async def create_diagram(
                     model = Model(
                         name=current_model_name,
                         description=f"Model for {diagram_data.name}",
-                        type=ModelType.LOGICAL,
+                        type=model_type,  # ✅ FIX: Use correct model type
                         status=ModelStatus.DRAFT,
                         workspace_id=workspace_id,
                         created_by=current_user.id,
-                        settings={}
+                        tags=[],
+                        meta_data={}
                     )
                     
                     db.add(model)
@@ -206,6 +309,7 @@ async def create_diagram(
                         "Created model",
                         model_id=str(model.id),
                         name=current_model_name,
+                        type=model_type.value,
                         attempt=attempt + 1
                     )
                     break
@@ -239,12 +343,12 @@ async def create_diagram(
                 # Generate unique name if needed
                 current_diagram_name = diagram_name if counter == 1 else f"{diagram_name} ({counter})"
                 
-                # Create diagram
+                # ✅ FIX: Create diagram with NORMALIZED notation type
                 diagram = Diagram(
                     name=current_diagram_name,
                     description=diagram_data.description,
                     model_id=model.id,
-                    notation=diagram_data.notation_type,
+                    notation=normalized_notation,  # ✅ Use normalized notation
                     notation_config={},
                     visible_concepts=[],
                     settings={},
@@ -259,7 +363,7 @@ async def create_diagram(
                     "Created diagram",
                     diagram_id=str(diagram.id),
                     name=current_diagram_name,
-                    notation=diagram_data.notation_type,
+                    notation=normalized_notation,
                     model_id=str(model.id),
                     attempt=attempt + 1
                 )
@@ -343,7 +447,8 @@ async def create_diagram(
             "Diagram creation complete",
             diagram_id=str(diagram.id),
             model_id=str(model.id),
-            layout_id=str(layout.id)
+            layout_id=str(layout.id),
+            notation=normalized_notation
         )
         
         return diagram_to_response(diagram)

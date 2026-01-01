@@ -1,12 +1,26 @@
 -- database/postgres/schema/04-models.sql
 -- Models table - Semantic models representing business concepts
+-- Path: database/postgres/schema/04-models.sql
 
--- Model types enum
-CREATE TYPE model_type AS ENUM ('ER', 'UML', 'BPMN', 'CUSTOM');
+-- Model types enum (created in init script, but safe to check)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'model_type') THEN
+        CREATE TYPE model_type AS ENUM ('ER', 'UML', 'BPMN', 'CUSTOM');
+    END IF;
+END $$;
 
--- Model status enum
-CREATE TYPE model_status AS ENUM ('draft', 'in_review', 'published', 'archived');
+-- Model status enum (created in init script, but safe to check)
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'model_status') THEN
+        CREATE TYPE model_status AS ENUM ('draft', 'in_review', 'published', 'archived');
+    END IF;
+END $$;
 
+-- ============================================================================
+-- MODELS TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS models (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -39,13 +53,18 @@ CREATE TABLE IF NOT EXISTS models (
     published_at TIMESTAMP WITH TIME ZONE,
     published_by UUID REFERENCES users(id) ON DELETE SET NULL,
     
+    -- Soft delete support
+    deleted_at TIMESTAMP WITH TIME ZONE,
+    
     -- Constraints
     CONSTRAINT unique_model_name_in_workspace UNIQUE (workspace_id, name),
     CONSTRAINT model_name_length CHECK (char_length(name) >= 1 AND char_length(name) <= 255),
     CONSTRAINT valid_version CHECK (version > 0)
 );
 
--- Model tags table for efficient tag queries
+-- ============================================================================
+-- MODEL TAGS TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS model_tags (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -56,7 +75,9 @@ CREATE TABLE IF NOT EXISTS model_tags (
     CONSTRAINT tag_length CHECK (char_length(tag) >= 1 AND char_length(tag) <= 100)
 );
 
--- Model favorites (user-specific)
+-- ============================================================================
+-- MODEL FAVORITES TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS model_favorites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -66,7 +87,9 @@ CREATE TABLE IF NOT EXISTS model_favorites (
     CONSTRAINT unique_favorite UNIQUE (model_id, user_id)
 );
 
--- Model shares (external sharing with tokens)
+-- ============================================================================
+-- MODEL SHARES TABLE
+-- ============================================================================
 CREATE TABLE IF NOT EXISTS model_shares (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -96,7 +119,9 @@ CREATE TABLE IF NOT EXISTS model_shares (
     CONSTRAINT valid_max_views CHECK (max_views IS NULL OR max_views > 0)
 );
 
--- Indexes
+-- ============================================================================
+-- INDEXES
+-- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_models_workspace_id ON models(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_models_folder_id ON models(folder_id);
 CREATE INDEX IF NOT EXISTS idx_models_type ON models(type);
@@ -104,6 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_models_status ON models(status);
 CREATE INDEX IF NOT EXISTS idx_models_created_by ON models(created_by);
 CREATE INDEX IF NOT EXISTS idx_models_created_at ON models(created_at);
 CREATE INDEX IF NOT EXISTS idx_models_updated_at ON models(updated_at);
+CREATE INDEX IF NOT EXISTS idx_models_deleted_at ON models(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_models_tags ON models USING gin(tags);
 
 CREATE INDEX IF NOT EXISTS idx_model_tags_model_id ON model_tags(model_id);
@@ -115,6 +141,10 @@ CREATE INDEX IF NOT EXISTS idx_model_favorites_model_id ON model_favorites(model
 CREATE INDEX IF NOT EXISTS idx_model_shares_token ON model_shares(share_token);
 CREATE INDEX IF NOT EXISTS idx_model_shares_model_id ON model_shares(model_id);
 CREATE INDEX IF NOT EXISTS idx_model_shares_is_active ON model_shares(is_active);
+
+-- ============================================================================
+-- TRIGGERS
+-- ============================================================================
 
 -- Trigger for updated_at
 CREATE TRIGGER update_models_updated_at
@@ -140,10 +170,13 @@ CREATE TRIGGER update_model_last_edited_trigger
     FOR EACH ROW
     EXECUTE FUNCTION update_model_last_edited();
 
--- Comments
+-- ============================================================================
+-- COMMENTS
+-- ============================================================================
 COMMENT ON TABLE models IS 'Semantic models representing business concepts';
 COMMENT ON COLUMN models.type IS 'Model type: ER, UML, BPMN, or CUSTOM';
 COMMENT ON COLUMN models.status IS 'Model lifecycle status';
 COMMENT ON COLUMN models.tags IS 'Array of tags for categorization';
 COMMENT ON COLUMN models.metadata IS 'Additional model metadata (JSON)';
+COMMENT ON COLUMN models.deleted_at IS 'Soft delete timestamp - model is deleted if not null';
 COMMENT ON TABLE model_shares IS 'External sharing links with token-based access';
