@@ -1,156 +1,187 @@
 -- database/postgres/init/01-init-db.sql
--- PostgreSQL Database Initialization Script - FIXED
--- Creates the correct database, users, and grants permissions
+-- PostgreSQL Initialization Script for Enterprise Modeling Platform
+-- This script sets up extensions, custom types, and utility functions
+-- Prerequisites: modeling_platform user and database must already exist (created by 00-*.sql/sh)
 
-\echo '========================================================================'
-\echo 'PostgreSQL Initialization Started'
-\echo 'Enterprise Modeling Platform Database Setup'
-\echo '========================================================================'
-
--- ============================================================================
--- STEP 1: Create modeling user (if it doesn't exist)
--- ============================================================================
-\echo ''
-\echo 'Step 1: Creating modeling user...'
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = 'modeling') THEN
-        CREATE USER modeling WITH PASSWORD 'modeling_dev';
-        RAISE NOTICE 'Created user: modeling';
-    ELSE
-        RAISE NOTICE 'User modeling already exists';
-    END IF;
-END $$;
-
--- ============================================================================
--- STEP 2: Create modeling_platform database (PRIMARY DATABASE)
--- ============================================================================
-\echo ''
-\echo 'Step 2: Creating modeling_platform database...'
-
-SELECT 'CREATE DATABASE modeling_platform'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'modeling_platform')\gexec
-
-\echo 'Database modeling_platform created or already exists'
-
--- ============================================================================
--- STEP 3: Grant privileges on modeling_platform database
--- ============================================================================
-\echo ''
-\echo 'Step 3: Granting privileges on modeling_platform...'
-
-GRANT ALL PRIVILEGES ON DATABASE modeling_platform TO modeling;
-
--- ============================================================================
--- STEP 4: Connect to modeling_platform and set up extensions and schema
--- ============================================================================
-\echo ''
-\echo 'Step 4: Setting up modeling_platform database...'
+-- Connect to modeling_platform database
 \c modeling_platform
 
--- Create essential extensions
+-- Enable required PostgreSQL extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";  -- Trigram similarity for text search
-CREATE EXTENSION IF NOT EXISTS "btree_gin";  -- Better indexing
-CREATE EXTENSION IF NOT EXISTS "hstore";  -- Key-value store
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+CREATE EXTENSION IF NOT EXISTS "btree_gist";
 
-\echo 'Extensions created'
+-- Create custom enum types
+DO $$ BEGIN
+    CREATE TYPE user_role AS ENUM ('ADMIN', 'USER');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- Grant schema permissions
-GRANT ALL PRIVILEGES ON SCHEMA public TO modeling;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO modeling;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO modeling;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO modeling;
+DO $$ BEGIN
+    CREATE TYPE workspace_role AS ENUM ('VIEWER', 'EDITOR', 'PUBLISHER', 'ADMIN');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- Set default privileges for future objects
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO modeling;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO modeling;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO modeling;
+DO $$ BEGIN
+    CREATE TYPE workspace_type AS ENUM ('PERSONAL', 'TEAM', 'COMMON');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- Set database owner
-ALTER DATABASE modeling_platform OWNER TO modeling;
+DO $$ BEGIN
+    CREATE TYPE diagram_notation AS ENUM (
+        'ER',
+        'UML_CLASS',
+        'UML_SEQUENCE',
+        'UML_ACTIVITY',
+        'UML_STATE',
+        'UML_COMPONENT',
+        'UML_DEPLOYMENT',
+        'UML_PACKAGE',
+        'BPMN'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
-\echo 'Permissions granted'
+DO $$ BEGIN
+    CREATE TYPE layout_type AS ENUM (
+        'MANUAL',
+        'LAYERED',
+        'FORCE_DIRECTED',
+        'BPMN_SWIMLANE',
+        'UML_SEQUENCE',
+        'STATE_MACHINE',
+        'HIERARCHICAL'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
--- ============================================================================
--- STEP 5: Create helper function for updated_at timestamps
--- ============================================================================
-\echo ''
-\echo 'Step 5: Creating helper functions...'
+DO $$ BEGIN
+    CREATE TYPE publish_status AS ENUM (
+        'DRAFT',
+        'PENDING_REVIEW',
+        'APPROVED',
+        'REJECTED',
+        'PUBLISHED',
+        'ARCHIVED'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
+DO $$ BEGIN
+    CREATE TYPE version_type AS ENUM ('MAJOR', 'MINOR', 'PATCH');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE audit_action AS ENUM (
+        'CREATE',
+        'UPDATE',
+        'DELETE',
+        'PUBLISH',
+        'ARCHIVE',
+        'RESTORE',
+        'SHARE',
+        'PERMISSION_CHANGE'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE TYPE entity_type AS ENUM (
+        'USER',
+        'WORKSPACE',
+        'FOLDER',
+        'MODEL',
+        'DIAGRAM',
+        'LAYOUT',
+        'VERSION',
+        'PUBLISH_WORKFLOW',
+        'COMMENT'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Utility function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
+    NEW.updated_at = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
-\echo 'Helper functions created'
+-- Utility function to prevent updates on immutable records
+CREATE OR REPLACE FUNCTION prevent_update_immutable()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'Cannot update immutable record';
+END;
+$$ LANGUAGE plpgsql;
 
--- ============================================================================
--- STEP 6: Create enum types for the application
--- ============================================================================
-\echo ''
-\echo 'Step 6: Creating enum types...'
+-- Function to validate JSON schema
+CREATE OR REPLACE FUNCTION validate_jsonb_keys(data JSONB, required_keys TEXT[])
+RETURNS BOOLEAN AS $$
+DECLARE
+    key TEXT;
+BEGIN
+    FOREACH key IN ARRAY required_keys
+    LOOP
+        IF NOT (data ? key) THEN
+            RETURN FALSE;
+        END IF;
+    END LOOP;
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
--- Workspace types
-DO $$ BEGIN
-    CREATE TYPE workspace_type AS ENUM ('personal', 'team', 'common');
-EXCEPTION
-    WHEN duplicate_object THEN null;
+-- Function to generate semantic version string
+CREATE OR REPLACE FUNCTION generate_version_string(major INT, minor INT, patch INT)
+RETURNS VARCHAR(20) AS $$
+BEGIN
+    RETURN CONCAT(major, '.', minor, '.', patch);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Function to soft delete with cascade
+CREATE OR REPLACE FUNCTION soft_delete_cascade()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.deleted_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Grant necessary permissions to modeling_platform user
+GRANT ALL PRIVILEGES ON SCHEMA public TO modeling_platform;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO modeling_platform;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO modeling_platform;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO modeling_platform;
+
+-- Set default privileges for future objects
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO modeling_platform;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO modeling_platform;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO modeling_platform;
+
+-- Logging
+DO $$
+BEGIN
+    RAISE NOTICE '============================================';
+    RAISE NOTICE 'Database Initialization Complete';
+    RAISE NOTICE '============================================';
+    RAISE NOTICE '✓ Database: modeling_platform';
+    RAISE NOTICE '✓ Extensions: uuid-ossp, pgcrypto, pg_trgm, btree_gist';
+    RAISE NOTICE '✓ Custom types: Created';
+    RAISE NOTICE '✓ Utility functions: Created';
+    RAISE NOTICE '✓ Permissions: Granted to modeling_platform user';
+    RAISE NOTICE '============================================';
 END $$;
-
--- User roles
-DO $$ BEGIN
-    CREATE TYPE user_role AS ENUM ('viewer', 'editor', 'publisher', 'admin');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Model types
-DO $$ BEGIN
-    CREATE TYPE model_type AS ENUM ('ER', 'UML', 'BPMN', 'CUSTOM');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Model status
-DO $$ BEGIN
-    CREATE TYPE model_status AS ENUM ('draft', 'in_review', 'published', 'archived');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Publish request status
-DO $$ BEGIN
-    CREATE TYPE publish_status AS ENUM ('pending', 'approved', 'rejected', 'cancelled');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-\echo 'Enum types created'
-
--- ============================================================================
--- SUMMARY
--- ============================================================================
-\echo ''
-\echo '========================================================================'
-\echo '✅ PostgreSQL Initialization Complete!'
-\echo '========================================================================'
-\echo ''
-\echo 'Database Setup Summary:'
-\echo '  - Database: modeling_platform'
-\echo '  - User: modeling'
-\echo '  - Password: modeling_dev'
-\echo '  - Extensions: uuid-ossp, pg_trgm, btree_gin, hstore'
-\echo '  - Functions: update_updated_at_column()'
-\echo '  - Enums: workspace_type, user_role, model_type, model_status, publish_status'
-\echo ''
-\echo 'Next Steps:'
-\echo '  1. Apply schema files from database/postgres/schema/'
-\echo '  2. Run init_database.py to create test users and data'
-\echo '  3. Start the backend service'
-\echo ''
-\echo '========================================================================'

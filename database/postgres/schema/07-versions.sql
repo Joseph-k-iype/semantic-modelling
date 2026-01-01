@@ -1,234 +1,383 @@
 -- database/postgres/schema/07-versions.sql
--- Path: database/postgres/schema/07-versions.sql
--- Model versioning and change tracking - COMPLETE AND FIXED
+-- Versions table for model versioning and change tracking
 
--- ============================================================================
--- MODEL VERSIONS TABLE
--- ============================================================================
-CREATE TABLE IF NOT EXISTS model_versions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- Drop existing tables if exist (for clean reinstall)
+DROP TABLE IF EXISTS version_changes CASCADE;
+DROP TABLE IF EXISTS versions CASCADE;
+
+-- Versions table
+CREATE TABLE versions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-    version INT NOT NULL,
-    
-    -- Change information
-    change_set JSONB NOT NULL,
+    version_number VARCHAR(20) NOT NULL,
+    version_type version_type NOT NULL,
+    major INTEGER NOT NULL DEFAULT 1,
+    minor INTEGER NOT NULL DEFAULT 0,
+    patch INTEGER NOT NULL DEFAULT 0,
+    name VARCHAR(255),
+    description TEXT,
     change_summary TEXT,
-    
-    -- Graph snapshot reference
+    snapshot_data JSONB NOT NULL,
     graph_snapshot_id VARCHAR(255),
+    is_published BOOLEAN DEFAULT FALSE NOT NULL,
+    published_at TIMESTAMP WITH TIME ZONE,
+    tags JSONB DEFAULT '[]'::JSONB,
+    metadata JSONB DEFAULT '{}'::JSONB,
+    created_by UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
-    -- Version metadata
-    created_by UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    -- Tags for this version
-    tags TEXT[] DEFAULT ARRAY[]::TEXT[],
-    
-    CONSTRAINT unique_model_version UNIQUE (model_id, version),
-    CONSTRAINT valid_version CHECK (version > 0)
+    -- Constraints
+    CONSTRAINT versions_version_number_check CHECK (version_number ~* '^\d+\.\d+\.\d+$'),
+    CONSTRAINT versions_major_check CHECK (major >= 0),
+    CONSTRAINT versions_minor_check CHECK (minor >= 0),
+    CONSTRAINT versions_patch_check CHECK (patch >= 0),
+    -- Ensure unique version number per model
+    CONSTRAINT versions_unique_version UNIQUE(model_id, version_number)
 );
 
--- ============================================================================
--- CHANGE LOG TABLE (granular tracking)
--- ============================================================================
-CREATE TABLE IF NOT EXISTS change_log (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    version_id UUID NOT NULL REFERENCES model_versions(id) ON DELETE CASCADE,
-    
-    -- Change details
-    operation VARCHAR(20) NOT NULL, -- create, update, delete
-    entity_type VARCHAR(100) NOT NULL, -- concept, relationship, attribute
-    entity_id VARCHAR(255) NOT NULL,
-    
-    -- Old and new values
+-- Version changes table (detailed change log)
+CREATE TABLE version_changes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    version_id UUID NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+    change_type VARCHAR(50) NOT NULL,
+    entity_type VARCHAR(50) NOT NULL,
+    entity_id UUID NOT NULL,
+    entity_name VARCHAR(255),
     old_value JSONB,
     new_value JSONB,
+    change_description TEXT,
+    metadata JSONB DEFAULT '{}'::JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     
-    -- Metadata
-    changed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT valid_operation CHECK (operation IN ('create', 'update', 'delete'))
+    -- Constraints
+    CONSTRAINT version_changes_change_type_check CHECK (change_type IN (
+        'CREATE',
+        'UPDATE',
+        'DELETE',
+        'RENAME',
+        'MOVE',
+        'PROPERTY_CHANGE'
+    )),
+    CONSTRAINT version_changes_entity_type_check CHECK (LENGTH(entity_type) >= 1)
 );
 
--- ============================================================================
--- VERSION COMPARISONS TABLE (cached diff results)
--- ============================================================================
-CREATE TABLE IF NOT EXISTS version_comparisons (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-    from_version INT NOT NULL,
-    to_version INT NOT NULL,
-    
-    -- Diff results
-    differences JSONB NOT NULL,
-    
-    -- Computed statistics
-    additions_count INT DEFAULT 0,
-    modifications_count INT DEFAULT 0,
-    deletions_count INT DEFAULT 0,
-    
-    -- Cache metadata
-    computed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT unique_version_comparison UNIQUE (model_id, from_version, to_version),
-    CONSTRAINT valid_version_range CHECK (from_version < to_version)
-);
+-- Indexes for versions table
+CREATE INDEX idx_versions_model_id ON versions(model_id);
+CREATE INDEX idx_versions_version_number ON versions(version_number);
+CREATE INDEX idx_versions_version_type ON versions(version_type);
+CREATE INDEX idx_versions_is_published ON versions(is_published) WHERE is_published = TRUE;
+CREATE INDEX idx_versions_created_by ON versions(created_by);
+CREATE INDEX idx_versions_created_at ON versions(created_at DESC);
+CREATE INDEX idx_versions_published_at ON versions(published_at DESC NULLS LAST);
+CREATE INDEX idx_versions_major_minor_patch ON versions(major DESC, minor DESC, patch DESC);
 
--- ============================================================================
--- INDEXES
--- ============================================================================
-CREATE INDEX IF NOT EXISTS idx_model_versions_model_id ON model_versions(model_id);
-CREATE INDEX IF NOT EXISTS idx_model_versions_version ON model_versions(model_id, version);
-CREATE INDEX IF NOT EXISTS idx_model_versions_created_at ON model_versions(created_at);
-CREATE INDEX IF NOT EXISTS idx_model_versions_created_by ON model_versions(created_by);
+-- Full-text search index
+CREATE INDEX idx_versions_fulltext ON versions 
+    USING gin(to_tsvector('english', 
+        COALESCE(name, '') || ' ' || 
+        COALESCE(description, '') || ' ' ||
+        COALESCE(change_summary, '')
+    ));
 
-CREATE INDEX IF NOT EXISTS idx_change_log_version_id ON change_log(version_id);
-CREATE INDEX IF NOT EXISTS idx_change_log_entity ON change_log(entity_type, entity_id);
-CREATE INDEX IF NOT EXISTS idx_change_log_operation ON change_log(operation);
-CREATE INDEX IF NOT EXISTS idx_change_log_changed_at ON change_log(changed_at);
+-- Indexes for version_changes table
+CREATE INDEX idx_version_changes_version_id ON version_changes(version_id);
+CREATE INDEX idx_version_changes_change_type ON version_changes(change_type);
+CREATE INDEX idx_version_changes_entity_type ON version_changes(entity_type);
+CREATE INDEX idx_version_changes_entity_id ON version_changes(entity_id);
+CREATE INDEX idx_version_changes_created_at ON version_changes(created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_version_comparisons_model_id ON version_comparisons(model_id);
-CREATE INDEX IF NOT EXISTS idx_version_comparisons_versions ON version_comparisons(model_id, from_version, to_version);
-
--- ============================================================================
--- FUNCTIONS AND TRIGGERS
--- ============================================================================
-
--- Function to auto-increment version number
-CREATE OR REPLACE FUNCTION set_next_version_number()
+-- Trigger to generate version number
+CREATE OR REPLACE FUNCTION generate_version_number()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.version IS NULL THEN
-        SELECT COALESCE(MAX(version), 0) + 1
-        INTO NEW.version
-        FROM model_versions
+    NEW.version_number = generate_version_string(NEW.major, NEW.minor, NEW.patch);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER version_generate_number
+    BEFORE INSERT OR UPDATE OF major, minor, patch ON versions
+    FOR EACH ROW
+    EXECUTE FUNCTION generate_version_number();
+
+-- Trigger to update model_statistics version count
+CREATE OR REPLACE FUNCTION update_version_count()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        UPDATE model_statistics
+        SET 
+            total_versions = total_versions + 1,
+            updated_at = NOW()
         WHERE model_id = NEW.model_id;
+        RETURN NEW;
+    ELSIF TG_OP = 'DELETE' THEN
+        UPDATE model_statistics
+        SET 
+            total_versions = GREATEST(total_versions - 1, 0),
+            updated_at = NOW()
+        WHERE model_id = OLD.model_id;
+        RETURN OLD;
     END IF;
-    RETURN NEW;
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger to set version number automatically
-CREATE TRIGGER set_version_number
-    BEFORE INSERT ON model_versions
+CREATE TRIGGER version_update_count_insert
+    AFTER INSERT ON versions
     FOR EACH ROW
-    WHEN (NEW.version IS NULL)
-    EXECUTE FUNCTION set_next_version_number();
+    EXECUTE FUNCTION update_version_count();
 
--- Function to update model current version and statistics
--- FIXED: Ensures model_statistics row exists before updating
-CREATE OR REPLACE FUNCTION update_model_current_version()
-RETURNS TRIGGER AS $$
+CREATE TRIGGER version_update_count_delete
+    AFTER DELETE ON versions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_version_count();
+
+-- Function to get next version number
+CREATE OR REPLACE FUNCTION get_next_version_number(
+    p_model_id UUID,
+    p_version_type version_type
+)
+RETURNS TABLE (
+    major INTEGER,
+    minor INTEGER,
+    patch INTEGER,
+    version_string VARCHAR(20)
+) AS $$
+DECLARE
+    v_current_major INTEGER;
+    v_current_minor INTEGER;
+    v_current_patch INTEGER;
+    v_next_major INTEGER;
+    v_next_minor INTEGER;
+    v_next_patch INTEGER;
 BEGIN
-    -- Update model's current version
-    UPDATE models
-    SET current_version = NEW.version,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = NEW.model_id;
+    -- Get current latest version
+    SELECT v.major, v.minor, v.patch
+    INTO v_current_major, v_current_minor, v_current_patch
+    FROM versions v
+    WHERE v.model_id = p_model_id
+    ORDER BY v.major DESC, v.minor DESC, v.patch DESC
+    LIMIT 1;
     
-    -- Ensure model_statistics row exists (defensive programming)
-    INSERT INTO model_statistics (model_id, diagram_count, version_count, concept_count, relationship_count)
-    VALUES (NEW.model_id, 0, 0, 0, 0)
-    ON CONFLICT (model_id) DO NOTHING;
+    -- If no versions exist, start with 1.0.0
+    IF v_current_major IS NULL THEN
+        v_next_major := 1;
+        v_next_minor := 0;
+        v_next_patch := 0;
+    ELSE
+        -- Calculate next version based on type
+        CASE p_version_type
+            WHEN 'MAJOR' THEN
+                v_next_major := v_current_major + 1;
+                v_next_minor := 0;
+                v_next_patch := 0;
+            WHEN 'MINOR' THEN
+                v_next_major := v_current_major;
+                v_next_minor := v_current_minor + 1;
+                v_next_patch := 0;
+            WHEN 'PATCH' THEN
+                v_next_major := v_current_major;
+                v_next_minor := v_current_minor;
+                v_next_patch := v_current_patch + 1;
+        END CASE;
+    END IF;
     
-    -- Update version count in statistics
-    UPDATE model_statistics
-    SET version_count = version_count + 1,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE model_id = NEW.model_id;
+    RETURN QUERY SELECT 
+        v_next_major,
+        v_next_minor,
+        v_next_patch,
+        generate_version_string(v_next_major, v_next_minor, v_next_patch);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Function to create version snapshot
+CREATE OR REPLACE FUNCTION create_version_snapshot(
+    p_model_id UUID,
+    p_version_type version_type,
+    p_name VARCHAR(255),
+    p_description TEXT,
+    p_change_summary TEXT,
+    p_snapshot_data JSONB,
+    p_user_id UUID
+)
+RETURNS UUID AS $$
+DECLARE
+    v_version_id UUID;
+    v_next_version RECORD;
+BEGIN
+    -- Get next version number
+    SELECT * INTO v_next_version
+    FROM get_next_version_number(p_model_id, p_version_type);
     
-    RETURN NEW;
+    -- Create version
+    INSERT INTO versions (
+        model_id,
+        major,
+        minor,
+        patch,
+        version_type,
+        name,
+        description,
+        change_summary,
+        snapshot_data,
+        created_by
+    ) VALUES (
+        p_model_id,
+        v_next_version.major,
+        v_next_version.minor,
+        v_next_version.patch,
+        p_version_type,
+        p_name,
+        p_description,
+        p_change_summary,
+        p_snapshot_data,
+        p_user_id
+    )
+    RETURNING id INTO v_version_id;
+    
+    RETURN v_version_id;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger to update current version when new version is created
-CREATE TRIGGER update_current_version
-    AFTER INSERT ON model_versions
-    FOR EACH ROW
-    EXECUTE FUNCTION update_model_current_version();
+-- Function to get version history
+CREATE OR REPLACE FUNCTION get_version_history(p_model_id UUID)
+RETURNS TABLE (
+    version_id UUID,
+    version_number VARCHAR(20),
+    version_type version_type,
+    name VARCHAR(255),
+    change_summary TEXT,
+    is_published BOOLEAN,
+    created_by_id UUID,
+    created_by_name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE,
+    change_count BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        v.id,
+        v.version_number,
+        v.version_type,
+        v.name,
+        v.change_summary,
+        v.is_published,
+        v.created_by,
+        u.full_name,
+        v.created_at,
+        COUNT(vc.id) as change_count
+    FROM versions v
+    JOIN users u ON u.id = v.created_by
+    LEFT JOIN version_changes vc ON vc.version_id = v.id
+    WHERE v.model_id = p_model_id
+    GROUP BY v.id, v.version_number, v.version_type, v.name, v.change_summary, 
+             v.is_published, v.created_by, u.full_name, v.created_at
+    ORDER BY v.major DESC, v.minor DESC, v.patch DESC;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
--- ============================================================================
--- VIEWS
--- ============================================================================
+-- Function to compare versions
+CREATE OR REPLACE FUNCTION compare_versions(
+    p_version_1_id UUID,
+    p_version_2_id UUID
+)
+RETURNS TABLE (
+    change_type VARCHAR(50),
+    entity_type VARCHAR(50),
+    entity_id UUID,
+    entity_name VARCHAR(255),
+    old_value JSONB,
+    new_value JSONB
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        vc.change_type,
+        vc.entity_type,
+        vc.entity_id,
+        vc.entity_name,
+        vc.old_value,
+        vc.new_value
+    FROM version_changes vc
+    WHERE vc.version_id IN (p_version_1_id, p_version_2_id)
+    ORDER BY vc.created_at;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
--- View for version history with user details
-CREATE OR REPLACE VIEW version_history AS
-SELECT 
-    mv.id,
-    mv.model_id,
-    mv.version,
-    mv.change_summary,
-    mv.created_at,
-    mv.tags,
-    u.full_name as created_by_name,
-    u.email as created_by_email,
-    (
-        SELECT COUNT(*)
-        FROM change_log cl
-        WHERE cl.version_id = mv.id
-    ) as change_count,
-    m.name as model_name,
-    m.type as model_type,
-    m.status as model_status
-FROM model_versions mv
-LEFT JOIN users u ON mv.created_by = u.id
-LEFT JOIN models m ON mv.model_id = m.id
-ORDER BY mv.model_id, mv.version DESC;
+-- Function to rollback to version
+CREATE OR REPLACE FUNCTION rollback_to_version(
+    p_version_id UUID,
+    p_user_id UUID
+)
+RETURNS UUID AS $$
+DECLARE
+    v_version RECORD;
+    v_new_version_id UUID;
+BEGIN
+    -- Get version data
+    SELECT * INTO v_version
+    FROM versions
+    WHERE id = p_version_id;
+    
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Version not found';
+    END IF;
+    
+    -- Create new version with rollback data
+    v_new_version_id := create_version_snapshot(
+        v_version.model_id,
+        'PATCH',
+        'Rollback to ' || v_version.version_number,
+        'Rolled back to version ' || v_version.version_number,
+        'System rollback',
+        v_version.snapshot_data,
+        p_user_id
+    );
+    
+    RETURN v_new_version_id;
+END;
+$$ LANGUAGE plpgsql;
 
--- View for latest version of each model
-CREATE OR REPLACE VIEW latest_versions AS
-SELECT DISTINCT ON (mv.model_id)
-    mv.id,
-    mv.model_id,
-    mv.version,
-    mv.change_summary,
-    mv.created_at,
-    mv.tags,
-    u.full_name as created_by_name,
-    m.name as model_name,
-    m.type as model_type
-FROM model_versions mv
-LEFT JOIN users u ON mv.created_by = u.id
-LEFT JOIN models m ON mv.model_id = m.id
-ORDER BY mv.model_id, mv.version DESC;
+-- Function to tag version
+CREATE OR REPLACE FUNCTION tag_version(
+    p_version_id UUID,
+    p_tags TEXT[]
+)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE versions
+    SET 
+        tags = to_jsonb(p_tags),
+        updated_at = NOW()
+    WHERE id = p_version_id;
+END;
+$$ LANGUAGE plpgsql;
 
--- View for version statistics
-CREATE OR REPLACE VIEW version_statistics AS
-SELECT 
-    mv.model_id,
-    COUNT(DISTINCT mv.id) as total_versions,
-    MAX(mv.version) as latest_version,
-    MIN(mv.created_at) as first_version_date,
-    MAX(mv.created_at) as latest_version_date,
-    COUNT(DISTINCT mv.created_by) as contributor_count,
-    (
-        SELECT COUNT(*)
-        FROM change_log cl
-        JOIN model_versions mv2 ON cl.version_id = mv2.id
-        WHERE mv2.model_id = mv.model_id
-    ) as total_changes
-FROM model_versions mv
-GROUP BY mv.model_id;
+-- Function to get versions by tag
+CREATE OR REPLACE FUNCTION get_versions_by_tag(p_model_id UUID, p_tag TEXT)
+RETURNS TABLE (
+    version_id UUID,
+    version_number VARCHAR(20),
+    name VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        v.id,
+        v.version_number,
+        v.name,
+        v.created_at
+    FROM versions v
+    WHERE v.model_id = p_model_id
+    AND v.tags ? p_tag
+    ORDER BY v.created_at DESC;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
--- ============================================================================
--- COMMENTS
--- ============================================================================
-COMMENT ON TABLE model_versions IS 'Version history for models with change tracking';
-COMMENT ON TABLE change_log IS 'Granular log of individual changes within each version';
-COMMENT ON TABLE version_comparisons IS 'Cached comparison results between versions';
-
-COMMENT ON COLUMN model_versions.change_set IS 'Complete set of changes in this version';
-COMMENT ON COLUMN model_versions.graph_snapshot_id IS 'Reference to graph database snapshot';
-COMMENT ON COLUMN model_versions.tags IS 'Semantic versioning tags or custom labels';
-
-COMMENT ON COLUMN change_log.operation IS 'Type of change: create, update, or delete';
-COMMENT ON COLUMN change_log.entity_type IS 'Type of entity changed: concept, relationship, or attribute';
-COMMENT ON COLUMN change_log.old_value IS 'Previous state before change (NULL for create)';
-COMMENT ON COLUMN change_log.new_value IS 'New state after change (NULL for delete)';
-
-COMMENT ON COLUMN version_comparisons.differences IS 'Detailed differences between versions';
-COMMENT ON COLUMN version_comparisons.computed_at IS 'When this comparison was cached';
-
-COMMENT ON VIEW version_history IS 'Complete version history with user details';
-COMMENT ON VIEW latest_versions IS 'Latest version for each model';
-COMMENT ON VIEW version_statistics IS 'Aggregated statistics about model versions';
+-- Logging
+DO $$
+BEGIN
+    RAISE NOTICE 'Versions schema created successfully';
+END $$;

@@ -162,6 +162,8 @@ until docker exec modeling-postgres pg_isready -U postgres > /dev/null 2>&1; do
     COUNTER=$((COUNTER + 1))
 done
 echo ""
+
+
 print_success "PostgreSQL is ready!"
 
 # ============================================================================
