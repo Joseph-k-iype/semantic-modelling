@@ -1,11 +1,18 @@
 # backend/app/graph/client.py
 """
-FalkorDB Graph Database Client - COMPLETE WORKING VERSION
+FalkorDB Graph Database Client - COMPLETE IMPLEMENTATION
 Path: backend/app/graph/client.py
+
+CRITICAL FIXES:
+1. Support creating nodes with custom labels (Entity, Class, Task, etc.)
+2. Properly handle multi-label nodes (Entity:Concept, Class:Concept)
+3. Support typed relationships (RELATES_TO, EXTENDS, etc.)
+4. Handle JSON serialization for complex properties
 """
 from typing import Any, Dict, List, Optional
 import structlog
 from datetime import datetime
+import json
 
 logger = structlog.get_logger(__name__)
 
@@ -145,6 +152,24 @@ class GraphClient:
             logger.error("Failed to execute query", graph_name=graph_name, error=str(e))
             return []
     
+    def _serialize_property_value(self, value: Any) -> Any:
+        """
+        Serialize property value for FalkorDB
+        
+        Handles complex types like lists, dicts, etc.
+        """
+        if value is None:
+            return ""
+        elif isinstance(value, (str, int, float, bool)):
+            return value
+        elif isinstance(value, (list, dict)):
+            # FalkorDB doesn't natively support complex types, so we JSON serialize
+            return json.dumps(value)
+        elif isinstance(value, datetime):
+            return value.isoformat()
+        else:
+            return str(value)
+    
     def create_concept(
         self,
         graph_name: str,
@@ -152,27 +177,78 @@ class GraphClient:
         concept_type: str,
         properties: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """Create a concept node"""
+        """
+        Create a concept node with custom label
+        
+        CRITICAL FIX: Now supports custom labels like Entity, Class, Task, etc.
+        Creates multi-label nodes: Entity:Concept, Class:Concept, etc.
+        
+        Args:
+            graph_name: Name of the graph
+            concept_id: Unique identifier for the concept
+            concept_type: Type/label for the node (Entity, Class, Task, etc.)
+            properties: Additional properties for the node
+            
+        Returns:
+            True if successful, False otherwise
+        """
         if not self.is_connected():
             return False
         
         props = properties or {}
+        
+        # Add core properties
         props["id"] = concept_id
         props["type"] = concept_type
         props["created_at"] = datetime.utcnow().isoformat()
         
-        prop_strings = [f"{k}: ${k}" for k in props.keys()]
-        prop_clause = "{" + ", ".join(prop_strings) + "}"
-        query = f"CREATE (c:Concept {prop_clause}) RETURN c"
+        # Serialize complex properties
+        serialized_props = {
+            k: self._serialize_property_value(v) 
+            for k, v in props.items()
+        }
+        
+        # Build property clause
+        prop_strings = []
+        for k, v in serialized_props.items():
+            if isinstance(v, str):
+                # Escape quotes in strings
+                escaped_value = v.replace("'", "\\'")
+                prop_strings.append(f"{k}: '{escaped_value}'")
+            elif isinstance(v, bool):
+                prop_strings.append(f"{k}: {str(v).lower()}")
+            elif v is None or v == "":
+                prop_strings.append(f"{k}: ''")
+            else:
+                prop_strings.append(f"{k}: {v}")
+        
+        prop_clause = "{" + ", ".join(prop_strings) + "}" if prop_strings else ""
+        
+        # CRITICAL FIX: Use custom label AND add Concept as secondary label
+        # This creates nodes like: (c:Entity:Concept) or (c:Class:Concept)
+        # This allows filtering by specific type OR all concepts
+        labels = f"{concept_type}:Concept"
+        query = f"CREATE (c:{labels} {prop_clause}) RETURN c"
         
         try:
-            result = self.execute_query(graph_name, query, props)
+            result = self.execute_query(graph_name, query, {})
             if result:
-                logger.info("Concept created", graph_name=graph_name, concept_id=concept_id)
+                logger.info(
+                    "Concept created",
+                    graph_name=graph_name,
+                    concept_id=concept_id,
+                    concept_type=concept_type,
+                    labels=labels
+                )
                 return True
             return False
         except Exception as e:
-            logger.error("Failed to create concept", error=str(e))
+            logger.error(
+                "Failed to create concept",
+                error=str(e),
+                concept_id=concept_id,
+                concept_type=concept_type
+            )
             return False
     
     def update_concept(
@@ -181,30 +257,58 @@ class GraphClient:
         concept_id: str,
         properties: Dict[str, Any]
     ) -> bool:
-        """Update concept properties"""
+        """
+        Update concept properties
+        
+        CRITICAL FIX: Properly handles JSON serialization for complex properties
+        """
         if not self.is_connected() or not properties:
             return False
         
-        params = {"id": concept_id, "updated_at": datetime.utcnow().isoformat()}
-        set_clauses = ["c.updated_at = $updated_at"]
+        # Serialize complex properties
+        serialized_props = {
+            k: self._serialize_property_value(v) 
+            for k, v in properties.items()
+            if k not in ["id", "created_at"]  # Don't update these
+        }
         
-        for key, value in properties.items():
-            if key not in ["id", "created_at"]:
-                param_name = f"prop_{key}"
-                set_clauses.append(f"c.{key} = ${param_name}")
-                params[param_name] = value
+        # Build SET clauses
+        set_clauses = ["c.updated_at = '" + datetime.utcnow().isoformat() + "'"]
+        
+        for key, value in serialized_props.items():
+            if isinstance(value, str):
+                # Escape quotes in strings
+                escaped_value = value.replace("'", "\\'")
+                set_clauses.append(f"c.{key} = '{escaped_value}'")
+            elif isinstance(value, bool):
+                set_clauses.append(f"c.{key} = {str(value).lower()}")
+            elif value is None or value == "":
+                set_clauses.append(f"c.{key} = ''")
+            else:
+                set_clauses.append(f"c.{key} = {value}")
         
         query = f"""
-        MATCH (c:Concept {{id: $id}})
+        MATCH (c {{id: '{concept_id}'}})
         SET {', '.join(set_clauses)}
         RETURN c
         """
         
         try:
-            result = self.execute_query(graph_name, query, params)
+            result = self.execute_query(graph_name, query, {})
+            if result:
+                logger.info(
+                    "Concept updated",
+                    graph_name=graph_name,
+                    concept_id=concept_id,
+                    updated_fields=list(serialized_props.keys())
+                )
             return bool(result)
         except Exception as e:
-            logger.error("Failed to update concept", error=str(e))
+            logger.error(
+                "Failed to update concept",
+                error=str(e),
+                concept_id=concept_id
+            )
             return False
     
     def create_relationship(
@@ -215,46 +319,136 @@ class GraphClient:
         rel_type: str,
         properties: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """Create a relationship between concepts"""
+        """
+        Create a relationship between concepts
+        
+        CRITICAL FIX: Supports custom relationship types (RELATES_TO, EXTENDS, etc.)
+        Properly handles relationship properties including cardinality
+        """
         if not self.is_connected():
             return False
         
         props = properties or {}
         props["created_at"] = datetime.utcnow().isoformat()
         
-        rel_type = rel_type.replace(" ", "_").replace("-", "_").upper()
+        # Serialize complex properties
+        serialized_props = {
+            k: self._serialize_property_value(v) 
+            for k, v in props.items()
+        }
         
-        prop_strings = [f"{k}: ${k}" for k in props.keys()]
-        prop_clause = "{" + ", ".join(prop_strings) + "}" if props else ""
+        # Clean relationship type (uppercase, replace spaces/dashes with underscores)
+        clean_rel_type = rel_type.replace(" ", "_").replace("-", "_").upper()
         
+        # Build property clause
+        prop_strings = []
+        for k, v in serialized_props.items():
+            if isinstance(v, str):
+                escaped_value = v.replace("'", "\\'")
+                prop_strings.append(f"{k}: '{escaped_value}'")
+            elif isinstance(v, bool):
+                prop_strings.append(f"{k}: {str(v).lower()}")
+            elif v is None or v == "":
+                prop_strings.append(f"{k}: ''")
+            else:
+                prop_strings.append(f"{k}: {v}")
+        
+        prop_clause = "{" + ", ".join(prop_strings) + "}" if prop_strings else ""
+        
+        # CRITICAL FIX: Use MERGE instead of CREATE to avoid duplicates
+        # Match both nodes first, then create relationship
         query = f"""
-        MATCH (from:Concept {{id: $from_id}})
-        MATCH (to:Concept {{id: $to_id}})
-        CREATE (from)-[r:{rel_type} {prop_clause}]->(to)
+        MATCH (from {{id: '{from_id}'}})
+        MATCH (to {{id: '{to_id}'}})
+        MERGE (from)-[r:{clean_rel_type} {prop_clause}]->(to)
         RETURN r
         """
         
-        params = {"from_id": from_id, "to_id": to_id, **props}
-        
         try:
-            result = self.execute_query(graph_name, query, params)
+            result = self.execute_query(graph_name, query, {})
             if result:
-                logger.info("Relationship created", from_id=from_id, to_id=to_id, rel_type=rel_type)
+                logger.info(
+                    "Relationship created",
+                    graph_name=graph_name,
+                    from_id=from_id,
+                    to_id=to_id,
+                    rel_type=clean_rel_type,
+                    properties=serialized_props
+                )
                 return True
             return False
         except Exception as e:
-            logger.error("Failed to create relationship", error=str(e))
+            logger.error(
+                "Failed to create relationship",
+                error=str(e),
+                from_id=from_id,
+                to_id=to_id,
+                rel_type=clean_rel_type
+            )
             return False
     
+    def get_concept(
+        self,
+        graph_name: str,
+        concept_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get a concept by ID"""
+        if not self.is_connected():
+            return None
+        
+        query = f"MATCH (c {{id: '{concept_id}'}}) RETURN c"
+        
+        try:
+            results = self.execute_query(graph_name, query, {})
+            if results and len(results) > 0:
+                return results[0]
+            return None
+        except Exception as e:
+            logger.error("Failed to get concept", error=str(e))
+            return None
+    
+    def get_relationships(
+        self,
+        graph_name: str,
+        concept_id: str,
+        direction: str = "both"
+    ) -> List[Dict[str, Any]]:
+        """Get relationships for a concept"""
+        if not self.is_connected():
+            return []
+        
+        if direction == "outgoing":
+            query = f"""
+            MATCH (c {{id: '{concept_id}'}})-[r]->(related)
+            RETURN r, related
+            """
+        elif direction == "incoming":
+            query = f"""
+            MATCH (c {{id: '{concept_id}'}})<-[r]-(related)
+            RETURN r, related
+            """
+        else:  # both
+            query = f"""
+            MATCH (c {{id: '{concept_id}'}})-[r]-(related)
+            RETURN r, related
+            """
+        
+        try:
+            results = self.execute_query(graph_name, query, {})
+            return results or []
+        except Exception as e:
+            logger.error("Failed to get relationships", error=str(e))
+            return []
+    
     def delete_concept(self, graph_name: str, concept_id: str) -> bool:
-        """Delete a concept and relationships"""
+        """Delete a concept and its relationships"""
         if not self.is_connected():
             return False
         
-        query = "MATCH (c:Concept {id: $id}) DETACH DELETE c"
+        query = f"MATCH (c {{id: '{concept_id}'}}) DETACH DELETE c"
         
         try:
-            self.execute_query(graph_name, query, {"id": concept_id})
+            self.execute_query(graph_name, query, {})
             logger.info("Concept deleted", concept_id=concept_id)
             return True
         except Exception as e:

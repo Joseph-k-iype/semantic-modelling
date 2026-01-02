@@ -1,6 +1,7 @@
 -- database/postgres/schema/05-diagrams.sql
 -- Diagrams table and related structures - COMPLETE AND CORRECT
 -- CRITICAL FIX: Column name is 'notation' (NOT 'notation_type')
+-- STRATEGIC FIX: Added graph_name column for one graph per diagram architecture
 
 -- Drop existing tables if exist (for clean reinstall)
 DROP TABLE IF EXISTS diagram_elements CASCADE;
@@ -29,6 +30,12 @@ CREATE TABLE diagrams (
     -- Values: 'ER', 'UML_CLASS', 'UML_SEQUENCE', 'UML_ACTIVITY', 'UML_STATE',
     --         'UML_COMPONENT', 'UML_DEPLOYMENT', 'UML_PACKAGE', 'BPMN'
     notation diagram_notation NOT NULL,
+    
+    -- STRATEGIC FIX: FalkorDB graph reference
+    -- Each diagram gets its own isolated graph in FalkorDB
+    -- Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
+    -- This enables complete isolation between diagrams
+    graph_name VARCHAR(500) UNIQUE,
     
     -- Notation-specific configuration (swimlanes, lifelines, etc.)
     notation_config JSONB NOT NULL DEFAULT '{}'::JSONB,
@@ -122,6 +129,7 @@ CREATE TABLE diagram_elements (
 
 CREATE INDEX idx_diagrams_model_id ON diagrams(model_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_diagrams_notation ON diagrams(notation) WHERE deleted_at IS NULL;
+CREATE INDEX idx_diagrams_graph_name ON diagrams(graph_name) WHERE graph_name IS NOT NULL;  -- STRATEGIC FIX: Index for graph lookups
 CREATE INDEX idx_diagrams_is_default ON diagrams(is_default) WHERE is_default = TRUE AND deleted_at IS NULL;
 CREATE INDEX idx_diagrams_is_valid ON diagrams(is_valid) WHERE is_valid = FALSE AND deleted_at IS NULL;
 CREATE INDEX idx_diagrams_created_by ON diagrams(created_by);
@@ -212,6 +220,7 @@ RETURNS TABLE (
     diagram_id UUID,
     diagram_name VARCHAR(255),
     notation diagram_notation,
+    graph_name VARCHAR(500),  -- STRATEGIC FIX: Include graph_name
     element_id UUID,
     concept_id UUID,
     element_type VARCHAR(100),
@@ -231,6 +240,7 @@ BEGIN
         d.id AS diagram_id,
         d.name AS diagram_name,
         d.notation,
+        d.graph_name,  -- STRATEGIC FIX: Include graph_name
         de.id AS element_id,
         de.concept_id,
         de.element_type,
@@ -273,11 +283,13 @@ BEGIN
     END IF;
     
     -- Create new diagram with same properties but new name
+    -- STRATEGIC FIX: graph_name will be NULL initially, backend will generate it
     INSERT INTO diagrams (
         model_id,
         name,
         description,
         notation,
+        graph_name,  -- STRATEGIC FIX: NULL initially, will be set by backend
         notation_config,
         visible_concepts,
         settings,
@@ -291,6 +303,7 @@ BEGIN
         p_new_name,
         v_source_diagram.description,
         v_source_diagram.notation,
+        NULL,  -- STRATEGIC FIX: Backend will generate unique graph_name
         v_source_diagram.notation_config,
         v_source_diagram.visible_concepts,
         v_source_diagram.settings,
@@ -343,6 +356,7 @@ RETURNS TABLE (
     id UUID,
     name VARCHAR(255),
     notation diagram_notation,
+    graph_name VARCHAR(500),  -- STRATEGIC FIX: Include graph_name
     is_default BOOLEAN,
     is_valid BOOLEAN,
     element_count BIGINT,
@@ -356,6 +370,7 @@ BEGIN
         d.id,
         d.name,
         d.notation,
+        d.graph_name,  -- STRATEGIC FIX: Include graph_name
         d.is_default,
         d.is_valid,
         COUNT(de.id) AS element_count,
@@ -366,7 +381,7 @@ BEGIN
     LEFT JOIN diagram_elements de ON de.diagram_id = d.id AND de.is_visible = TRUE
     WHERE d.model_id = p_model_id
     AND d.deleted_at IS NULL
-    GROUP BY d.id, d.name, d.notation, d.is_default, d.is_valid, d.visible_concepts, d.created_at, d.updated_at
+    GROUP BY d.id, d.name, d.notation, d.graph_name, d.is_default, d.is_valid, d.visible_concepts, d.created_at, d.updated_at
     ORDER BY d.is_default DESC, d.created_at DESC;
 END;
 $$ LANGUAGE plpgsql STABLE;
@@ -442,6 +457,7 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON TABLE diagrams IS 'Diagram metadata - visual projections of semantic models stored in FalkorDB';
 COMMENT ON COLUMN diagrams.notation IS 'Notation type: ER, UML_CLASS, UML_SEQUENCE, UML_ACTIVITY, UML_STATE, UML_COMPONENT, UML_DEPLOYMENT, UML_PACKAGE, BPMN';
+COMMENT ON COLUMN diagrams.graph_name IS 'FalkorDB graph reference (format: user_{username}_workspace_{workspace}_diagram_{name}) - one graph per diagram for complete isolation';
 COMMENT ON COLUMN diagrams.notation_config IS 'Notation-specific configuration (swimlanes, lifelines, sequence numbering, etc.)';
 COMMENT ON COLUMN diagrams.visible_concepts IS 'Array of concept UUIDs from FalkorDB semantic model that are visible in this diagram';
 COMMENT ON COLUMN diagrams.settings IS 'Diagram settings (viewport, zoom, grid, snap-to-grid, style preferences, etc.)';
@@ -468,13 +484,17 @@ BEGIN
     RAISE NOTICE '✓ Table: diagrams';
     RAISE NOTICE '✓ Table: diagram_elements';
     RAISE NOTICE '✓ Column: notation (NOT notation_type) - CRITICAL FIX APPLIED';
+    RAISE NOTICE '✓ Column: graph_name (VARCHAR 500) - STRATEGIC FIX for one graph per diagram';
     RAISE NOTICE '✓ Column: notation_config (JSONB)';
     RAISE NOTICE '✓ Column: visible_concepts (UUID[])';
     RAISE NOTICE '✓ Column: settings (JSONB)';
     RAISE NOTICE '✓ Column: validation_errors (JSONB)';
     RAISE NOTICE '✓ Column: is_valid (BOOLEAN)';
-    RAISE NOTICE '✓ Indexes: Created for performance';
+    RAISE NOTICE '✓ Indexes: Created for performance including graph_name';
     RAISE NOTICE '✓ Triggers: update_updated_at, ensure_single_default';
     RAISE NOTICE '✓ Functions: 6 helper functions created';
+    RAISE NOTICE '============================================';
+    RAISE NOTICE 'ARCHITECTURE: One FalkorDB graph per diagram';
+    RAISE NOTICE 'Graph naming: user_{username}_workspace_{workspace}_diagram_{name}';
     RAISE NOTICE '============================================';
 END $$;

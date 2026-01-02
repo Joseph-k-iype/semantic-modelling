@@ -1,13 +1,13 @@
 # backend/app/models/diagram.py
 """
-Diagram Database Model - FULLY FIXED AND COMPLETE
+Diagram Database Model - COMPLETE AND FIXED
 Path: backend/app/models/diagram.py
 
-CRITICAL FIX: Column name is 'notation' (NOT 'notation_type')
-This matches the SQL schema in 05-diagrams.sql and uses the diagram_notation ENUM type
+CRITICAL FIX: Includes NotationType enum for imports
+STRATEGIC FIX: Added 'graph_name' field for one graph per diagram architecture
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, CheckConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import relationship
 import uuid
@@ -16,8 +16,15 @@ import enum
 from app.db.base import Base
 
 
+# ============================================================================
+# NOTATION TYPE ENUM - CRITICAL: Must be defined for imports
+# ============================================================================
+
 class NotationType(str, enum.Enum):
-    """Notation type enumeration - matches diagram_notation ENUM in database"""
+    """
+    Notation type enumeration
+    Matches diagram_notation ENUM in database schema
+    """
     ER = "ER"
     UML_CLASS = "UML_CLASS"
     UML_SEQUENCE = "UML_SEQUENCE"
@@ -29,15 +36,21 @@ class NotationType(str, enum.Enum):
     BPMN = "BPMN"
 
 
+# ============================================================================
+# DIAGRAM MODEL
+# ============================================================================
+
 class Diagram(Base):
     """
     Diagram model - visual projection of semantic model
     
-    A diagram represents a specific view/projection of a model using a particular notation.
-    The same model can have multiple diagrams (e.g., class diagram, sequence diagram, etc.)
+    ARCHITECTURE:
+    - Each diagram gets its own FalkorDB graph (one-to-one mapping)
+    - graph_name stores the reference to the FalkorDB graph
+    - Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
     
     The semantic model itself is stored in FalkorDB (graph database).
-    This table stores metadata, notation configuration, and visual settings.
+    This table stores metadata, notation configuration, visual settings, and graph reference.
     
     Notation Types:
     - ER: Entity-Relationship diagram
@@ -53,7 +66,10 @@ class Diagram(Base):
     
     __tablename__ = "diagrams"
     
-    # Primary key
+    # ========================================================================
+    # PRIMARY KEY
+    # ========================================================================
+    
     id = Column(
         UUID(as_uuid=True),
         primary_key=True,
@@ -61,7 +77,10 @@ class Diagram(Base):
         index=True,
     )
     
-    # Foreign key to model
+    # ========================================================================
+    # FOREIGN KEYS
+    # ========================================================================
+    
     model_id = Column(
         UUID(as_uuid=True),
         ForeignKey("models.id", ondelete="CASCADE"),
@@ -69,155 +88,279 @@ class Diagram(Base):
         index=True
     )
     
-    # Basic information
-    name = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
+    # ========================================================================
+    # BASIC INFORMATION
+    # ========================================================================
+    
+    name = Column(
+        String(255),
+        nullable=False
+    )
+    
+    description = Column(
+        Text,
+        nullable=True
+    )
+    
+    # ========================================================================
+    # NOTATION (CRITICAL FIX)
+    # ========================================================================
     
     # CRITICAL FIX: Column name is 'notation' (NOT 'notation_type')
     # This matches the SQL schema and uses the diagram_notation ENUM type
-    notation = Column(String(50), nullable=False, index=True)
+    notation = Column(
+        String(50),
+        nullable=False,
+        index=True
+    )
     
-    # Notation-specific configuration (swimlane settings, sequence diagram config, etc.)
-    notation_config = Column(JSONB, nullable=False, default=dict, server_default='{}')
+    # ========================================================================
+    # FALKORDB GRAPH REFERENCE (STRATEGIC FIX)
+    # ========================================================================
+    
+    # STRATEGIC FIX: FalkorDB graph reference
+    # Each diagram gets its own isolated graph in FalkorDB
+    # Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
+    # Example: user_john_workspace_engineering_diagram_customer_order_er
+    # 
+    # This enables:
+    # - Complete isolation between diagrams
+    # - Easy deletion (delete diagram → delete its graph)
+    # - Clear 1:1 mapping (PostgreSQL diagram ↔ FalkorDB graph)
+    # - No mixing of entities from different diagrams
+    graph_name = Column(
+        String(500),
+        unique=True,
+        nullable=True,  # NULL until first sync to FalkorDB
+        index=True
+    )
+    
+    # ========================================================================
+    # DIAGRAM CONTENT AND CONFIGURATION
+    # ========================================================================
+    
+    # Notation-specific configuration (swimlanes, lifelines, sequence numbering, etc.)
+    notation_config = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default='{}'
+    )
     
     # Array of concept UUIDs visible in this diagram (from FalkorDB)
     # Diagrams can show a subset of the model's concepts
-    visible_concepts = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list, server_default='{}')
+    visible_concepts = Column(
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        default=list,
+        server_default='{}'
+    )
     
-    # Additional diagram settings (viewport, zoom, grid, style, etc.)
-    settings = Column(JSONB, nullable=False, default=dict, server_default='{}')
+    # Additional diagram settings (viewport, zoom, grid, style preferences, etc.)
+    settings = Column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default='{}'
+    )
+    
+    # ========================================================================
+    # DIAGRAM FLAGS
+    # ========================================================================
     
     # Is this the default diagram for the model?
-    is_default = Column(Boolean, default=False, nullable=False)
+    is_default = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        index=True
+    )
     
-    # Validation state
-    validation_errors = Column(JSONB, nullable=False, default=list, server_default='[]')
-    is_valid = Column(Boolean, default=True, nullable=False)
-    last_validated_at = Column(DateTime, nullable=True)
+    # ========================================================================
+    # VALIDATION STATE
+    # ========================================================================
     
-    # Soft delete support
-    deleted_at = Column(DateTime, nullable=True, index=True)
+    # Array of validation error objects from last validation run
+    validation_errors = Column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default='[]'
+    )
     
-    # Ownership and audit
+    # Whether the diagram passes all validation rules for its notation type
+    is_valid = Column(
+        Boolean,
+        default=True,
+        nullable=False,
+        index=True
+    )
+    
+    # Timestamp of last validation run
+    last_validated_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    
+    # ========================================================================
+    # SOFT DELETE
+    # ========================================================================
+    
+    deleted_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True
+    )
+    
+    # ========================================================================
+    # AUDIT TRAIL
+    # ========================================================================
+    
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
         index=True
     )
+    
     updated_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True
+        nullable=True
     )
     
-    # Timestamps
     created_at = Column(
-        DateTime,
-        nullable=False,
+        DateTime(timezone=True),
         default=datetime.utcnow,
+        nullable=False,
         index=True
     )
+    
     updated_at = Column(
-        DateTime,
-        nullable=False,
+        DateTime(timezone=True),
         default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        onupdate=datetime.utcnow,
+        nullable=False
     )
     
-    # Relationships
-    model = relationship("Model", back_populates="diagrams")
+    # ========================================================================
+    # RELATIONSHIPS
+    # ========================================================================
+    
+    # Relationship to parent model
+    model = relationship(
+        "Model",
+        back_populates="diagrams"
+    )
+    
+    # Relationship to layouts (diagram can have multiple layouts)
     layouts = relationship(
         "Layout",
         back_populates="diagram",
-        cascade="all, delete-orphan",
-        lazy="selectin"
+        cascade="all, delete-orphan"
     )
+    
+    # Relationship to creator user
     creator = relationship(
         "User",
         foreign_keys=[created_by],
         backref="created_diagrams"
     )
+    
+    # Relationship to updater user
     updater = relationship(
         "User",
         foreign_keys=[updated_by],
         backref="updated_diagrams"
     )
     
-    # Constraints
+    # ========================================================================
+    # CONSTRAINTS
+    # ========================================================================
+    
     __table_args__ = (
-        UniqueConstraint('model_id', 'name', 'deleted_at', name='uq_diagrams_model_name_not_deleted'),
-        CheckConstraint("char_length(trim(name)) >= 1 AND char_length(name) <= 255", name='ck_diagrams_name_length'),
+        CheckConstraint(
+            "LENGTH(TRIM(name)) >= 1 AND LENGTH(name) <= 255",
+            name="diagrams_name_check"
+        ),
     )
     
+    # ========================================================================
+    # PROPERTIES AND METHODS
+    # ========================================================================
+    
     def __repr__(self):
-        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation}')>"
+        return (
+            f"<Diagram(id={self.id}, name='{self.name}', "
+            f"notation='{self.notation}', graph_name='{self.graph_name}')>"
+        )
     
     @property
-    def is_deleted(self):
-        """Check if diagram has been soft-deleted"""
-        return self.deleted_at is not None
+    def nodes(self):
+        """
+        Get nodes from notation_config
+        
+        Returns list of node dictionaries from the React Flow format
+        """
+        return self.notation_config.get('nodes', []) if self.notation_config else []
     
     @property
-    def concept_count(self):
-        """Get the number of visible concepts in this diagram"""
-        return len(self.visible_concepts) if self.visible_concepts else 0
+    def edges(self):
+        """
+        Get edges from notation_config
+        
+        Returns list of edge dictionaries from the React Flow format
+        """
+        return self.notation_config.get('edges', []) if self.notation_config else []
     
     @property
-    def layout_count(self):
-        """Get the number of layouts for this diagram"""
-        return len(self.layouts) if self.layouts else 0
+    def viewport(self):
+        """
+        Get viewport settings from notation_config
+        
+        Returns viewport dictionary with x, y, zoom
+        """
+        default_viewport = {'x': 0, 'y': 0, 'zoom': 1}
+        return self.notation_config.get('viewport', default_viewport) if self.notation_config else default_viewport
     
     @property
-    def is_uml(self):
-        """Check if this is a UML diagram"""
-        return self.notation.startswith("UML_")
-    
-    @property
-    def is_bpmn(self):
-        """Check if this is a BPMN diagram"""
-        return self.notation == "BPMN"
-    
-    @property
-    def is_er(self):
-        """Check if this is an ER diagram"""
-        return self.notation == "ER"
-    
-    @property
-    def diagram_type_display(self):
-        """Get human-readable diagram type"""
-        type_names = {
-            "ER": "Entity-Relationship",
-            "UML_CLASS": "UML Class Diagram",
-            "UML_SEQUENCE": "UML Sequence Diagram",
-            "UML_ACTIVITY": "UML Activity Diagram",
-            "UML_STATE": "UML State Machine Diagram",
-            "UML_COMPONENT": "UML Component Diagram",
-            "UML_DEPLOYMENT": "UML Deployment Diagram",
-            "UML_PACKAGE": "UML Package Diagram",
-            "BPMN": "BPMN Process Diagram",
-        }
-        return type_names.get(self.notation, self.notation)
+    def is_synced_to_falkordb(self):
+        """
+        Check if diagram has been synced to FalkorDB
+        
+        Returns True if graph_name is set, False otherwise
+        """
+        return self.graph_name is not None and self.graph_name != ''
     
     def to_dict(self):
-        """Convert diagram to dictionary"""
+        """
+        Convert diagram to dictionary
+        
+        Useful for API responses and serialization
+        """
         return {
             'id': str(self.id),
             'model_id': str(self.model_id),
             'name': self.name,
             'description': self.description,
             'notation': self.notation,
+            'graph_name': self.graph_name,
             'notation_config': self.notation_config,
             'visible_concepts': [str(c) for c in self.visible_concepts] if self.visible_concepts else [],
             'settings': self.settings,
             'is_default': self.is_default,
-            'is_valid': self.is_valid,
             'validation_errors': self.validation_errors,
+            'is_valid': self.is_valid,
             'last_validated_at': self.last_validated_at.isoformat() if self.last_validated_at else None,
             'created_by': str(self.created_by),
             'updated_by': str(self.updated_by) if self.updated_by else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'is_deleted': self.is_deleted,
         }
+
+
+# ============================================================================
+# EXPORTS - Ensure NotationType is exported
+# ============================================================================
+
+__all__ = ['Diagram', 'NotationType']
