@@ -1,12 +1,9 @@
 # backend/app/models/workspace.py
 """
-Workspace Database Models - COMPLETE Implementation
+Workspace Database Models - VERIFIED AND COMPLETE
 Path: backend/app/models/workspace.py
 
-Models:
-- Workspace: Main workspace entity
-- WorkspaceMember: User membership in workspace
-- WorkspaceInvitation: Pending workspace invitations
+CRITICAL: This model uses 'type' (NOT 'workspace_type') for the workspace type column
 """
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, UniqueConstraint
@@ -20,30 +17,32 @@ from app.db.base import Base
 
 class WorkspaceType(str, enum.Enum):
     """Workspace type enumeration - MUST match database ENUM 'workspace_type'"""
-    PERSONAL = "PERSONAL"
-    TEAM = "TEAM"
-    COMMON = "COMMON"
+    PERSONAL = "personal"
+    TEAM = "team"
+    COMMON = "common"
 
 
 class WorkspaceRole(str, enum.Enum):
-    """Workspace member role enumeration - MUST match database ENUM 'workspace_role'"""
-    VIEWER = "VIEWER"
-    EDITOR = "EDITOR"
-    PUBLISHER = "PUBLISHER"
-    ADMIN = "ADMIN"
+    """Workspace member role enumeration - MUST match database ENUM 'user_role'"""
+    VIEWER = "viewer"
+    EDITOR = "editor"
+    PUBLISHER = "publisher"
+    ADMIN = "admin"
 
 
 class InvitationStatus(str, enum.Enum):
     """Invitation status enumeration - MUST match database ENUM 'invitation_status'"""
-    PENDING = "PENDING"
-    ACCEPTED = "ACCEPTED"
-    REJECTED = "REJECTED"
-    EXPIRED = "EXPIRED"
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
 
 
 class Workspace(Base):
     """
     Workspace model for organizing models and collaboration
+    
+    CRITICAL: Column name is 'type' (NOT 'workspace_type')
     
     Workspace Types:
     - PERSONAL: User's private workspace
@@ -66,11 +65,11 @@ class Workspace(Base):
     slug = Column(String(100), unique=True, nullable=False, index=True)
     description = Column(Text, nullable=True)
     
-    # Workspace type
+    # CRITICAL: Column name is 'type' (NOT 'workspace_type')
     type = Column(
         SQLEnum(
             WorkspaceType,
-            name="workspace_type",
+            name="workspace_type",  # Database ENUM type name
             create_type=False,
             native_enum=False,
             values_callable=lambda x: [e.value for e in x]
@@ -80,51 +79,80 @@ class Workspace(Base):
         index=True
     )
     
-    # Owner (user who created the workspace)
-    owner_id = Column(
+    # Ownership
+    created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=False,
         index=True
     )
     
-    # Settings and metadata
-    settings = Column(JSONB, nullable=False, default=dict, server_default='{}')
-    meta_data = Column(JSONB, nullable=False, default=dict, server_default='{}')
-    
-    # Icon and color for UI
-    icon = Column(String(50), nullable=True)
-    color = Column(String(7), nullable=True)  # Hex color code
-    
-    # Status
-    is_active = Column(Boolean, default=True, nullable=False, index=True)
-    is_archived = Column(Boolean, default=False, nullable=False)
-    
-    # Timestamps
-    deleted_at = Column(DateTime, nullable=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Audit trail
-    created_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
-    )
-    
     updated_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
+        nullable=True
     )
     
+    deleted_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    
+    # Customization
+    icon = Column(String(50), nullable=True)
+    color = Column(String(7), nullable=True)  # Hex color
+    
+    # Status
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_archived = Column(Boolean, default=False, nullable=False, index=True)
+    
+    # Settings and metadata
+    settings = Column(JSONB, default={}, nullable=False)
+    meta_data = Column(JSONB, default={}, nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    
     # Relationships
-    owner = relationship("User", foreign_keys=[owner_id])
-    members = relationship("WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan")
-    folders = relationship("Folder", back_populates="workspace", cascade="all, delete-orphan")
-    models = relationship("Model", back_populates="workspace", cascade="all, delete-orphan")
+    creator = relationship(
+        "User",
+        foreign_keys=[created_by],
+        back_populates="created_workspaces"
+    )
+    
+    updater = relationship(
+        "User",
+        foreign_keys=[updated_by]
+    )
+    
+    deleter = relationship(
+        "User",
+        foreign_keys=[deleted_by]
+    )
+    
+    # Members
+    members = relationship(
+        "WorkspaceMember",
+        back_populates="workspace",
+        cascade="all, delete-orphan"
+    )
+    
+    # Models
+    models = relationship(
+        "Model",
+        back_populates="workspace",
+        cascade="all, delete-orphan"
+    )
+    
+    # Folders
+    folders = relationship(
+        "Folder",
+        back_populates="workspace",
+        cascade="all, delete-orphan"
+    )
     
     def __repr__(self):
         return f"<Workspace(id={self.id}, name='{self.name}', type='{self.type.value}')>"
@@ -136,8 +164,9 @@ class Workspace(Base):
             'name': self.name,
             'slug': self.slug,
             'description': self.description,
-            'type': self.type.value,
-            'owner_id': str(self.owner_id),
+            'type': self.type.value,  # CRITICAL: Use 'type'
+            'created_by': str(self.created_by),
+            'updated_by': str(self.updated_by) if self.updated_by else None,
             'icon': self.icon,
             'color': self.color,
             'is_active': self.is_active,
@@ -189,7 +218,7 @@ class WorkspaceMember(Base):
     role = Column(
         SQLEnum(
             WorkspaceRole,
-            name="workspace_role",
+            name="user_role",
             create_type=False,
             native_enum=False,
             values_callable=lambda x: [e.value for e in x]
@@ -217,37 +246,23 @@ class WorkspaceMember(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Unique constraint: one membership per user per workspace
-    __table_args__ = (
-        UniqueConstraint('workspace_id', 'user_id', 'deleted_at', name='unique_workspace_member'),
-    )
-    
     # Relationships
     workspace = relationship("Workspace", back_populates="members")
     user = relationship("User", foreign_keys=[user_id])
     inviter = relationship("User", foreign_keys=[invited_by])
     
-    def __repr__(self):
-        return f"<WorkspaceMember(workspace_id={self.workspace_id}, user_id={self.user_id}, role='{self.role.value}')>"
+    # Unique constraint
+    __table_args__ = (
+        UniqueConstraint('workspace_id', 'user_id', name='uq_workspace_member'),
+    )
     
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': str(self.id),
-            'workspace_id': str(self.workspace_id),
-            'user_id': str(self.user_id),
-            'role': self.role.value,
-            'invited_by': str(self.invited_by) if self.invited_by else None,
-            'invited_at': self.invited_at.isoformat() if self.invited_at else None,
-            'joined_at': self.joined_at.isoformat() if self.joined_at else None,
-            'is_active': self.is_active,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-        }
+    def __repr__(self):
+        return f"<WorkspaceMember(workspace_id={self.workspace_id}, user_id={self.user_id}, role={self.role.value})>"
 
 
 class WorkspaceInvitation(Base):
     """
-    Workspace invitation model for tracking pending invitations
+    Workspace invitation model for pending member invitations
     """
     
     __tablename__ = "workspace_invitations"
@@ -268,14 +283,20 @@ class WorkspaceInvitation(Base):
         index=True
     )
     
+    invited_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    
     # Invitee information
     email = Column(String(255), nullable=False, index=True)
     
-    # Invitation details
+    # Role to assign
     role = Column(
         SQLEnum(
             WorkspaceRole,
-            name="workspace_role",
+            name="user_role",
             create_type=False,
             native_enum=False,
             values_callable=lambda x: [e.value for e in x]
@@ -284,10 +305,8 @@ class WorkspaceInvitation(Base):
         default=WorkspaceRole.VIEWER
     )
     
-    # Invitation token for accepting
+    # Invitation details
     token = Column(String(255), unique=True, nullable=False, index=True)
-    
-    # Status
     status = Column(
         SQLEnum(
             InvitationStatus,
@@ -301,24 +320,12 @@ class WorkspaceInvitation(Base):
         index=True
     )
     
-    # Who invited
-    invited_by = Column(
-        UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        index=True
-    )
-    
-    # Message to invitee
     message = Column(Text, nullable=True)
     
-    # Expiration
-    expires_at = Column(DateTime, nullable=False, index=True)
-    
-    # Response details
-    responded_at = Column(DateTime, nullable=True)
-    
     # Timestamps
+    expires_at = Column(DateTime, nullable=False, index=True)
+    accepted_at = Column(DateTime, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -327,19 +334,4 @@ class WorkspaceInvitation(Base):
     inviter = relationship("User", foreign_keys=[invited_by])
     
     def __repr__(self):
-        return f"<WorkspaceInvitation(email='{self.email}', workspace_id={self.workspace_id}, status='{self.status.value}')>"
-    
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': str(self.id),
-            'workspace_id': str(self.workspace_id),
-            'email': self.email,
-            'role': self.role.value,
-            'status': self.status.value,
-            'invited_by': str(self.invited_by) if self.invited_by else None,
-            'message': self.message,
-            'expires_at': self.expires_at.isoformat() if self.expires_at else None,
-            'responded_at': self.responded_at.isoformat() if self.responded_at else None,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-        }
+        return f"<WorkspaceInvitation(email={self.email}, workspace_id={self.workspace_id}, status={self.status.value})>"

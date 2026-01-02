@@ -1,12 +1,18 @@
 # backend/app/models/user.py
 """
-User Database Model - COMPLETE WITH RELATIONSHIPS
+User Database Model - COMPLETE with proper created_by/updated_by handling
 Path: backend/app/models/user.py
+
+CRITICAL FIXES:
+- Uses password_hash (matches database column)
+- Uses UserRole enum (matches database ENUM type)
+- Properly handles created_by/updated_by (let trigger set them)
+- Computed property for is_superuser
 """
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, Text, Enum as SQLEnum, ForeignKey, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session
 import uuid
 import enum
 
@@ -15,15 +21,20 @@ from app.db.base import Base
 
 class UserRole(str, enum.Enum):
     """User role enumeration - MUST match database ENUM 'user_role'"""
-    ADMIN = "admin"
-    USER = "user"
+    ADMIN = "ADMIN"
+    USER = "USER"
 
 
 class User(Base):
     """
     User model for authentication and user management
     
-    CRITICAL: Must EXACTLY match database schema
+    CRITICAL: Must EXACTLY match database schema in 01-users.sql
+    
+    Key Points:
+    1. Column name is 'password_hash' (NOT hashed_password)
+    2. Role uses SQLEnum to match PostgreSQL ENUM type
+    3. created_by/updated_by are handled by database trigger
     """
     
     __tablename__ = "users"
@@ -49,7 +60,7 @@ class User(Base):
         SQLEnum(
             UserRole,
             name="user_role",
-            create_type=False,
+            create_type=False,  # Type already exists in database
             native_enum=False,
             values_callable=lambda x: [e.value for e in x]
         ),
@@ -76,7 +87,8 @@ class User(Base):
     preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
     settings = Column(JSONB, nullable=False, default=dict, server_default='{}')
     
-    # Audit trail fields
+    # CRITICAL: Audit trail fields - database trigger handles these automatically
+    # DO NOT set these manually during user creation - let the trigger handle it
     created_by = Column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -90,19 +102,6 @@ class User(Base):
         nullable=True,
         index=True
     )
-    
-    # ============================================================================
-    # CRITICAL FIX: Relationships for back_populates
-    # ============================================================================
-    
-    # This relationship is REQUIRED by Workspace.creator back_populates
-    created_workspaces = relationship(
-        "Workspace",
-        foreign_keys="Workspace.created_by",
-        back_populates="creator"
-    )
-    
-    # ============================================================================
     
     @property
     def is_superuser(self) -> bool:
@@ -130,11 +129,14 @@ class User(Base):
         }
 
 
+# Event listener to ensure created_by/updated_by are NOT set before insert
+# Let the database trigger handle these fields
 @event.listens_for(User, 'before_insert')
 def receive_before_insert(mapper, connection, target):
     """
     Before insert event - ensure created_by/updated_by are None
     so the database trigger can set them properly
     """
+    # Force these to None so trigger handles them
     target.created_by = None
     target.updated_by = None

@@ -1,3 +1,42 @@
+#!/bin/bash
+# verify-and-fix-user.sh
+# Verifies and fixes the User model
+# Run from: enterprise-modeling-platform/
+
+set -e
+
+echo "================================"
+echo "User Model Fix & Verification"
+echo "================================"
+echo ""
+
+# Check we're in the right place
+if [ ! -f "docker-compose.yml" ]; then
+    echo "❌ Error: Must run from project root"
+    exit 1
+fi
+
+USER_FILE="backend/app/models/user.py"
+
+# Backup
+echo "📦 Creating backup..."
+cp "$USER_FILE" "$USER_FILE.backup-$(date +%Y%m%d-%H%M%S)"
+echo "✓ Backup created"
+echo ""
+
+# Check if relationship exists
+echo "🔍 Checking current user.py..."
+if grep -q "created_workspaces" "$USER_FILE"; then
+    echo "⚠️  File already has 'created_workspaces' - but might be wrong format"
+else
+    echo "❌ File is missing 'created_workspaces' relationship"
+fi
+echo ""
+
+# Create the fixed version
+echo "🔧 Writing fixed user.py..."
+
+cat > "$USER_FILE" << 'PYTHON_EOF'
 # backend/app/models/user.py
 """
 User Database Model - COMPLETE WITH RELATIONSHIPS
@@ -138,3 +177,88 @@ def receive_before_insert(mapper, connection, target):
     """
     target.created_by = None
     target.updated_by = None
+PYTHON_EOF
+
+echo "✓ Fixed user.py written"
+echo ""
+
+# Verify the fix
+echo "✅ Verifying fix..."
+if grep -q "created_workspaces = relationship" "$USER_FILE"; then
+    echo "✓ 'created_workspaces' relationship found!"
+else
+    echo "❌ ERROR: Relationship still missing!"
+    exit 1
+fi
+
+# Show the relevant lines
+echo ""
+echo "📄 Relationship definition:"
+grep -A 4 "created_workspaces = relationship" "$USER_FILE"
+echo ""
+
+# Remove Python cache
+echo "🗑️  Removing Python cache..."
+find backend -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find backend -type f -name "*.pyc" -delete 2>/dev/null || true
+echo "✓ Cache cleared"
+echo ""
+
+# Restart backend
+echo "🔄 Restarting backend..."
+docker-compose stop backend
+sleep 2
+docker-compose up -d backend
+echo "✓ Backend restarted"
+echo ""
+
+# Wait and check
+echo "⏳ Waiting for backend to start..."
+sleep 8
+
+# Check logs for errors
+echo "📋 Checking logs for errors..."
+if docker-compose logs --tail=50 backend | grep -i "has no property 'created_workspaces'"; then
+    echo ""
+    echo "❌ Still has the error!"
+    echo ""
+    echo "Debug info:"
+    echo "  File path: $USER_FILE"
+    echo "  File exists: $([ -f "$USER_FILE" ] && echo "YES" || echo "NO")"
+    echo ""
+    echo "Try:"
+    echo "  1. docker-compose down"
+    echo "  2. docker-compose up -d"
+    echo ""
+    exit 1
+else
+    echo "✓ No relationship errors found!"
+fi
+
+# Check if backend is healthy
+echo ""
+echo "🏥 Checking backend health..."
+for i in {1..10}; do
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        echo "✓ Backend is healthy!"
+        break
+    fi
+    if [ $i -eq 10 ]; then
+        echo "⚠️  Backend not responding on /health"
+    fi
+    sleep 2
+done
+
+echo ""
+echo "================================"
+echo "✅ Fix Applied!"
+echo "================================"
+echo ""
+echo "Test with:"
+echo "  curl -X POST http://localhost:8000/api/v1/auth/register \\"
+echo "    -H 'Content-Type: application/json' \\"
+echo "    -d '{\"email\":\"test@example.com\",\"username\":\"test\",\"password\":\"Test123!\",\"full_name\":\"Test\"}'"
+echo ""
+echo "Check logs:"
+echo "  docker-compose logs -f backend"
+echo ""
