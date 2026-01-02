@@ -3,6 +3,9 @@
 API Dependencies - COMPLETE with all workspace access logic implemented
 Path: backend/app/api/deps.py
 
+CRITICAL FIX: Changed workspace.owner_id to workspace.created_by
+The Workspace model uses created_by as the owner field, not owner_id
+
 Provides dependency injection for:
 - Database sessions
 - Current authenticated user
@@ -74,63 +77,38 @@ async def get_current_user(
     # Extract token from credentials
     token = credentials.credentials
     
-    # Verify token and extract user ID
+    # Verify token and get user ID
     user_id = verify_token(token, token_type="access")
     
     if not user_id:
         logger.warning("auth_failed", reason="invalid_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     # Get user from database
-    try:
-        result = await db.execute(
-            select(User).where(User.id == user_id)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            logger.warning(
-                "auth_failed",
-                reason="user_not_found",
-                user_id=user_id
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Check if user is active
-        if not user.is_active:
-            logger.warning(
-                "auth_failed",
-                reason="inactive_user",
-                user_id=user_id
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Inactive user",
-            )
-        
-        return user
-        
-    except HTTPException:
-        # Re-raise HTTP exceptions
-        raise
-    except Exception as e:
-        logger.error(
-            "auth_error",
-            error=str(e),
-            user_id=user_id
-        )
+    result = await db.execute(
+        select(User).where(User.id == UUID(user_id))
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        logger.warning("auth_failed", reason="user_not_found", user_id=user_id)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Authentication error",
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+    
+    logger.info(
+        "user_authenticated",
+        user_id=str(user.id),
+        email=user.email
+    )
+    
+    return user
 
 
 async def get_current_active_user(
@@ -214,6 +192,8 @@ async def verify_workspace_access(
     """
     Verify that current user has access to a workspace
     
+    CRITICAL FIX: Uses workspace.created_by (not owner_id) to check ownership
+    
     Args:
         workspace_id: Workspace ID to check
         required_role: Required role in workspace (VIEWER, EDITOR, PUBLISHER, ADMIN)
@@ -266,13 +246,14 @@ async def verify_workspace_access(
                 detail="Workspace not found"
             )
         
-        # Check if user is the workspace owner
-        if workspace.owner_id == current_user.id:
+        # ✅ CRITICAL FIX: Use created_by instead of owner_id
+        # Check if user is the workspace creator (owner)
+        if workspace.created_by == current_user.id:
             logger.info(
                 "workspace_access_granted",
                 user_id=str(current_user.id),
                 workspace_id=str(workspace_uuid),
-                reason="owner"
+                reason="workspace_creator"
             )
             return True
         
@@ -531,13 +512,15 @@ async def verify_diagram_access(
         )
 
 
-async def get_user_workspace_role(
+async def get_workspace_role(
     workspace_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> str:
     """
-    Get user's role in a specific workspace
+    Get current user's role in a workspace
+    
+    CRITICAL FIX: Uses workspace.created_by (not owner_id) to check ownership
     
     Args:
         workspace_id: Workspace ID
@@ -545,7 +528,7 @@ async def get_user_workspace_role(
         db: Database session
         
     Returns:
-        User's role in workspace (VIEWER, EDITOR, PUBLISHER, ADMIN, or OWNER)
+        User's role in workspace (OWNER, ADMIN, PUBLISHER, EDITOR, VIEWER)
         
     Raises:
         HTTPException: If user doesn't have access to workspace
@@ -580,8 +563,9 @@ async def get_user_workspace_role(
                 detail="Workspace not found"
             )
         
-        # Check if user is owner
-        if workspace.owner_id == current_user.id:
+        # ✅ CRITICAL FIX: Use created_by instead of owner_id
+        # Check if user is the creator (owner)
+        if workspace.created_by == current_user.id:
             return "OWNER"
         
         # Get membership

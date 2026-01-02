@@ -7,7 +7,9 @@ CRITICAL FIXES:
 - Uses password_hash (matches database column)
 - Uses UserRole enum properly
 - Updates last_login_at on successful login
-- Does NOT set created_by/updated_by during registration (trigger handles it)
+- Does NOT set created_by/updated_by during user registration (trigger handles it)
+- REMOVED owner_id from Workspace creation (field doesn't exist in model)
+- Uses created_by for workspace ownership tracking
 - Proper error handling and logging
 """
 from datetime import datetime, timedelta
@@ -54,6 +56,8 @@ async def register(
     - Uses UserRole enum (not string)
     - Does NOT set created_by/updated_by (trigger handles it)
     - Creates personal workspace for new user
+    - REMOVED owner_id from Workspace (doesn't exist in model)
+    - Uses created_by for workspace ownership
     
     Args:
         user_data: User registration data (email, password, optional username)
@@ -113,14 +117,15 @@ async def register(
         await db.flush()  # Flush to get user.id without committing
         
         # Create personal workspace for the user
+        # ✅ CRITICAL FIX: Removed owner_id (doesn't exist in Workspace model)
+        # The workspace uses created_by as the owner field
         personal_workspace = Workspace(
             name=f"{username}'s Personal Workspace",
             slug=f"{username}-personal",
             type=WorkspaceType.PERSONAL,
-            owner_id=user.id,
             is_active=True,
-            created_by=user.id,  # Set explicitly for workspace
-            updated_by=user.id   # Set explicitly for workspace
+            created_by=user.id,
+            updated_by=user.id
         )
         
         db.add(personal_workspace)
@@ -147,7 +152,7 @@ async def register(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed. Please try again.",
+            detail="Registration failed. Please try again."
         )
 
 
@@ -157,32 +162,31 @@ async def login(
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
-    User login with email and password
+    Login user and return JWT tokens
     
     CRITICAL FIXES:
     - Uses password_hash (not hashed_password)
     - Updates last_login_at on successful login
-    - Proper error handling
+    - Proper error messages for security
     
     Args:
-        user_data: Login credentials (email, password)
+        user_data: User login credentials (email, password)
         db: Database session
         
     Returns:
-        JWT access and refresh tokens
+        Access and refresh JWT tokens
         
     Raises:
-        HTTPException: If credentials are invalid or user is inactive
+        HTTPException: If credentials are invalid or account is inactive
     """
     try:
-        # Find user by email
+        # Get user by email
         result = await db.execute(
             select(User).where(User.email == user_data.email)
         )
         user = result.scalar_one_or_none()
         
         # Verify user exists and password is correct
-        # CRITICAL: Use password_hash, not hashed_password
         if not user or not verify_password(user_data.password, user.password_hash):
             logger.warning(
                 "login_failed",
@@ -192,7 +196,6 @@ async def login(
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"},
             )
         
         # Check if user is active
@@ -212,23 +215,14 @@ async def login(
         user.last_login_at = datetime.utcnow()
         await db.commit()
         
-        # Create access token with user ID as subject
-        access_token = create_access_token(
-            subject=str(user.id),
-            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        )
-        
-        # Create refresh token
-        refresh_token = create_refresh_token(
-            subject=str(user.id),
-            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
+        # Create access and refresh tokens
+        access_token = create_access_token(subject=str(user.id))
+        refresh_token = create_refresh_token(subject=str(user.id))
         
         logger.info(
             "user_logged_in",
             user_id=str(user.id),
-            email=user.email,
-            role=user.role.value
+            email=user.email
         )
         
         return {
@@ -238,46 +232,43 @@ async def login(
         }
         
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error("login_failed", error=str(e))
+        logger.error("login_error", error=str(e))
         import traceback
         traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed. Please try again.",
+            detail="Login failed. Please try again."
         )
 
 
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
-    token_data: RefreshToken,
+    refresh_data: RefreshToken,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
     Refresh access token using refresh token
     
     Args:
-        token_data: Refresh token
+        refresh_data: Refresh token
         db: Database session
         
     Returns:
-        New JWT access and refresh tokens
+        New access and refresh tokens
         
     Raises:
-        HTTPException: If refresh token is invalid or expired
+        HTTPException: If refresh token is invalid or user not found
     """
     try:
-        # Decode and validate refresh token
-        payload = decode_token(token_data.refresh_token)
-        user_id: str = payload.get("sub")
+        # Decode and verify refresh token
+        user_id = decode_token(refresh_data.refresh_token, token_type="refresh")
         
-        if user_id is None:
+        if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token",
-                headers={"WWW-Authenticate": "Bearer"},
             )
         
         # Get user from database
@@ -288,9 +279,8 @@ async def refresh_token(
         
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
+                status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
             )
         
         if not user.is_active:
@@ -300,20 +290,12 @@ async def refresh_token(
             )
         
         # Create new tokens
-        access_token = create_access_token(
-            subject=str(user.id),
-            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        )
-        
-        new_refresh_token = create_refresh_token(
-            subject=str(user.id),
-            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
+        access_token = create_access_token(subject=str(user.id))
+        new_refresh_token = create_refresh_token(subject=str(user.id))
         
         logger.info(
             "token_refreshed",
-            user_id=str(user.id),
-            email=user.email
+            user_id=str(user.id)
         )
         
         return {
@@ -325,11 +307,10 @@ async def refresh_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("token_refresh_failed", error=str(e))
+        logger.error("token_refresh_error", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not refresh token",
-            headers={"WWW-Authenticate": "Bearer"},
         )
 
 
@@ -344,8 +325,13 @@ async def get_current_user_info(
         current_user: Current authenticated user
         
     Returns:
-        User information
+        Current user data
     """
+    logger.info(
+        "user_info_retrieved",
+        user_id=str(current_user.id)
+    )
+    
     return current_user
 
 
@@ -356,8 +342,9 @@ async def logout(
     """
     Logout current user
     
-    Note: In a stateless JWT setup, logout is primarily client-side
-    (removing tokens from storage). This endpoint is for logging purposes.
+    Note: In a stateless JWT implementation, logout is handled client-side
+    by removing the tokens. This endpoint exists for logging purposes and
+    future token blacklisting implementation.
     
     Args:
         current_user: Current authenticated user
@@ -367,8 +354,7 @@ async def logout(
     """
     logger.info(
         "user_logged_out",
-        user_id=str(current_user.id),
-        email=current_user.email
+        user_id=str(current_user.id)
     )
     
     return {"message": "Successfully logged out"}

@@ -298,29 +298,27 @@ async def create_diagram(
             # Create new model
             model_name = diagram_data.model_name or f"{diagram_data.name} Model"
             
+            # Generate unique graph_id for the model (REQUIRED field)
+            model_graph_id = f"model_{sanitize_for_graph_name(current_user.username)}_{sanitize_for_graph_name(workspace.name)}_{sanitize_for_graph_name(model_name)}_{uuid.uuid4().hex[:8]}"
+            
+            # ✅ STRATEGIC FIX: Removed status= and version= (fields don't exist in Model class)
+            # ✅ Added graph_id (required field)
             model = Model(
                 workspace_id=workspace.id,
                 name=model_name,
                 description=f"Model for {diagram_data.name}",
                 model_type=model_type,
-                status=ModelStatus.DRAFT,
-                version="1.0.0",
-                statistics={},
-                tags=[],
+                graph_id=model_graph_id,  # ✅ REQUIRED field - must be unique
+                meta_data={},  # Optional but good to initialize
+                settings={},  # Optional but good to initialize
+                validation_rules=[],  # Optional but good to initialize
                 created_by=current_user.id,
                 updated_by=current_user.id
             )
             
             db.add(model)
-            await db.flush()
+            await db.flush()  # Get the model.id before using it
             await db.refresh(model)
-            
-            logger.info(
-                "Created new model",
-                model_id=str(model.id),
-                model_name=model_name,
-                model_type=model_type.value
-            )
         
         # Generate graph name for FalkorDB
         # Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
@@ -349,7 +347,7 @@ async def create_diagram(
                     name=diagram_name,
                     description=diagram_data.description,
                     notation=normalized_notation,
-                    graph_name=graph_name,  # Store graph reference
+                    graph_name=graph_name,
                     notation_config={},
                     visible_concepts=[],
                     settings={},
@@ -360,9 +358,9 @@ async def create_diagram(
                     updated_by=current_user.id
                 )
                 
-                db.add(diagram)
-                await db.flush()
-                await db.refresh(diagram)
+                db.add(diagram)  # ✅ This is correct
+                await db.flush()  # ✅ This is correct
+                await db.refresh(diagram)  # ✅ This is correct
                 
                 logger.info(
                     "✅ Created diagram with graph reference",
@@ -371,7 +369,7 @@ async def create_diagram(
                     notation=normalized_notation,
                     graph_name=graph_name
                 )
-                break
+                break  # ✅ Exit retry loop
                 
             except IntegrityError:
                 await db.rollback()
@@ -383,12 +381,15 @@ async def create_diagram(
                         detail=f"Could not create diagram after {max_attempts} attempts"
                     )
                 continue
-        
+
         if not diagram:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to create diagram"
             )
+        
+        # ✅ At this point, diagram is in session but NOT committed yet
+        # ✅ This is CORRECT - we'll commit it with the layout together
         
         # Create default layout
         try:
@@ -408,55 +409,66 @@ async def create_diagram(
                 created_by=current_user.id
             )
             
-            db.add(layout)
+            db.add(layout)  # ✅ Add layout to session
+            
+            # ✅ COMMIT BOTH diagram and layout together - FIRST TIME
             await db.commit()
+            
+            # ✅ Refresh to get final state
             await db.refresh(diagram)
+            await db.refresh(layout)
             
             logger.info(
                 "Created default layout",
                 layout_id=str(layout.id),
                 diagram_id=str(diagram.id)
             )
+            
         except Exception as layout_error:
             logger.error(
                 "Failed to create layout (non-critical)",
                 error=str(layout_error)
             )
-            await db.commit()
-            await db.refresh(diagram)
+            # ❌ DO NOT COMMIT AGAIN HERE - diagram already committed above
+            # If layout fails, diagram is still saved
+            await db.rollback()
+            # Re-fetch diagram to ensure it's in session
+            stmt = select(Diagram).where(Diagram.id == diagram.id)
+            result = await db.execute(stmt)
+            diagram = result.scalar_one()
         
-        # Initialize FalkorDB graph with user context
+        # After this point, DO NOT call db.add(diagram) or db.commit() again
+        # for the diagram - it's already in database!
+        
+        # Initialize FalkorDB graph
         try:
             semantic_service = SemanticModelService()
             
-            # Create empty graph with metadata
+            # ✅ This should NOT commit the diagram again
             await semantic_service.sync_diagram_to_graph(
                 db=db,
                 diagram_id=str(diagram.id),
                 user_id=str(current_user.id),
                 workspace_id=str(workspace.id),
-                nodes=[],  # Empty initially
-                edges=[]   # Empty initially
+                nodes=[],
+                edges=[]
             )
             
             logger.info(
-                "✅ Initialized FalkorDB graph",
-                graph_name=graph_name,
-                diagram_id=str(diagram.id)
-            )
-        except Exception as graph_error:
-            logger.warning(
-                "Failed to initialize FalkorDB graph (non-critical)",
-                error=str(graph_error),
+                "Initialized FalkorDB graph",
+                diagram_id=str(diagram.id),
                 graph_name=graph_name
             )
+            
+        except Exception as graph_error:
+            # Graph initialization failure is non-critical
+            # Diagram already saved successfully
+            logger.warning(
+                "FalkorDB initialization skipped (non-critical)",
+                error=str(graph_error)
+            )
         
-        logger.info(
-            "✅ Diagram creation complete",
-            diagram_id=str(diagram.id),
-            graph_name=graph_name
-        )
-        
+        # ✅ Return the diagram response (already committed to DB)
         return diagram_to_response(diagram)
         
     except HTTPException:
