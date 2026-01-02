@@ -1,5 +1,5 @@
 // frontend/src/components/diagram/DiagramCanvas/DiagramCanvas.tsx
-// FIXED: Removed individual sync calls, added auto-save for entire diagram
+// COMPLETE IMPLEMENTATION - Fixed TypeScript errors
 // Path: frontend/src/components/diagram/DiagramCanvas/DiagramCanvas.tsx
 
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
@@ -16,8 +16,12 @@ import ReactFlow, {
   Panel,
   NodeTypes,
   EdgeTypes,
+  ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+
+// Import API client - FIXED: Use this instead of manual URL construction
+import { apiClient } from '../../../services/api/client';
 
 // Import toolbar
 import { DiagramToolbar } from '../DiagramToolbar/DiagramToolbar';
@@ -53,7 +57,7 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId?: string; edgeId?: string } | null>(null);
   const [maxZIndex, setMaxZIndex] = useState(1);
-  const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
+  const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   
@@ -190,35 +194,26 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
     hasChangesRef.current = true;
   }, []);
 
-  // Load diagram data from backend
+  // Load diagram data from backend - FIXED: Use apiClient
   const loadDiagramData = async () => {
     try {
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/diagrams/${diagramId}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-          }
-        }
-      );
+      const response = await apiClient.get(`/diagrams/${diagramId}`);
+      const data = response.data;
       
-      if (response.ok) {
-        const data = await response.json();
-        // The backend stores nodes and edges in the diagram
-        if (data.nodes && Array.isArray(data.nodes)) {
-          setNodes(data.nodes);
-        }
-        if (data.edges && Array.isArray(data.edges)) {
-          setEdges(data.edges);
-        }
-        console.log('Diagram loaded:', data);
+      // The backend stores nodes and edges in the diagram
+      if (data.nodes && Array.isArray(data.nodes)) {
+        setNodes(data.nodes);
       }
+      if (data.edges && Array.isArray(data.edges)) {
+        setEdges(data.edges);
+      }
+      console.log('Diagram loaded:', data);
     } catch (error) {
       console.error('Failed to load diagram:', error);
     }
   };
 
-  // Save entire diagram to backend
+  // Save entire diagram to backend - FIXED: Use apiClient
   const saveDiagram = async () => {
     if (isSaving) return;
     
@@ -244,29 +239,19 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
         viewport: reactFlowInstance?.getViewport() || { x: 0, y: 0, zoom: 1 },
       };
 
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL}/api/v1/diagrams/${diagramId}`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`
-          },
-          body: JSON.stringify({
-            notation_config: diagramData,
-          })
-        }
-      );
+      const response = await apiClient.patch(`/diagrams/${diagramId}`, {
+        notation_config: diagramData,
+      });
 
-      if (response.ok) {
+      if (response.status === 200) {
         hasChangesRef.current = false;
         setLastSaved(new Date());
         console.log('Diagram saved successfully');
       } else {
-        console.error('Failed to save diagram:', response.statusText);
+        console.error('Failed to save diagram');
       }
     } catch (error) {
-      console.error('Failed to save diagram:', error);
+      console.error('Error saving diagram:', error);
     } finally {
       setIsSaving(false);
     }
@@ -306,8 +291,14 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  // Handle connection
+  // Handle connection - FIXED: Type guard for source and target
   const onConnect = useCallback((params: Connection) => {
+    // FIXED: Add type guard to ensure source and target are not null
+    if (!params.source || !params.target) {
+      console.warn('Connection missing source or target');
+      return;
+    }
+
     // Determine edge type based on notation
     let edgeType = 'default';
     let edgeData: any = {};
@@ -341,9 +332,13 @@ const DiagramCanvas: React.FC<DiagramCanvasProps> = ({ modelId, diagramId, notat
       };
     }
 
-    const newEdge = {
-      ...params,
+    // FIXED: Properly typed edge with non-null source and target
+    const newEdge: Edge = {
       id: `edge-${Date.now()}`,
+      source: params.source,
+      target: params.target,
+      sourceHandle: params.sourceHandle,
+      targetHandle: params.targetHandle,
       type: edgeType,
       data: edgeData
     };
