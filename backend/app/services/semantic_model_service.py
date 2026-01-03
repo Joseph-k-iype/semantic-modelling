@@ -1,17 +1,16 @@
 # backend/app/services/semantic_model_service.py
 """
-Semantic Model Service - CORRECT ARCHITECTURE
+Semantic Model Service - COMPLETE FIX
 Path: backend/app/services/semantic_model_service.py
 
-CRITICAL ARCHITECTURE FIX:
-- One graph per diagram (not per user+model)
-- Graph name format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
-- Each node/edge has user_id property
-- Graph name stored in PostgreSQL diagram table
-- Complete isolation between diagrams
+CRITICAL FIXES:
+1. Never update graph_name if already set - prevents unique constraint violations
+2. Proper session rollback on errors
+3. Generate graph_name should be used only once during creation
 """
 from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 import structlog
 import json
@@ -54,36 +53,44 @@ class SemanticModelService:
         self,
         username: str,
         workspace_name: str,
-        diagram_name: str
+        diagram_name: str,
+        add_random_suffix: bool = True
     ) -> str:
         """
         Generate unique graph name for a diagram
         
         CRITICAL: One graph per diagram
-        Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}
+        Format: user_{username}_workspace_{workspace}_diagram_{diagram_name}_{random}
         
-        Example: user_john_workspace_engineering_diagram_customer_order_er
+        Example: user_john_workspace_engineering_diagram_customer_order_er_a1b2c3d4
         
         Args:
             username: Username
             workspace_name: Workspace name
             diagram_name: Diagram name
+            add_random_suffix: Whether to add random suffix (default True for uniqueness)
             
         Returns:
             Sanitized graph name
         """
+        import uuid
+        
         safe_username = self._sanitize_name_component(username)
         safe_workspace = self._sanitize_name_component(workspace_name)
         safe_diagram = self._sanitize_name_component(diagram_name)
         
-        graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}"
+        if add_random_suffix:
+            graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}_{uuid.uuid4().hex[:8]}"
+        else:
+            graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}"
         
         logger.info(
             "Generated graph name",
             username=username,
             workspace=workspace_name,
             diagram=diagram_name,
-            graph_name=graph_name
+            graph_name=graph_name,
+            with_random_suffix=add_random_suffix
         )
         
         return graph_name
@@ -102,7 +109,7 @@ class SemanticModelService:
         
         CRITICAL ARCHITECTURE:
         - Creates one graph per diagram
-        - Stores graph name in PostgreSQL diagram table
+        - NEVER updates graph_name if already set (prevents unique constraint violations)
         - Adds user_id to all nodes and edges
         - Uses actual entity/class names for nodes
         - Uses relationship names and cardinality for edges
@@ -158,65 +165,94 @@ class SemanticModelService:
                 stats["errors"].append(error_msg)
                 return stats
             
-            # Get workspace
-            result = await db.execute(
-                select(Workspace).where(Workspace.id == workspace_id)
-            )
-            workspace = result.scalar_one_or_none()
-            
-            if not workspace:
-                error_msg = f"Workspace {workspace_id} not found"
-                logger.error(error_msg)
-                stats["errors"].append(error_msg)
-                return stats
-            
-            # Get user
-            result = await db.execute(
-                select(User).where(User.id == user_id)
-            )
-            user = result.scalar_one_or_none()
-            
-            if not user:
-                error_msg = f"User {user_id} not found"
-                logger.error(error_msg)
-                stats["errors"].append(error_msg)
-                return stats
-            
-            # CRITICAL: Generate graph name based on diagram
-            graph_name = self.generate_graph_name(
-                user.username,
-                workspace.name,
-                diagram.name
-            )
-            
-            # CRITICAL: Update diagram with graph_name if not set
-            if diagram.graph_name != graph_name:
-                diagram.graph_name = graph_name
-                await db.commit()
+            # CRITICAL FIX: Use existing graph_name if already set
+            # Never recalculate to avoid unique constraint violations
+            if diagram.graph_name:
+                graph_name = diagram.graph_name
                 logger.info(
-                    "Updated diagram with graph name",
+                    "Using existing graph_name from diagram",
                     diagram_id=diagram_id,
                     graph_name=graph_name
                 )
+            else:
+                # Only generate if not set (shouldn't happen after creation)
+                result = await db.execute(
+                    select(Workspace).where(Workspace.id == workspace_id)
+                )
+                workspace = result.scalar_one_or_none()
+                
+                result = await db.execute(
+                    select(User).where(User.id == user_id)
+                )
+                user = result.scalar_one_or_none()
+                
+                if not workspace or not user:
+                    error_msg = "Workspace or user not found"
+                    logger.error(error_msg)
+                    stats["errors"].append(error_msg)
+                    return stats
+                
+                # Generate graph name with random suffix for uniqueness
+                graph_name = self.generate_graph_name(
+                    user.username,
+                    workspace.name,
+                    diagram.name,
+                    add_random_suffix=True
+                )
+                
+                # CRITICAL FIX: Update diagram with graph_name ONLY if not already set
+                # Use proper error handling to prevent session corruption
+                try:
+                    diagram.graph_name = graph_name
+                    await db.commit()
+                    await db.refresh(diagram)
+                    logger.info(
+                        "Set diagram graph_name for first time",
+                        diagram_id=diagram_id,
+                        graph_name=graph_name
+                    )
+                except IntegrityError as ie:
+                    # CRITICAL: Rollback session on integrity error
+                    await db.rollback()
+                    error_msg = f"Failed to set graph_name: {str(ie)}"
+                    logger.error(
+                        "Integrity error setting graph_name",
+                        error=error_msg,
+                        diagram_id=diagram_id
+                    )
+                    stats["errors"].append(error_msg)
+                    return stats
+                except Exception as e:
+                    await db.rollback()
+                    error_msg = f"Failed to update diagram: {str(e)}"
+                    logger.error(error_msg)
+                    stats["errors"].append(error_msg)
+                    return stats
             
             stats["graph_name"] = graph_name
             stats["falkordb_available"] = True
-            stats["falkordb_connected"] = True
+            stats["falkordb_connected"] = self.graph_client.is_connected()
             
-            # Process nodes with user_id
+            # Initialize graph if it doesn't exist
+            try:
+                self.graph_client.init_graph(graph_name)
+                logger.info(f"Initialized graph: {graph_name}")
+            except Exception as e:
+                logger.warning(f"Graph initialization warning: {e}")
+            
+            # Get diagram type for node/edge extraction
+            diagram_type = diagram.notation if hasattr(diagram, 'notation') else "ER"
+            
+            # Sync nodes
             for node in nodes:
                 try:
-                    node_id = node.get("id")
-                    if not node_id:
-                        continue
-                    
-                    created = self._sync_node_to_concept(
-                        graph_name,
-                        node,
-                        diagram.notation,
-                        user_id=str(user_id),
-                        workspace_id=str(workspace_id),
-                        diagram_id=str(diagram_id),
+                    created = await self._sync_node_to_graph(
+                        graph_name=graph_name,
+                        node=node,
+                        diagram_type=diagram_type,
+                        user_id=user_id,
+                        workspace_id=workspace_id,
+                        diagram_id=diagram_id,
                         diagram_name=diagram.name
                     )
                     
@@ -226,167 +262,111 @@ class SemanticModelService:
                         stats["nodes_updated"] += 1
                         
                 except Exception as e:
-                    error_msg = f"Failed to sync node {node.get('id')}: {str(e)}"
+                    error_msg = f"Failed to sync node {node.get('id', 'unknown')}: {str(e)}"
                     logger.error(error_msg)
                     stats["errors"].append(error_msg)
             
-            # Process edges with user_id
+            # Sync edges
             for edge in edges:
                 try:
-                    edge_id = edge.get("id")
-                    if not edge_id:
-                        continue
-                    
-                    success = self._sync_edge_to_relationship(
-                        graph_name,
-                        edge,
-                        diagram.notation,
-                        user_id=str(user_id),
-                        workspace_id=str(workspace_id),
-                        diagram_id=str(diagram_id)
+                    success = await self._sync_edge_to_graph(
+                        graph_name=graph_name,
+                        edge=edge,
+                        diagram_type=diagram_type,
+                        user_id=user_id,
+                        workspace_id=workspace_id,
+                        diagram_id=diagram_id
                     )
                     
                     if success:
                         stats["edges_created"] += 1
-                    
+                        
                 except Exception as e:
-                    error_msg = f"Failed to sync edge {edge.get('id')}: {str(e)}"
+                    error_msg = f"Failed to sync edge {edge.get('id', 'unknown')}: {str(e)}"
                     logger.error(error_msg)
                     stats["errors"].append(error_msg)
             
             logger.info(
-                "✅ Diagram synced to FalkorDB",
+                "Diagram sync completed",
                 diagram_id=diagram_id,
                 graph_name=graph_name,
                 nodes_created=stats["nodes_created"],
                 nodes_updated=stats["nodes_updated"],
-                edges_created=stats["edges_created"]
+                edges_created=stats["edges_created"],
+                errors_count=len(stats["errors"])
             )
             
+            return stats
+            
         except Exception as e:
-            error_msg = f"Failed to sync diagram: {str(e)}"
-            logger.error(error_msg)
+            # CRITICAL: Ensure session is rolled back on any error
+            try:
+                await db.rollback()
+            except:
+                pass
+            
+            error_msg = f"Sync error: {str(e)}"
+            logger.error("Fatal error in diagram sync", error=error_msg)
             stats["errors"].append(error_msg)
-        
-        return stats
+            return stats
     
-    def _extract_node_name_and_properties(
+    def _extract_node_properties(
         self,
         node: Dict[str, Any],
         diagram_type: str
-    ) -> tuple[str, Dict[str, Any], str]:
+    ) -> tuple[str, str, Dict[str, Any]]:
         """
-        Extract actual node name, properties, and label from nested data structure
+        Extract node label (type), name, and properties from node data
         
         Returns:
-            Tuple of (node_name, properties_dict, node_label)
+            Tuple of (node_label, node_name, properties_dict)
         """
-        node_data = node.get("data", {})
-        node_type = node.get("type", "")
+        node_type = node.get("type", "Entity")
+        data = node.get("data", {})
         
         # Default values
-        node_name = "Unnamed"
+        node_name = data.get("name", data.get("label", "Unnamed"))
+        node_label = "Entity"
         properties = {}
-        node_label = "Concept"
         
-        # ER DIAGRAMS - Extract entity data
-        if diagram_type == "ER" or node_type.startswith("ER_"):
-            node_name = node_data.get("label", "Unnamed Entity")
-            node_label = "Entity"
-            
-            # Extract attributes array
-            attributes = node_data.get("attributes", [])
-            properties["attributes"] = json.dumps(attributes) if attributes else "[]"
-            properties["attribute_count"] = len(attributes)
-            
-            # Extract primary keys
-            primary_keys = [
-                attr.get("name") 
-                for attr in attributes 
-                if attr.get("isPrimaryKey", False)
-            ]
-            properties["primary_keys"] = json.dumps(primary_keys)
-            
-            # Extract foreign keys
-            foreign_keys = [
-                attr.get("name") 
-                for attr in attributes 
-                if attr.get("isForeignKey", False)
-            ]
-            properties["foreign_keys"] = json.dumps(foreign_keys)
-            
-            # Entity-specific properties
-            properties["is_weak"] = node_data.get("isWeak", False)
-            properties["color"] = node_data.get("color", "#ffffff")
-            properties["text_color"] = node_data.get("textColor", "#000000")
-        
-        # UML CLASS DIAGRAMS - Extract class data
-        elif diagram_type.startswith("UML_CLASS") or node_type.startswith("UML_CLASS"):
-            node_name = node_data.get("label", "Unnamed Class")
-            node_label = "Class"
-            
-            # Extract attributes
-            attributes = node_data.get("attributes", [])
-            properties["attributes"] = json.dumps(attributes) if attributes else "[]"
-            properties["attribute_count"] = len(attributes)
-            
-            # Extract methods
-            methods = node_data.get("methods", [])
-            properties["methods"] = json.dumps(methods) if methods else "[]"
-            properties["method_count"] = len(methods)
-            
-            # Class-specific properties
-            properties["is_abstract"] = node_data.get("isAbstract", False)
-            properties["stereotype"] = node_data.get("stereotype", "")
-            properties["class_type"] = node_data.get("classType", "class")
-            properties["visibility"] = node_data.get("visibility", "public")
-            properties["color"] = node_data.get("color", "#ffffff")
-            properties["text_color"] = node_data.get("textColor", "#000000")
-        
-        # UML SEQUENCE DIAGRAMS - Extract lifeline data
-        elif diagram_type.startswith("UML_SEQUENCE") or node_type.startswith("UML_LIFELINE"):
-            node_name = node_data.get("label", "Unnamed Object")
-            node_label = "Lifeline"
-            
-            properties["stereotype"] = node_data.get("stereotype", "")
-            properties["lifeline_height"] = node_data.get("lifelineHeight", 400)
-            properties["color"] = node_data.get("color", "#ffffff")
-        
-        # BPMN DIAGRAMS - Extract task/event/gateway data
+        # Extract based on diagram type
+        if diagram_type == "ER":
+            if node_type == "entity":
+                node_label = "Entity"
+                properties = {
+                    "entity_type": data.get("entityType", "regular"),
+                    "attributes": json.dumps(data.get("attributes", [])),
+                    "is_weak": data.get("isWeak", False)
+                }
+            elif node_type == "attribute":
+                node_label = "Attribute"
+                properties = {
+                    "data_type": data.get("dataType", "string"),
+                    "is_primary": data.get("isPrimary", False),
+                    "is_unique": data.get("isUnique", False),
+                    "is_nullable": data.get("isNullable", True)
+                }
+                
+        elif diagram_type.startswith("UML_CLASS"):
+            if node_type in ["class", "interface", "abstract"]:
+                node_label = "Class"
+                properties = {
+                    "class_type": node_type,
+                    "attributes": json.dumps(data.get("attributes", [])),
+                    "methods": json.dumps(data.get("methods", [])),
+                    "is_abstract": data.get("isAbstract", False)
+                }
+                
         elif diagram_type == "BPMN":
-            if node_type.startswith("BPMN_TASK") or "task" in node_type.lower():
-                node_name = node_data.get("label", "Unnamed Task")
-                node_label = "Task"
-                properties["task_type"] = node_data.get("taskType", "task")
-                
-            elif node_type.startswith("BPMN_") and "EVENT" in node_type:
-                node_name = node_data.get("label", "Unnamed Event")
-                node_label = "Event"
-                properties["event_type"] = node_data.get("eventType", "start")
-                properties["event_trigger"] = node_data.get("eventTrigger", "none")
-                
-            elif node_type.startswith("BPMN_GATEWAY"):
-                node_name = node_data.get("label", "Unnamed Gateway")
-                node_label = "Gateway"
-                properties["gateway_type"] = node_data.get("gatewayType", "exclusive")
-                
-            elif node_type.startswith("BPMN_POOL") or node_type.startswith("BPMN_LANE"):
-                node_name = node_data.get("label", "Unnamed Pool")
-                node_label = "Pool"
-                properties["pool_type"] = node_data.get("poolType", "pool")
-                properties["width"] = node_data.get("width", 400)
-                properties["height"] = node_data.get("height", 200)
-            
-            properties["color"] = node_data.get("color", "#ffffff")
+            node_label = data.get("bpmnType", "Task").title()
+            properties = {
+                "bpmn_type": data.get("bpmnType", "task"),
+                "description": data.get("description", "")
+            }
         
-        # GENERIC/FALLBACK
-        else:
-            node_name = node_data.get("label", node_data.get("name", "Unnamed"))
-            node_label = "Concept"
-        
-        return node_name, properties, node_label
+        return node_label, node_name, properties
     
-    def _sync_node_to_concept(
+    async def _sync_node_to_graph(
         self,
         graph_name: str,
         node: Dict[str, Any],
@@ -397,31 +377,28 @@ class SemanticModelService:
         diagram_name: str
     ) -> bool:
         """
-        Sync node to concept
+        Sync single node to graph
         
-        CRITICAL: Adds user_id, workspace_id, diagram_id to all nodes
-        
-        Returns True if created, False if updated
+        Returns:
+            True if created (new), False if updated (existing)
         """
-        if not self.graph_client or not self.graph_client.is_connected():
+        node_id = node.get("id")
+        if not node_id:
+            logger.warning("Node missing ID, skipping")
             return False
         
-        node_id = node.get("id")
-        node_type = node.get("type")
+        # Extract node properties
+        node_label, node_name, extracted_properties = self._extract_node_properties(node, diagram_type)
+        
+        # Get position
         position = node.get("position", {})
         
-        # Extract actual name and properties
-        node_name, extracted_properties, node_label = self._extract_node_name_and_properties(
-            node,
-            diagram_type
-        )
-        
-        # Build complete properties dict
+        # Build complete properties
         properties = {
             "id": node_id,
-            "name": node_name,  # Actual entity/class name!
+            "name": node_name,
             "diagram_type": diagram_type,
-            "node_type": node_type,
+            "node_type": node.get("type", "entity"),
             "position_x": position.get("x", 0),
             "position_y": position.get("y", 0),
             # CRITICAL: Add user/workspace/diagram context
@@ -485,76 +462,62 @@ class SemanticModelService:
         Returns:
             Tuple of (relationship_name, relationship_type, properties_dict)
         """
-        edge_data = edge.get("data", {})
-        edge_type = edge.get("type", "")
+        edge_type = edge.get("type", "relationship")
+        data = edge.get("data", {})
         
-        relationship_name = ""
-        relationship_type = "RELATED_TO"
+        # Default values
+        relationship_name = data.get("name", data.get("label", "relates_to"))
+        relationship_type = "RELATES_TO"
         properties = {}
         
-        # ER DIAGRAMS
-        if diagram_type == "ER" or edge_type.startswith("ER_"):
-            relationship_name = edge_data.get("label", "")
+        # Extract based on diagram type
+        if diagram_type == "ER":
+            relationship_name = data.get("name", "relationship")
             relationship_type = "RELATES_TO"
-            
-            # CRITICAL: Extract cardinality
-            properties["source_cardinality"] = edge_data.get("sourceCardinality", "1")
-            properties["target_cardinality"] = edge_data.get("targetCardinality", "N")
-            properties["is_identifying"] = edge_data.get("isIdentifying", False)
-            properties["color"] = edge_data.get("color", "#6b7280")
-        
-        # UML CLASS DIAGRAMS
-        elif diagram_type.startswith("UML_CLASS") or edge_type.startswith("UML_"):
-            relationship_name = edge_data.get("label", "")
-            
-            association_type = edge_data.get("associationType", "association")
-            type_mapping = {
-                "association": "ASSOCIATES_WITH",
-                "generalization": "EXTENDS",
-                "dependency": "DEPENDS_ON",
-                "aggregation": "AGGREGATES",
-                "composition": "COMPOSES",
-                "realization": "IMPLEMENTS"
+            properties = {
+                "cardinality": data.get("cardinality", "1:N"),
+                "source_cardinality": data.get("sourceCardinality", "1"),
+                "target_cardinality": data.get("targetCardinality", "N"),
+                "is_identifying": data.get("isIdentifying", False)
             }
-            relationship_type = type_mapping.get(association_type, "ASSOCIATES_WITH")
             
-            properties["source_multiplicity"] = edge_data.get("sourceMultiplicity", "1")
-            properties["target_multiplicity"] = edge_data.get("targetMultiplicity", "1")
-            properties["association_type"] = association_type
-            properties["color"] = edge_data.get("color", "#6b7280")
-        
-        # UML SEQUENCE DIAGRAMS
-        elif diagram_type.startswith("UML_SEQUENCE") or "MESSAGE" in edge_type:
-            relationship_name = edge_data.get("label", "message()")
-            relationship_type = "SENDS_MESSAGE"
+        elif diagram_type.startswith("UML_CLASS"):
+            relationship_name = data.get("name", "association")
             
-            properties["message_type"] = edge_data.get("messageType", "sync")
-            properties["sequence"] = edge_data.get("sequence", 1)
-            properties["color"] = edge_data.get("color", "#6b7280")
-        
-        # BPMN DIAGRAMS
-        elif diagram_type == "BPMN":
-            relationship_name = edge_data.get("label", "")
-            
-            if "SEQUENCE" in edge_type:
-                relationship_type = "SEQUENCE_FLOW"
-                properties["condition"] = edge_data.get("condition", "")
-                properties["is_default"] = edge_data.get("isDefault", False)
-            elif "MESSAGE" in edge_type:
-                relationship_type = "MESSAGE_FLOW"
+            # Map UML relationship types
+            if edge_type == "association":
+                relationship_type = "ASSOCIATED_WITH"
+            elif edge_type == "aggregation":
+                relationship_type = "AGGREGATES"
+            elif edge_type == "composition":
+                relationship_type = "COMPOSED_OF"
+            elif edge_type == "generalization":
+                relationship_type = "EXTENDS"
+            elif edge_type == "dependency":
+                relationship_type = "DEPENDS_ON"
+            elif edge_type == "realization":
+                relationship_type = "IMPLEMENTS"
             else:
-                relationship_type = "ASSOCIATION"
+                relationship_type = "ASSOCIATED_WITH"
             
-            properties["color"] = edge_data.get("color", "#6b7280")
-        
-        # GENERIC
-        else:
-            relationship_name = edge_data.get("label", "")
-            relationship_type = "RELATED_TO"
+            properties = {
+                "multiplicity": data.get("multiplicity", ""),
+                "source_multiplicity": data.get("sourceMultiplicity", ""),
+                "target_multiplicity": data.get("targetMultiplicity", "")
+            }
+            
+        elif diagram_type == "BPMN":
+            relationship_name = data.get("name", "flow")
+            if edge_type == "sequence":
+                relationship_type = "FLOWS_TO"
+            elif edge_type == "message":
+                relationship_type = "SENDS_MESSAGE_TO"
+            else:
+                relationship_type = "RELATES_TO"
         
         return relationship_name, relationship_type, properties
     
-    def _sync_edge_to_relationship(
+    async def _sync_edge_to_graph(
         self,
         graph_name: str,
         edge: Dict[str, Any],
@@ -564,29 +527,26 @@ class SemanticModelService:
         diagram_id: str
     ) -> bool:
         """
-        Sync edge to relationship
+        Sync single edge to graph
         
-        CRITICAL: Adds user_id, workspace_id, diagram_id to all edges
+        Returns:
+            True if successful
         """
-        if not self.graph_client or not self.graph_client.is_connected():
-            return False
-        
         edge_id = edge.get("id")
         source = edge.get("source")
         target = edge.get("target")
         
-        # Extract relationship details
-        relationship_name, relationship_type, extracted_properties = self._extract_edge_properties(
-            edge,
-            diagram_type
-        )
+        if not edge_id or not source or not target:
+            logger.warning("Edge missing required fields, skipping", edge_id=edge_id)
+            return False
         
-        # Build properties
+        # Extract edge properties
+        relationship_name, relationship_type, extracted_properties = self._extract_edge_properties(edge, diagram_type)
+        
+        # Build complete properties
         properties = {
             "id": edge_id,
             "name": relationship_name,
-            "label": relationship_name,
-            "diagram_type": diagram_type,
             "edge_type": edge.get("type", ""),
             # CRITICAL: Add user/workspace/diagram context
             "user_id": user_id,
