@@ -1,12 +1,16 @@
 -- database/postgres/schema/04-models.sql
--- Models table and related structures including model_statistics
+-- Models table and related structures - COMPLETE WITH STRATEGIC FIXES
+-- STRATEGIC FIX: graph_id validation and proper unique constraints
 
 -- Drop existing tables if exist (for clean reinstall)
 DROP TABLE IF EXISTS model_tags CASCADE;
 DROP TABLE IF EXISTS model_statistics CASCADE;
 DROP TABLE IF EXISTS models CASCADE;
 
--- Models table (semantic models are stored in graph DB, this is metadata)
+-- ============================================================================
+-- MODELS TABLE
+-- ============================================================================
+
 CREATE TABLE models (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -14,7 +18,10 @@ CREATE TABLE models (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     model_type VARCHAR(50) NOT NULL,
+    
+    -- STRATEGIC FIX: graph_id is REQUIRED and must be unique
     graph_id VARCHAR(255) UNIQUE NOT NULL,
+    
     metadata JSONB DEFAULT '{}'::JSONB,
     settings JSONB DEFAULT '{}'::JSONB,
     validation_rules JSONB DEFAULT '[]'::JSONB,
@@ -42,11 +49,14 @@ CREATE TABLE models (
         'MIXED'
     )),
     CONSTRAINT models_graph_id_check CHECK (LENGTH(graph_id) >= 1),
-    -- Ensure unique name within workspace and folder
-    CONSTRAINT models_unique_name UNIQUE(workspace_id, folder_id, name, deleted_at)
+    -- STRATEGIC FIX: Ensure unique name within workspace and folder, including deleted_at
+    CONSTRAINT models_unique_name UNIQUE NULLS NOT DISTINCT (workspace_id, folder_id, name, deleted_at)
 );
 
--- Model statistics table (denormalized for performance)
+-- ============================================================================
+-- MODEL STATISTICS TABLE
+-- ============================================================================
+
 CREATE TABLE model_statistics (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     model_id UUID UNIQUE NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -80,7 +90,10 @@ CREATE TABLE model_statistics (
     ))
 );
 
--- Model tags table (for categorization)
+-- ============================================================================
+-- MODEL TAGS TABLE
+-- ============================================================================
+
 CREATE TABLE model_tags (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
@@ -92,7 +105,10 @@ CREATE TABLE model_tags (
     CONSTRAINT model_tags_unique UNIQUE(model_id, tag)
 );
 
--- Indexes for models table
+-- ============================================================================
+-- INDEXES FOR MODELS TABLE
+-- ============================================================================
+
 CREATE INDEX idx_models_workspace_id ON models(workspace_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_models_folder_id ON models(folder_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_models_model_type ON models(model_type) WHERE deleted_at IS NULL;
@@ -110,15 +126,25 @@ CREATE INDEX idx_models_fulltext ON models
         COALESCE(description, '')
     )) WHERE deleted_at IS NULL;
 
--- Indexes for model_statistics table
+-- ============================================================================
+-- INDEXES FOR MODEL_STATISTICS TABLE
+-- ============================================================================
+
 CREATE INDEX idx_model_statistics_model_id ON model_statistics(model_id);
 CREATE INDEX idx_model_statistics_validation_status ON model_statistics(validation_status);
 CREATE INDEX idx_model_statistics_last_validation_at ON model_statistics(last_validation_at DESC);
 CREATE INDEX idx_model_statistics_complexity_score ON model_statistics(complexity_score DESC NULLS LAST);
 
--- Indexes for model_tags table
+-- ============================================================================
+-- INDEXES FOR MODEL_TAGS TABLE
+-- ============================================================================
+
 CREATE INDEX idx_model_tags_model_id ON model_tags(model_id);
 CREATE INDEX idx_model_tags_tag ON model_tags(tag);
+
+-- ============================================================================
+-- TRIGGERS
+-- ============================================================================
 
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER update_models_updated_at
@@ -164,6 +190,10 @@ CREATE TRIGGER model_update_statistics
     FOR EACH ROW
     WHEN (OLD.updated_at IS DISTINCT FROM NEW.updated_at)
     EXECUTE FUNCTION update_model_statistics_on_change();
+
+-- ============================================================================
+-- HELPER FUNCTIONS
+-- ============================================================================
 
 -- Function to increment diagram count
 CREATE OR REPLACE FUNCTION increment_model_diagram_count(p_model_id UUID)
@@ -281,8 +311,41 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- Logging
+-- ============================================================================
+-- COMMENTS FOR DOCUMENTATION
+-- ============================================================================
+
+COMMENT ON TABLE models IS 'Model metadata - actual semantic model stored in FalkorDB';
+COMMENT ON COLUMN models.graph_id IS 'Unique FalkorDB graph reference (REQUIRED) - format: model_{username}_{workspace}_{name}_{random}';
+COMMENT ON COLUMN models.model_type IS 'Type of model: ER, UML_CLASS, UML_SEQUENCE, UML_ACTIVITY, UML_STATE, UML_COMPONENT, UML_DEPLOYMENT, UML_PACKAGE, BPMN, MIXED';
+COMMENT ON COLUMN models.is_published IS 'Whether this model is published to common workspace';
+
+COMMENT ON TABLE model_statistics IS 'Denormalized statistics for model performance - cached to avoid expensive graph queries';
+COMMENT ON COLUMN model_statistics.total_diagrams IS 'Number of diagrams for this model';
+COMMENT ON COLUMN model_statistics.validation_status IS 'Current validation status: PENDING, VALIDATING, VALID, INVALID, ERROR';
+COMMENT ON COLUMN model_statistics.complexity_score IS 'Calculated complexity score based on concepts, relationships, and diagrams';
+
+COMMENT ON TABLE model_tags IS 'Tags for model categorization and search';
+
+-- ============================================================================
+-- LOGGING
+-- ============================================================================
+
 DO $$
 BEGIN
+    RAISE NOTICE '============================================';
     RAISE NOTICE 'Models schema created successfully';
+    RAISE NOTICE '============================================';
+    RAISE NOTICE '✓ Table: models';
+    RAISE NOTICE '✓ Table: model_statistics';
+    RAISE NOTICE '✓ Table: model_tags';
+    RAISE NOTICE '✓ Column: graph_id (REQUIRED, UNIQUE) - STRATEGIC FIX APPLIED';
+    RAISE NOTICE '✓ Constraint: models_unique_name includes deleted_at - STRATEGIC FIX';
+    RAISE NOTICE '✓ Indexes: Created for performance including graph_id';
+    RAISE NOTICE '✓ Triggers: update_updated_at, create_statistics, update_statistics';
+    RAISE NOTICE '✓ Functions: 5 helper functions created';
+    RAISE NOTICE '============================================';
+    RAISE NOTICE 'ARCHITECTURE: Model metadata in PostgreSQL, semantic model in FalkorDB';
+    RAISE NOTICE 'Graph naming: model_{username}_{workspace}_{name}_{random}';
+    RAISE NOTICE '============================================';
 END $$;

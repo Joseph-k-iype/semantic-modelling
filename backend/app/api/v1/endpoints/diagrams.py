@@ -1,20 +1,13 @@
 # backend/app/api/v1/endpoints/diagrams.py
 """
-Diagram Management Endpoints - COMPLETE IMPLEMENTATION
+Diagram Management Endpoints - COMPLETE FIX
 Path: backend/app/api/v1/endpoints/diagrams.py
 
-ALL ROUTES INCLUDED:
-- POST /diagrams/ - Create diagram
-- GET /diagrams/ - List diagrams  
-- GET /diagrams/{id} - Get single diagram
-- PATCH /diagrams/{id} - Update diagram
-- DELETE /diagrams/{id} - Delete diagram
-- POST /diagrams/{id}/sync - Sync to FalkorDB
-
 CRITICAL FIXES:
-1. Fixed get_or_create_personal_workspace with slug and owner_id
-2. Better error handling
-3. All routes implemented
+1. Transaction boundary management - commit Model before Diagram
+2. Random graph_name generation - prevents collisions
+3. Proper session rollback before retry
+4. Removed invalid Model parameters
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +26,7 @@ from app.db.session import get_db
 # Models
 from app.models.diagram import Diagram
 from app.models.layout import Layout, LayoutType
-from app.models.model import Model, ModelType, ModelStatus
+from app.models.model import Model
 from app.models.workspace import Workspace, WorkspaceType
 from app.models.user import User
 
@@ -141,16 +134,16 @@ def normalize_notation_type(notation_type: str) -> str:
     raise ValueError(f"Unsupported notation type: '{notation_type}'")
 
 
-def get_model_type_from_notation(notation: str) -> ModelType:
-    """Get model type from notation"""
+def get_model_type_from_notation(notation: str) -> str:
+    """Get model type string from notation"""
     if notation == "ER":
-        return ModelType.ER
+        return "ER"
     elif notation.startswith("UML_"):
-        return ModelType.UML
+        return notation
     elif notation == "BPMN":
-        return ModelType.BPMN
+        return "BPMN"
     else:
-        return ModelType.MIXED
+        return "MIXED"
 
 
 def diagram_to_response(diagram: Diagram) -> DiagramResponse:
@@ -177,12 +170,7 @@ def diagram_to_response(diagram: Diagram) -> DiagramResponse:
 
 
 async def get_or_create_personal_workspace(db: AsyncSession, user: User) -> Workspace:
-    """
-    Get or create personal workspace for user
-    
-    CRITICAL FIX: Now includes slug and owner_id fields
-    """
-    # First try to find existing personal workspace
+    """Get or create personal workspace for user"""
     stmt = select(Workspace).where(
         and_(
             Workspace.type == WorkspaceType.PERSONAL,
@@ -197,15 +185,13 @@ async def get_or_create_personal_workspace(db: AsyncSession, user: User) -> Work
         logger.info(f"Found existing workspace for user {user.username}")
         return workspace
     
-    # Create new personal workspace with all required fields
     safe_username = re.sub(r'[^a-z0-9-]', '', user.username.lower().replace('_', '-'))
     
     workspace = Workspace(
-        name=f"{user.username}'s Workspace",
-        slug=f"{safe_username}-personal",  # FIXED: Add slug field
+        name=f"{user.username}'s Personal Workspace",
+        slug=f"{safe_username}-personal-{uuid.uuid4().hex[:8]}",
         description="Personal workspace",
         type=WorkspaceType.PERSONAL,
-        owner_id=user.id,  # FIXED: Add owner_id field
         is_active=True,
         created_by=user.id,
         updated_by=user.id,
@@ -215,7 +201,7 @@ async def get_or_create_personal_workspace(db: AsyncSession, user: User) -> Work
     
     try:
         db.add(workspace)
-        await db.flush()
+        await db.commit()
         await db.refresh(workspace)
         
         logger.info(
@@ -231,7 +217,6 @@ async def get_or_create_personal_workspace(db: AsyncSession, user: User) -> Work
         await db.rollback()
         logger.error(f"Failed to create workspace: {str(e)}")
         
-        # Try to find the workspace again in case it was created by another request
         stmt = select(Workspace).where(
             and_(
                 Workspace.type == WorkspaceType.PERSONAL,
@@ -258,6 +243,197 @@ def sanitize_for_graph_name(text: str) -> str:
     return text.lower()[:50]
 
 
+async def create_or_get_model(
+    db: AsyncSession,
+    workspace: Workspace,
+    user: User,
+    model_id: Optional[str],
+    model_name: str,
+    diagram_name: str,
+    model_type: str
+) -> Model:
+    """
+    Create or get model - Handles Model in its own transaction
+    """
+    if model_id:
+        try:
+            model_uuid = uuid.UUID(model_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid model_id format"
+            )
+        
+        stmt = select(Model).where(
+            and_(
+                Model.id == model_uuid,
+                Model.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        model = result.scalar_one_or_none()
+        
+        if not model:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Model {model_id} not found"
+            )
+        
+        if model.created_by != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to use this model"
+            )
+        
+        return model
+    
+    # Create new model with unique graph_id
+    safe_username = sanitize_for_graph_name(user.username)
+    safe_workspace = sanitize_for_graph_name(workspace.name)
+    safe_model = sanitize_for_graph_name(model_name)
+    # CRITICAL FIX: Add random component to ensure uniqueness
+    model_graph_id = f"model_{safe_username}_{safe_workspace}_{safe_model}_{uuid.uuid4().hex[:8]}"
+    
+    model = Model(
+        workspace_id=workspace.id,
+        name=model_name,
+        description=f"Model for {diagram_name}",
+        model_type=model_type,
+        graph_id=model_graph_id,
+        meta_data={},
+        settings={},
+        validation_rules=[],
+        is_published=False,
+        created_by=user.id,
+        updated_by=user.id
+    )
+    
+    try:
+        db.add(model)
+        await db.commit()
+        await db.refresh(model)
+        
+        logger.info(
+            "Created new model",
+            model_id=str(model.id),
+            model_name=model_name,
+            model_type=model_type,
+            graph_id=model_graph_id
+        )
+        
+        return model
+        
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"Failed to create model: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create model: {str(e)}"
+        )
+
+
+async def create_diagram_with_retry(
+    db: AsyncSession,
+    model: Model,
+    workspace: Workspace,
+    user: User,
+    diagram_name: str,
+    description: Optional[str],
+    normalized_notation: str,
+    max_attempts: int = 5
+) -> Diagram:
+    """
+    Create diagram with automatic retry for name conflicts
+    
+    CRITICAL FIX: Each attempt gets unique graph_name with random component
+    """
+    safe_username = sanitize_for_graph_name(user.username)
+    safe_workspace = sanitize_for_graph_name(workspace.name)
+    
+    for attempt in range(max_attempts):
+        try:
+            # Generate unique name for this attempt
+            if attempt == 0:
+                current_name = diagram_name
+            else:
+                current_name = f"{diagram_name} ({attempt})"
+            
+            # CRITICAL FIX: Generate unique graph_name with random component
+            safe_diagram = sanitize_for_graph_name(current_name)
+            graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}_{uuid.uuid4().hex[:8]}"
+            
+            # Create diagram
+            diagram = Diagram(
+                model_id=model.id,
+                name=current_name,
+                description=description,
+                notation=normalized_notation,
+                graph_name=graph_name,
+                notation_config={},
+                visible_concepts=[],
+                settings={},
+                validation_errors=[],
+                is_valid=True,
+                is_default=True,
+                created_by=user.id,
+                updated_by=user.id
+            )
+            
+            db.add(diagram)
+            await db.commit()
+            await db.refresh(diagram)
+            
+            logger.info(
+                "Created diagram successfully",
+                diagram_id=str(diagram.id),
+                diagram_name=current_name,
+                notation=normalized_notation,
+                graph_name=graph_name,
+                attempt=attempt + 1
+            )
+            
+            return diagram
+            
+        except IntegrityError as e:
+            # CRITICAL FIX: Rollback session before retry
+            await db.rollback()
+            
+            error_msg = str(e)
+            
+            # Check if it's a name conflict (not foreign key or other errors)
+            if "diagrams_unique_name" in error_msg or "duplicate key" in error_msg.lower():
+                logger.warning(
+                    f"Diagram name conflict, retrying with different name",
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    error=error_msg[:200]
+                )
+                
+                if attempt < max_attempts - 1:
+                    continue
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Could not create diagram with unique name after {max_attempts} attempts"
+                    )
+            else:
+                # Not a name conflict - raise immediately
+                logger.error(
+                    "Failed to create diagram - non-recoverable error",
+                    error=error_msg,
+                    model_id=str(model.id)
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to create diagram: {str(e)}"
+                )
+    
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to create diagram after maximum retries"
+    )
+
+
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
@@ -282,7 +458,7 @@ async def create_diagram(
         # Get model type from notation
         model_type = get_model_type_from_notation(normalized_notation)
         
-        # Get or create personal workspace
+        # Get or create personal workspace (commits in its own transaction)
         try:
             workspace = await get_or_create_personal_workspace(db, current_user)
         except HTTPException:
@@ -300,135 +476,49 @@ async def create_diagram(
             workspace_name=workspace.name
         )
         
-        # Get or create model
-        if diagram_data.model_id:
-            try:
-                model_uuid = uuid.UUID(diagram_data.model_id)
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid model_id format"
-                )
-            
-            stmt = select(Model).where(
-                and_(
-                    Model.id == model_uuid,
-                    Model.deleted_at.is_(None)
-                )
-            )
-            result = await db.execute(stmt)
-            model = result.scalar_one_or_none()
-            
-            if not model:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Model {diagram_data.model_id} not found"
-                )
-            
-            if model.created_by != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Not authorized to use this model"
-                )
-        else:
-            model_name = diagram_data.model_name or f"{diagram_data.name} Model"
-            
-            model = Model(
-                workspace_id=workspace.id,
-                name=model_name,
-                description=f"Model for {diagram_data.name}",
-                model_type=model_type,
-                status=ModelStatus.DRAFT,
-                version="1.0.0",
-                statistics={},
-                tags=[],
-                created_by=current_user.id,
-                updated_by=current_user.id
-            )
-            
-            db.add(model)
-            await db.flush()
-            await db.refresh(model)
-            
-            logger.info(
-                "Created new model",
-                model_id=str(model.id),
+        # Create or get model (commits in its own transaction)
+        model_name = diagram_data.model_name or f"{diagram_data.name} Model"
+        try:
+            model = await create_or_get_model(
+                db=db,
+                workspace=workspace,
+                user=current_user,
+                model_id=diagram_data.model_id,
                 model_name=model_name,
-                model_type=model_type.value
+                diagram_name=diagram_data.name,
+                model_type=model_type
             )
-        
-        # Generate graph name for FalkorDB
-        safe_username = sanitize_for_graph_name(current_user.username)
-        safe_workspace = sanitize_for_graph_name(workspace.name)
-        safe_diagram = sanitize_for_graph_name(diagram_data.name)
-        
-        graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}"
-        
-        # Create diagram with unique name handling
-        diagram = None
-        max_attempts = 3
-        counter = 0
-        
-        for attempt in range(max_attempts):
-            try:
-                diagram_name = diagram_data.name
-                if counter > 0:
-                    diagram_name = f"{diagram_data.name} ({counter})"
-                    safe_diagram = sanitize_for_graph_name(diagram_name)
-                    graph_name = f"user_{safe_username}_workspace_{safe_workspace}_diagram_{safe_diagram}"
-                
-                diagram = Diagram(
-                    model_id=model.id,
-                    name=diagram_name,
-                    description=diagram_data.description,
-                    notation=normalized_notation,
-                    graph_name=graph_name,
-                    notation_config={},
-                    visible_concepts=[],
-                    settings={},
-                    validation_errors=[],
-                    is_valid=True,
-                    is_default=True,
-                    created_by=current_user.id,
-                    updated_by=current_user.id
-                )
-                
-                db.add(diagram)
-                await db.flush()
-                await db.refresh(diagram)
-                
-                logger.info(
-                    "✅ Created diagram with graph reference",
-                    diagram_id=str(diagram.id),
-                    diagram_name=diagram_name,
-                    notation=normalized_notation,
-                    graph_name=graph_name
-                )
-                break
-                
-            except IntegrityError as e:
-                await db.rollback()
-                logger.warning(
-                    f"Diagram name conflict, retrying with counter {counter + 1}",
-                    attempt=attempt + 1,
-                    error=str(e)
-                )
-                counter += 1
-                
-                if attempt == max_attempts - 1:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"Could not create diagram with unique name after {max_attempts} attempts"
-                    )
-                continue
-        
-        if not diagram:
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to create/get model: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create diagram"
+                detail=f"Failed to create model: {str(e)}"
             )
         
-        # Create default layout
+        # Create diagram with retry logic (separate transaction)
+        try:
+            diagram = await create_diagram_with_retry(
+                db=db,
+                model=model,
+                workspace=workspace,
+                user=current_user,
+                diagram_name=diagram_data.name,
+                description=diagram_data.description,
+                normalized_notation=normalized_notation,
+                max_attempts=5
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to create diagram: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create diagram: {str(e)}"
+            )
+        
+        # Create default layout (non-critical)
         try:
             layout = Layout(
                 diagram_id=diagram.id,
@@ -448,7 +538,6 @@ async def create_diagram(
             
             db.add(layout)
             await db.commit()
-            await db.refresh(diagram)
             
             logger.info(
                 "Created default layout",
@@ -456,14 +545,16 @@ async def create_diagram(
                 diagram_id=str(diagram.id)
             )
         except Exception as layout_error:
+            await db.rollback()
             logger.error(
                 "Failed to create layout (non-critical)",
                 error=str(layout_error)
             )
-            await db.commit()
-            await db.refresh(diagram)
         
-        # Initialize FalkorDB graph
+        # Refresh diagram to get latest state
+        await db.refresh(diagram)
+        
+        # Initialize FalkorDB graph (non-critical)
         try:
             semantic_service = SemanticModelService()
             
@@ -478,7 +569,7 @@ async def create_diagram(
             
             logger.info(
                 "Initialized FalkorDB graph",
-                graph_name=graph_name
+                graph_name=diagram.graph_name
             )
         except Exception as graph_error:
             logger.warning(
@@ -494,7 +585,6 @@ async def create_diagram(
         logger.error("Error creating diagram", error=str(e))
         import traceback
         traceback.print_exc()
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create diagram: {str(e)}"
@@ -528,12 +618,10 @@ async def list_diagrams(
                     detail="Invalid model_id format"
                 )
         
-        # Get total count
         count_query = select(func.count()).select_from(query.subquery())
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
         
-        # Get paginated results
         query = query.offset(skip).limit(limit).order_by(Diagram.created_at.desc())
         result = await db.execute(query)
         diagrams = result.scalars().all()
@@ -640,7 +728,6 @@ async def update_diagram(
                 detail="Not authorized to update this diagram"
             )
         
-        # Update fields
         if update_data.name is not None:
             diagram.name = update_data.name
         if update_data.description is not None:
@@ -674,6 +761,65 @@ async def update_diagram(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update diagram: {str(e)}"
+        )
+
+
+@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_diagram(
+    diagram_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Soft delete diagram"""
+    try:
+        diagram_uuid = uuid.UUID(diagram_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid diagram_id format"
+        )
+    
+    try:
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_uuid,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Diagram {diagram_id} not found"
+            )
+        
+        if diagram.created_by != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this diagram"
+            )
+        
+        diagram.deleted_at = datetime.utcnow()
+        await db.commit()
+        
+        logger.info(
+            "Deleted diagram",
+            diagram_id=str(diagram.id),
+            user_id=str(current_user.id)
+        )
+        
+        return None
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error deleting diagram", error=str(e))
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete diagram: {str(e)}"
         )
 
 
@@ -737,14 +883,13 @@ async def sync_diagram_to_graph(
         )
         
         logger.info(
-            "Synced diagram to FalkorDB",
+            "Synced diagram to graph",
             diagram_id=str(diagram.id),
             stats=stats
         )
         
         return {
-            "success": True,
-            "message": "Diagram synced to graph database",
+            "message": "Diagram synced successfully",
             "stats": stats
         }
         
@@ -755,65 +900,4 @@ async def sync_diagram_to_graph(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync diagram: {str(e)}"
-        )
-
-
-@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_diagram(
-    diagram_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Soft delete a diagram"""
-    try:
-        diagram_uuid = uuid.UUID(diagram_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid diagram_id format"
-        )
-    
-    try:
-        stmt = select(Diagram).where(
-            and_(
-                Diagram.id == diagram_uuid,
-                Diagram.deleted_at.is_(None)
-            )
-        )
-        result = await db.execute(stmt)
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Diagram {diagram_id} not found"
-            )
-        
-        if diagram.created_by != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to delete this diagram"
-            )
-        
-        # Soft delete
-        diagram.deleted_at = datetime.utcnow()
-        diagram.updated_by = current_user.id
-        diagram.updated_at = datetime.utcnow()
-        
-        await db.commit()
-        
-        logger.info(
-            "Deleted diagram",
-            diagram_id=str(diagram.id),
-            user_id=str(current_user.id)
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Error deleting diagram", error=str(e))
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete diagram: {str(e)}"
         )
