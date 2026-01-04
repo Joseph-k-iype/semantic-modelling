@@ -1,6 +1,6 @@
 -- database/postgres/schema/01-users.sql
 -- Users table and related structures
--- COMPLETE FIX: All triggers handle created_by/updated_by properly
+-- FIXED: Removed enum recreation, fixed regex and dollar-quoting syntax
 
 -- Drop existing objects
 DROP TRIGGER IF EXISTS track_user_updates_trigger ON users;
@@ -10,10 +10,11 @@ DROP FUNCTION IF EXISTS track_user_updates();
 DROP FUNCTION IF EXISTS create_personal_workspace();
 DROP TABLE IF EXISTS user_sessions CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
-DROP TYPE IF EXISTS user_role CASCADE;
+-- REMOVED: DROP TYPE IF EXISTS user_role CASCADE;
+-- Enum is created in 01-init-db.sql, not here
 
--- Create user role enum
-CREATE TYPE user_role AS ENUM ('ADMIN', 'USER');
+-- REMOVED: CREATE TYPE user_role AS ENUM ('ADMIN', 'USER');
+-- Enum already exists from 01-init-db.sql
 
 -- Users table
 CREATE TABLE users (
@@ -22,7 +23,7 @@ CREATE TABLE users (
     username VARCHAR(100) UNIQUE NOT NULL,
     full_name VARCHAR(255),
     password_hash VARCHAR(255) NOT NULL,
-    role user_role DEFAULT 'USER' NOT NULL,
+    role user_role DEFAULT 'user' NOT NULL,
     is_active BOOLEAN DEFAULT TRUE NOT NULL,
     is_verified BOOLEAN DEFAULT FALSE NOT NULL,
     email_verified_at TIMESTAMP WITH TIME ZONE,
@@ -39,10 +40,9 @@ CREATE TABLE users (
     updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
     
     -- Constraints
-    CONSTRAINT users_email_check CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}
-),
-    CONSTRAINT users_username_check CHECK (username ~* '^[A-Za-z0-9_-]{3,100}
-),
+    -- FIXED: Proper regex syntax (was broken across lines)
+    CONSTRAINT users_email_check CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'),
+    CONSTRAINT users_username_check CHECK (username ~* '^[A-Za-z0-9_-]{3,100}$'),
     CONSTRAINT users_password_hash_check CHECK (LENGTH(password_hash) >= 60)
 );
 
@@ -84,9 +84,9 @@ CREATE TRIGGER update_users_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- FIXED: Function to track user updates (sets created_by/updated_by)
+-- FIXED: Function to track user updates (proper dollar-quoting)
 CREATE OR REPLACE FUNCTION track_user_updates()
-RETURNS TRIGGER AS $
+RETURNS TRIGGER AS $$
 BEGIN
     -- On INSERT: Set created_by and updated_by to the user being created (self-reference)
     -- ONLY if they weren't already set by the application
@@ -108,7 +108,7 @@ BEGIN
     
     RETURN NEW;
 END;
-$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
 
 -- Trigger to track user updates
 CREATE TRIGGER track_user_updates_trigger
@@ -138,7 +138,7 @@ INSERT INTO users (
     'system',
     'System User',
     '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LeZD7LZZwIL9DkW7e', -- password: system (not used)
-    'ADMIN',
+    'admin',
     TRUE,
     TRUE,
     '00000000-0000-0000-0000-000000000000'::UUID,  -- Self-reference
@@ -146,10 +146,10 @@ INSERT INTO users (
 ) ON CONFLICT (id) DO NOTHING;
 
 -- Logging
-DO $
+DO $$
 BEGIN
     RAISE NOTICE 'Users schema created successfully';
     RAISE NOTICE '✓ Added created_by and updated_by columns with proper trigger';
     RAISE NOTICE '✓ Created system user: 00000000-0000-0000-0000-000000000000';
     RAISE NOTICE '✓ Personal workspace creation moved to application layer';
-END $;
+END $$;

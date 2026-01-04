@@ -1,10 +1,7 @@
 # backend/app/models/__init__.py
 """
-Models Package - COMPLETE with all model imports
+Models Package - FIXED: Removed NotationType import
 Path: backend/app/models/__init__.py
-
-This file ensures all models are imported and registered with SQLAlchemy.
-Import this module to ensure all tables are created.
 """
 
 # User models
@@ -26,8 +23,8 @@ from app.models.folder import Folder
 # Model models
 from app.models.model import Model, ModelType, ModelStatus, ModelStatistics, ModelTag
 
-# Diagram model
-from app.models.diagram import Diagram, NotationType
+# Diagram model - FIXED: Removed NotationType (it doesn't exist in diagram.py)
+from app.models.diagram import Diagram
 
 # Layout models
 from app.models.layout import Layout, LayoutType, LayoutSnapshot
@@ -69,9 +66,8 @@ __all__ = [
     "ModelStatus",
     "ModelStatistics",
     "ModelTag",
-    # Diagram
+    # Diagram - FIXED: Removed NotationType from exports
     "Diagram",
-    "NotationType",
     # Layout
     "Layout",
     "LayoutType",

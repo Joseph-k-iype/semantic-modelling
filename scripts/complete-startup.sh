@@ -1,7 +1,7 @@
 #!/bin/bash
 # scripts/complete-startup.sh
 # Complete startup script for Enterprise Modeling Platform
-# Handles all initialization, dependency checks, and service startup
+# FIXED: Added proper wait and verification for init scripts before applying schemas
 
 set -e  # Exit on any error
 
@@ -172,12 +172,13 @@ echo ""
 print_success "PostgreSQL is ready!"
 
 # ============================================================================
-# STEP 7: Verify Database Setup
+# STEP 7: Verify Database Setup and Wait for Init Scripts
 # ============================================================================
 print_header "Step 7: Verifying Database Setup"
 
-# Wait for init scripts to complete
-sleep 5
+# CRITICAL FIX: Wait for init scripts to complete
+print_step "Waiting for init scripts to complete (15 seconds)..."
+sleep 15
 
 # Check if modeling user exists
 print_step "Checking modeling user..."
@@ -213,12 +214,33 @@ else
     exit 1
 fi
 
-# Verify extensions and types were created
+# CRITICAL FIX: Verify extensions were created
 print_step "Verifying database extensions..."
-if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dx" | grep -q "uuid-ossp"; then
-    print_success "Extensions created successfully"
+if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dx" 2>/dev/null | grep -q "uuid-ossp"; then
+    print_success "Extensions created (uuid-ossp found)"
 else
-    print_warning "Extensions may not be created yet"
+    print_error "Extensions not created!"
+    print_error "Running 01-init-db.sql manually..."
+    docker exec -i modeling-postgres psql -U modeling -d modeling_platform < database/postgres/init/01-init-db.sql
+    sleep 2
+    
+    # Verify again
+    if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dx" 2>/dev/null | grep -q "uuid-ossp"; then
+        print_success "Extensions created after manual run"
+    else
+        print_error "Extensions still not created - check logs!"
+        exit 1
+    fi
+fi
+
+# CRITICAL FIX: Verify enum types were created
+print_step "Verifying enum types..."
+if docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dT" 2>/dev/null | grep -q "user_role"; then
+    print_success "Enum types created (user_role found)"
+else
+    print_error "Enum types not created! Schema files will fail."
+    print_error "Check database/postgres/init/01-init-db.sql"
+    exit 1
 fi
 
 # ============================================================================
@@ -247,17 +269,32 @@ for schema_file in "${SCHEMA_FILES[@]}"; do
     schema_path="database/postgres/schema/$schema_file"
     if [ -f "$schema_path" ]; then
         print_step "Applying $schema_file..."
-        docker exec -i modeling-postgres psql -U modeling -d modeling_platform < "$schema_path" 2>&1 | grep -v "NOTICE" || true
+        # Filter out NOTICE messages but show errors
+        docker exec -i modeling-postgres psql -U modeling -d modeling_platform < "$schema_path" 2>&1 | grep -v "^NOTICE:" | grep -v "^$" || true
         if [ ${PIPESTATUS[0]} -eq 0 ]; then
             print_success "$schema_file applied"
         else
             print_error "Failed to apply $schema_file"
+            print_error "Check logs above for details"
             exit 1
         fi
     else
         print_warning "Schema file $schema_file not found, skipping..."
     fi
 done
+
+# Verify tables were created
+print_step "Verifying tables were created..."
+TABLE_COUNT=$(docker exec modeling-postgres psql -U modeling -d modeling_platform -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE';")
+
+if [ "$TABLE_COUNT" -gt 5 ]; then
+    print_success "$TABLE_COUNT tables created"
+else
+    print_error "Only $TABLE_COUNT tables found! Expected at least 6."
+    print_error "Listing existing tables:"
+    docker exec modeling-postgres psql -U modeling -d modeling_platform -c "\dt"
+    exit 1
+fi
 
 # ============================================================================
 # STEP 9: Start FalkorDB and Redis
