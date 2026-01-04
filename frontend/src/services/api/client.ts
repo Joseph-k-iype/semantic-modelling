@@ -1,215 +1,299 @@
-// frontend/src/services/api/client.ts
 /**
- * API Client Configuration - FIXED VERSION
- * Centralized Axios instance for all API requests
+ * API Client Service - Complete Implementation
  * Path: frontend/src/services/api/client.ts
+ * 
+ * Axios-based API client with interceptors for authentication
  */
-import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 
-// Get API base URL from environment variable or use default
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-/**
- * Create axios instance with default configuration
- */
-export const apiClient: AxiosInstance = axios.create({
-  baseURL: `${API_BASE_URL}/api/v1`,
-  timeout: 30000, // 30 seconds
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  // CRITICAL: Allow credentials (cookies, authorization headers)
-  withCredentials: false, // Set to false for JWT token-based auth
-});
+// Get API URL from environment variable
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_VERSION = '/api/v1';
 
 /**
- * Request interceptor - Add auth token to requests
+ * API Response Error Interface
  */
-apiClient.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    // Get access token from localStorage
-    const token = localStorage.getItem('access_token');
-    
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    
-    // Log request in development
-    if (import.meta.env.DEV) {
-      console.log(`🔵 ${config.method?.toUpperCase()} ${config.url}`, {
-        data: config.data,
-        params: config.params,
-      });
-    }
-    
-    return config;
-  },
-  (error) => {
-    console.error('❌ Request interceptor error:', error);
-    return Promise.reject(error);
-  }
-);
+interface ApiErrorResponse {
+  detail?: string;
+  message?: string;
+  errors?: Array<{
+    loc: string[];
+    msg: string;
+    type: string;
+  }>;
+}
 
 /**
- * Response interceptor - Handle responses and errors
+ * Create axios instance with default config
  */
-apiClient.interceptors.response.use(
-  (response: AxiosResponse) => {
-    // Log successful response in development
-    if (import.meta.env.DEV) {
-      console.log(`✅ ${response.config.method?.toUpperCase()} ${response.config.url}`, {
-        status: response.status,
-        data: response.data,
-      });
-    }
-    
-    return response;
-  },
-  async (error: AxiosError) => {
-    // Log error in development
-    if (import.meta.env.DEV) {
-      console.error(`❌ ${error.config?.method?.toUpperCase()} ${error.config?.url}`, {
-        status: error.response?.status,
-        data: error.response?.data,
-        message: error.message,
-      });
-    }
-    
-    // Handle specific error cases
-    if (error.response) {
-      const status = error.response.status;
+const createApiClient = (): AxiosInstance => {
+  const client = axios.create({
+    baseURL: `${API_BASE_URL}${API_VERSION}`,
+    timeout: 30000,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  /**
+   * Request Interceptor - Add JWT token to requests
+   */
+  client.interceptors.request.use(
+    (config: InternalAxiosRequestConfig) => {
+      // Get token from localStorage
+      const token = localStorage.getItem('access_token');
       
-      switch (status) {
-        case 401:
-          // Unauthorized - Try to refresh token
-          if (error.config && !error.config.url?.includes('/auth/refresh')) {
-            try {
-              const refreshToken = localStorage.getItem('refresh_token');
-              
-              if (refreshToken) {
-                // Try to refresh the token
-                const response = await axios.post(`${API_BASE_URL}/api/v1/auth/refresh`, {
-                  refresh_token: refreshToken,
-                });
-                
-                // Save new tokens
-                const { access_token, refresh_token: newRefreshToken } = response.data;
-                localStorage.setItem('access_token', access_token);
-                localStorage.setItem('refresh_token', newRefreshToken);
-                
-                // Retry the original request
-                if (error.config.headers) {
-                  error.config.headers.Authorization = `Bearer ${access_token}`;
-                }
-                return apiClient.request(error.config);
-              }
-            } catch (refreshError) {
-              // Refresh failed - redirect to login
-              console.error('Token refresh failed:', refreshError);
-              localStorage.removeItem('access_token');
-              localStorage.removeItem('refresh_token');
-              
-              // Only redirect if not already on login page
-              if (!window.location.pathname.includes('/login')) {
-                window.location.href = '/login';
-              }
-            }
-          } else {
-            // This was a refresh attempt that failed
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
-            
-            if (!window.location.pathname.includes('/login')) {
-              window.location.href = '/login';
-            }
-          }
-          break;
-          
-        case 403:
-          // Forbidden - User doesn't have permission
-          console.error('Access forbidden:', error.response.data);
-          break;
-          
-        case 404:
-          // Not found
-          console.error('Resource not found:', error.response.data);
-          break;
-          
-        case 422:
-          // Validation error
-          console.error('Validation error:', error.response.data);
-          break;
-          
-        case 500:
-          // Server error
-          console.error('Server error:', error.response.data);
-          break;
-          
-        default:
-          console.error('API error:', error.response.data);
+      if (token && config.headers) {
+        config.headers.Authorization = `Bearer ${token}`;
       }
-    } else if (error.request) {
-      // Request was made but no response received
-      console.error('Network error - no response from server:', error.message);
-      console.error('Make sure the backend is running at:', API_BASE_URL);
-    } else {
-      // Something else happened
-      console.error('Error setting up request:', error.message);
+
+      // Log request in development
+      if (import.meta.env.DEV) {
+        console.log('🚀 API Request:', config.method?.toUpperCase(), config.url);
+      }
+
+      return config;
+    },
+    (error) => {
+      console.error('❌ Request Error:', error);
+      return Promise.reject(error);
     }
+  );
+
+  /**
+   * Response Interceptor - Handle errors globally
+   */
+  client.interceptors.response.use(
+    (response) => {
+      // Log response in development
+      if (import.meta.env.DEV) {
+        console.log('✅ API Response:', response.config.url, response.status);
+      }
+      return response;
+    },
+    async (error: AxiosError<ApiErrorResponse>) => {
+      // Log error in development
+      if (import.meta.env.DEV) {
+        console.error('❌ API Error:', error.response?.status, error.config?.url);
+      }
+
+      // Handle 401 Unauthorized - token expired or invalid
+      if (error.response?.status === 401) {
+        // Clear stored tokens
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        
+        // Redirect to login if not already there
+        if (!window.location.pathname.includes('/login')) {
+          window.location.href = '/login';
+        }
+      }
+
+      // Handle 403 Forbidden
+      if (error.response?.status === 403) {
+        console.error('Access forbidden:', error.response.data?.detail);
+      }
+
+      // Handle 404 Not Found
+      if (error.response?.status === 404) {
+        console.error('Resource not found:', error.response.data?.detail);
+      }
+
+      // Handle 422 Validation Error
+      if (error.response?.status === 422) {
+        const validationErrors = error.response.data?.errors;
+        if (validationErrors && Array.isArray(validationErrors)) {
+          console.error('Validation errors:', validationErrors);
+        }
+      }
+
+      // Handle 500 Internal Server Error
+      if (error.response?.status === 500) {
+        console.error('Server error:', error.response.data?.detail);
+      }
+
+      return Promise.reject(error);
+    }
+  );
+
+  return client;
+};
+
+// Create and export the API client instance
+export const apiClient = createApiClient();
+
+/**
+ * API Helper Functions
+ */
+
+// Get request with type safety
+export const apiGet = async <T = any>(url: string, params?: Record<string, any>): Promise<T> => {
+  const response = await apiClient.get<T>(url, { params });
+  return response.data;
+};
+
+// Post request with type safety
+export const apiPost = async <T = any>(url: string, data?: any): Promise<T> => {
+  const response = await apiClient.post<T>(url, data);
+  return response.data;
+};
+
+// Put request with type safety
+export const apiPut = async <T = any>(url: string, data?: any): Promise<T> => {
+  const response = await apiClient.put<T>(url, data);
+  return response.data;
+};
+
+// Patch request with type safety
+export const apiPatch = async <T = any>(url: string, data?: any): Promise<T> => {
+  const response = await apiClient.patch<T>(url, data);
+  return response.data;
+};
+
+// Delete request with type safety
+export const apiDelete = async <T = any>(url: string): Promise<T> => {
+  const response = await apiClient.delete<T>(url);
+  return response.data;
+};
+
+/**
+ * Authentication API Functions
+ */
+export const authApi = {
+  login: async (email: string, password: string) => {
+    const response = await apiClient.post('/auth/login', { email, password });
+    const { access_token, refresh_token } = response.data;
     
-    return Promise.reject(error);
-  }
-);
+    // Store tokens
+    localStorage.setItem('access_token', access_token);
+    localStorage.setItem('refresh_token', refresh_token);
+    
+    return response.data;
+  },
 
-/**
- * Helper function to check if user is authenticated
- */
-export const isAuthenticated = (): boolean => {
-  const token = localStorage.getItem('access_token');
-  return !!token;
-};
+  register: async (email: string, password: string, username?: string) => {
+    const response = await apiClient.post('/auth/register', {
+      email,
+      password,
+      username,
+    });
+    return response.data;
+  },
 
-/**
- * Helper function to get current access token
- */
-export const getAccessToken = (): string | null => {
-  return localStorage.getItem('access_token');
-};
-
-/**
- * Helper function to logout (clear tokens)
- */
-export const logout = async (): Promise<void> => {
-  try {
-    // Call logout endpoint (optional, for logging purposes)
-    await apiClient.post('/auth/logout');
-  } catch (error) {
-    console.error('Logout API call failed:', error);
-  } finally {
-    // Clear tokens from localStorage
+  logout: () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
-    
-    // Redirect to login page
     window.location.href = '/login';
+  },
+
+  refreshToken: async () => {
+    const refresh_token = localStorage.getItem('refresh_token');
+    if (!refresh_token) {
+      throw new Error('No refresh token available');
+    }
+
+    const response = await apiClient.post('/auth/refresh', { refresh_token });
+    const { access_token, refresh_token: new_refresh_token } = response.data;
+    
+    // Update tokens
+    localStorage.setItem('access_token', access_token);
+    localStorage.setItem('refresh_token', new_refresh_token);
+    
+    return response.data;
+  },
+
+  getCurrentUser: async () => {
+    const response = await apiClient.get('/auth/me');
+    return response.data;
+  },
+
+  isAuthenticated: (): boolean => {
+    return !!localStorage.getItem('access_token');
+  },
+};
+
+/**
+ * Diagram API Functions
+ */
+export const diagramApi = {
+  getPublished: async () => {
+    return apiGet('/diagrams/published');
+  },
+
+  getById: async (id: string) => {
+    return apiGet(`/diagrams/${id}`);
+  },
+
+  create: async (data: { workspace_name: string; name: string; description?: string }) => {
+    return apiPost('/diagrams', data);
+  },
+
+  update: async (id: string, data: any) => {
+    return apiPut(`/diagrams/${id}`, data);
+  },
+
+  publish: async (id: string) => {
+    return apiPost(`/diagrams/${id}/publish`);
+  },
+
+  delete: async (id: string) => {
+    return apiDelete(`/diagrams/${id}`);
+  },
+};
+
+/**
+ * Utility Functions
+ */
+
+// Download file from API
+export const downloadFile = async (url: string, filename: string): Promise<void> => {
+  try {
+    const response = await apiClient.get(url, {
+      responseType: 'blob',
+    });
+
+    const blob = new Blob([response.data]);
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(downloadUrl);
+  } catch (error) {
+    console.error('Download failed:', error);
+    throw error;
   }
 };
 
-/**
- * Helper function to set auth tokens
- */
-export const setAuthTokens = (accessToken: string, refreshToken: string): void => {
-  localStorage.setItem('access_token', accessToken);
-  localStorage.setItem('refresh_token', refreshToken);
+// Upload file to API
+export const uploadFile = async (url: string, file: File, fieldName = 'file'): Promise<any> => {
+  const formData = new FormData();
+  formData.append(fieldName, file);
+
+  const response = await apiClient.post(url, formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+
+  return response.data;
 };
 
-/**
- * Helper function to clear auth tokens
- */
-export const clearAuthTokens = (): void => {
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('refresh_token');
+// Check API health
+export const checkApiHealth = async (): Promise<boolean> => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/health`, {
+      timeout: 5000,
+    });
+    return response.status === 200;
+  } catch (error) {
+    console.error('API health check failed:', error);
+    return false;
+  }
 };
 
-// Export configured axios instance as default
+// Export default client
 export default apiClient;

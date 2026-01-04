@@ -1,53 +1,35 @@
+/**
+ * Tailwind CSS Configuration
+ * Path: frontend/tailwind.config.js
+ */
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  darkMode: ['class'],
   content: [
-    './index.html',
-    './src/**/*.{js,ts,jsx,tsx}',
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
       colors: {
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
-        primary: {
-          DEFAULT: 'hsl(var(--primary))',
-          foreground: 'hsl(var(--primary-foreground))',
-        },
-        secondary: {
-          DEFAULT: 'hsl(var(--secondary))',
-          foreground: 'hsl(var(--secondary-foreground))',
-        },
-        destructive: {
-          DEFAULT: 'hsl(var(--destructive))',
-          foreground: 'hsl(var(--destructive-foreground))',
-        },
-        muted: {
-          DEFAULT: 'hsl(var(--muted))',
-          foreground: 'hsl(var(--muted-foreground))',
-        },
-        accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
-        },
-        popover: {
-          DEFAULT: 'hsl(var(--popover))',
-          foreground: 'hsl(var(--popover-foreground))',
-        },
-        card: {
-          DEFAULT: 'hsl(var(--card))',
-          foreground: 'hsl(var(--card-foreground))',
+        // Semantic Architect color palette
+        'sa': {
+          primary: '#0052ea',      // Blue - Primary/Action
+          success: '#059669',      // Green - Success/Valid
+          error: '#c71100',        // Red - Error/Delete
+          warning: '#eaa800',      // Yellow - Warning/Secondary
+          black: '#000000',        // Black - Text
+          grey: '#8c8c8c',         // Dark Grey - Borders
+          white: '#ffffff',        // White - Background
+          'off-white': '#f7f7f7',  // Off-white - Alt Background
+          'light-grey': '#cccccc', // Light Grey
         },
       },
-      borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+      fontFamily: {
+        sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        mono: ['Fira Code', 'Monaco', 'Courier New', 'monospace'],
       },
     },
   },
   plugins: [],
-};
+}

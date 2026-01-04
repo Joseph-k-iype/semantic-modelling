@@ -1,1 +1,0 @@
-export { DiagramToolbar } from './DiagramToolbar';

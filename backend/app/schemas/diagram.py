@@ -1,147 +1,142 @@
 # backend/app/schemas/diagram.py
 """
 Diagram Pydantic Schemas
+Path: backend/app/schemas/diagram.py
 """
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+
 from datetime import datetime
+from typing import List, Optional, Any, Dict
+from pydantic import BaseModel, Field
+from uuid import UUID
 
 
-class DiagramBase(BaseModel):
-    """Base diagram schema"""
+class NodePosition(BaseModel):
+    """Node position"""
+    x: float
+    y: float
+
+
+class NodeDataBase(BaseModel):
+    """Base node data"""
+    label: str
+    type: str
+    stereotype: Optional[str] = None
+    color: str
+    parentId: Optional[str] = None
+
+
+class AttributeBase(BaseModel):
+    """Attribute schema"""
+    id: str
+    name: str
+    dataType: str
+    key: Optional[str] = 'Default'
+    visibility: Optional[str] = None
+    isStatic: Optional[bool] = None
+    isFinal: Optional[bool] = None
+
+
+class MethodBase(BaseModel):
+    """Method schema"""
+    id: str
+    name: str
+    returnType: str
+    parameters: List[Dict[str, str]] = []
+    visibility: Optional[str] = None
+    isStatic: Optional[bool] = None
+    isAbstract: Optional[bool] = None
+
+
+class NodeBase(BaseModel):
+    """Node schema"""
+    id: str
+    type: str
+    position: NodePosition
+    data: Dict[str, Any]
+
+
+class EdgeDataBase(BaseModel):
+    """Edge data schema"""
+    type: str
+    sourceCardinality: str
+    targetCardinality: str
+    label: Optional[str] = None
+    color: Optional[str] = None
+
+
+class EdgeBase(BaseModel):
+    """Edge schema"""
+    id: str
+    source: str
+    target: str
+    data: EdgeDataBase
+
+
+class ViewportBase(BaseModel):
+    """Viewport schema"""
+    x: float = 0
+    y: float = 0
+    zoom: float = 1
+
+
+class DiagramCreate(BaseModel):
+    """Create diagram request"""
+    workspace_name: str = Field(..., min_length=1, max_length=255)
     name: str = Field(..., min_length=1, max_length=255)
-    type: str = Field(..., description="Diagram type (ER, UML_CLASS, BPMN, etc.)")
     description: Optional[str] = None
-
-
-class DiagramCreate(DiagramBase):
-    """Schema for creating a diagram"""
-    model_id: str = Field(..., description="ID of the parent model")
+    nodes: List[NodeBase] = []
+    edges: List[EdgeBase] = []
+    viewport: ViewportBase = ViewportBase()
 
 
 class DiagramUpdate(BaseModel):
-    """Schema for updating a diagram"""
+    """Update diagram request"""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
-    nodes: Optional[List[Dict[str, Any]]] = None
-    edges: Optional[List[Dict[str, Any]]] = None
-    viewport: Optional[Dict[str, Any]] = None
+    nodes: Optional[List[NodeBase]] = None
+    edges: Optional[List[EdgeBase]] = None
+    viewport: Optional[ViewportBase] = None
+    settings: Optional[Dict[str, Any]] = None
 
 
-class DiagramSaveRequest(BaseModel):
-    """Schema for saving diagram state"""
-    nodes: List[Dict[str, Any]] = Field(..., description="List of diagram nodes")
-    edges: List[Dict[str, Any]] = Field(..., description="List of diagram edges")
-    viewport: Optional[Dict[str, Any]] = Field(
-        default={"x": 0, "y": 0, "zoom": 1},
-        description="Viewport state"
-    )
-
-
-class DiagramResponse(DiagramBase):
-    """Schema for diagram response"""
-    id: str
-    model_id: str
-    nodes: List[Dict[str, Any]] = Field(default_factory=list)
-    edges: List[Dict[str, Any]] = Field(default_factory=list)
-    viewport: Dict[str, Any] = Field(default_factory=lambda: {"x": 0, "y": 0, "zoom": 1})
-    created_by: str
-    updated_by: Optional[str] = None
+class DiagramResponse(BaseModel):
+    """Diagram response"""
+    id: UUID
+    name: str
+    workspace_name: Optional[str]
+    description: Optional[str]
+    notation: str
+    graph_name: Optional[str]
+    is_published: bool
+    published_at: Optional[datetime]
+    nodes: List[NodeBase] = []
+    edges: List[EdgeBase] = []
+    viewport: ViewportBase = ViewportBase()
+    settings: Dict[str, Any] = {}
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    updated_at: datetime
+    created_by: UUID
     
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
-class DiagramWithLayouts(DiagramResponse):
-    """Diagram response with layout information"""
-    layouts: List[Dict[str, Any]] = Field(default_factory=list)
-    default_layout_id: Optional[str] = None
+class DiagramPublicResponse(BaseModel):
+    """Public response for homepage - includes computed stats"""
+    id: UUID
+    name: str
+    workspace_name: str
+    author_name: str
+    total_classes: int
+    total_relationships: int
+    created_at: datetime
+    updated_at: datetime
     
-    model_config = ConfigDict(from_attributes=True)
+    class Config:
+        from_attributes = True
 
 
-class DiagramDuplicate(BaseModel):
-    """Schema for duplicating a diagram"""
-    new_name: str = Field(..., min_length=1, max_length=255)
-    copy_layouts: bool = Field(default=True, description="Whether to copy layouts")
-    target_model_id: Optional[str] = Field(None, description="Target model ID (if different)")
-
-
-class DiagramLineageRequest(BaseModel):
-    """Schema for lineage request"""
-    node_id: str = Field(..., description="Node ID to get lineage for")
-    direction: str = Field(
-        default="both",
-        description="Lineage direction: 'upstream', 'downstream', or 'both'"
-    )
-    depth: int = Field(default=3, ge=1, le=10, description="Maximum traversal depth")
-
-
-class DiagramLineageResponse(BaseModel):
-    """Schema for lineage response"""
-    node_id: str
-    direction: str
-    lineage: List[Dict[str, Any]]
-
-
-# Node Data Schemas
-class NodeData(BaseModel):
-    """Base node data schema"""
-    label: str
-    description: Optional[str] = None
-
-
-class EREntityData(NodeData):
-    """ER Entity node data"""
-    entity: Optional[Dict[str, Any]] = None
-    attributes: List[Dict[str, Any]] = Field(default_factory=list)
-
-
-class UMLClassData(NodeData):
-    """UML Class node data"""
-    class_: Optional[Dict[str, Any]] = Field(None, alias="class")
-    attributes: List[Dict[str, Any]] = Field(default_factory=list)
-    methods: List[Dict[str, Any]] = Field(default_factory=list)
-    is_abstract: bool = False
-    stereotype: Optional[str] = None
-
-
-class BPMNTaskData(NodeData):
-    """BPMN Task node data"""
-    task: Optional[Dict[str, Any]] = None
-    task_type: Optional[str] = None  # user, service, manual, etc.
-
-
-class BPMNEventData(NodeData):
-    """BPMN Event node data"""
-    event: Optional[Dict[str, Any]] = None
-    event_type: Optional[str] = None  # start, end, intermediate
-
-
-class BPMNGatewayData(NodeData):
-    """BPMN Gateway node data"""
-    gateway: Optional[Dict[str, Any]] = None
-    gateway_type: Optional[str] = None  # exclusive, parallel, inclusive
-
-
-class DiagramNode(BaseModel):
-    """Schema for diagram node"""
-    id: str
-    type: str
-    data: Dict[str, Any]
-    position: Dict[str, float]
-    width: Optional[float] = None
-    height: Optional[float] = None
-
-
-class DiagramEdge(BaseModel):
-    """Schema for diagram edge"""
-    id: str
-    type: str
-    source: str
-    target: str
-    data: Optional[Dict[str, Any]] = None
-    sourceHandle: Optional[str] = None
-    targetHandle: Optional[str] = None
-    label: Optional[str] = None
+class DiagramListResponse(BaseModel):
+    """List of diagrams"""
+    diagrams: List[DiagramResponse]
+    total: int

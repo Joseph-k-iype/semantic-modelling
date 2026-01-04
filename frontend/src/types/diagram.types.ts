@@ -1,281 +1,270 @@
+/**
+ * Diagram Type Definitions - Simplified for UML Only
+ * Path: frontend/src/types/diagram.types.ts
+ */
+
 import { Node, Edge } from 'reactflow';
 
-// Diagram Types
-export enum DiagramType {
-  ER = 'ER',
-  UML_CLASS = 'UML_CLASS',
-  UML_SEQUENCE = 'UML_SEQUENCE',
-  UML_ACTIVITY = 'UML_ACTIVITY',
-  UML_STATE = 'UML_STATE',
-  UML_COMPONENT = 'UML_COMPONENT',
-  UML_DEPLOYMENT = 'UML_DEPLOYMENT',
-  BPMN = 'BPMN'
+// ============================================================================
+// ELEMENT TYPES (5 types only)
+// ============================================================================
+
+export enum NodeType {
+  PACKAGE = 'package',
+  CLASS = 'class',
+  OBJECT = 'object',
+  INTERFACE = 'interface',
+  ENUMERATION = 'enumeration'
 }
 
-// Node Types
-export enum ERNodeType {
-  ENTITY = 'ER_ENTITY',
-  WEAK_ENTITY = 'ER_WEAK_ENTITY',
-  ATTRIBUTE = 'ER_ATTRIBUTE',
-  KEY_ATTRIBUTE = 'ER_KEY_ATTRIBUTE',
-  MULTIVALUED_ATTRIBUTE = 'ER_MULTIVALUED_ATTRIBUTE'
+export enum RelationshipType {
+  ASSOCIATION = 'Association',
+  COMPOSITION = 'Composition',
+  AGGREGATION = 'Aggregation',
+  INHERITANCE = 'Inheritance',
+  DEPENDENCY = 'Dependency',
+  REALIZATION = 'Realization'
 }
 
-export enum UMLNodeType {
-  CLASS = 'UML_CLASS',
-  INTERFACE = 'UML_INTERFACE',
-  ABSTRACT_CLASS = 'UML_ABSTRACT_CLASS',
-  PACKAGE = 'UML_PACKAGE',
-  COMPONENT = 'UML_COMPONENT',
-  NOTE = 'UML_NOTE',
-  ACTOR = 'UML_ACTOR',
-  USECASE = 'UML_USECASE',
-  STATE = 'UML_STATE',
-  INITIAL_STATE = 'UML_INITIAL_STATE',
-  FINAL_STATE = 'UML_FINAL_STATE',
-  ACTIVITY = 'UML_ACTIVITY',
-  DECISION = 'UML_DECISION',
-  FORK = 'UML_FORK',
-  JOIN = 'UML_JOIN'
-}
+// ============================================================================
+// ATTRIBUTE & METHOD TYPES
+// ============================================================================
 
-export enum BPMNNodeType {
-  TASK = 'BPMN_TASK',
-  USER_TASK = 'BPMN_USER_TASK',
-  SERVICE_TASK = 'BPMN_SERVICE_TASK',
-  MANUAL_TASK = 'BPMN_MANUAL_TASK',
-  SCRIPT_TASK = 'BPMN_SCRIPT_TASK',
-  START_EVENT = 'BPMN_START_EVENT',
-  END_EVENT = 'BPMN_END_EVENT',
-  INTERMEDIATE_EVENT = 'BPMN_INTERMEDIATE_EVENT',
-  GATEWAY_EXCLUSIVE = 'BPMN_GATEWAY_EXCLUSIVE',
-  GATEWAY_PARALLEL = 'BPMN_GATEWAY_PARALLEL',
-  GATEWAY_INCLUSIVE = 'BPMN_GATEWAY_INCLUSIVE',
-  POOL = 'BPMN_POOL',
-  LANE = 'BPMN_LANE',
-  DATA_OBJECT = 'BPMN_DATA_OBJECT'
-}
-
-// Edge Types
-export enum EREdgeType {
-  RELATIONSHIP = 'ER_RELATIONSHIP',
-  ATTRIBUTE_LINK = 'ER_ATTRIBUTE_LINK'
-}
-
-export enum UMLEdgeType {
-  ASSOCIATION = 'UML_ASSOCIATION',
-  AGGREGATION = 'UML_AGGREGATION',
-  COMPOSITION = 'UML_COMPOSITION',
-  GENERALIZATION = 'UML_GENERALIZATION',
-  DEPENDENCY = 'UML_DEPENDENCY',
-  REALIZATION = 'UML_REALIZATION',
-  MESSAGE = 'UML_MESSAGE',
-  TRANSITION = 'UML_TRANSITION'
-}
-
-export enum BPMNEdgeType {
-  SEQUENCE_FLOW = 'BPMN_SEQUENCE_FLOW',
-  MESSAGE_FLOW = 'BPMN_MESSAGE_FLOW',
-  ASSOCIATION = 'BPMN_ASSOCIATION',
-  DATA_ASSOCIATION = 'BPMN_DATA_ASSOCIATION'
-}
-
-// ER Diagram Specific
-export interface ERAttribute {
+export interface Attribute {
   id: string;
   name: string;
-  type: string;
-  isPrimary?: boolean;
-  isForeign?: boolean;
-  isUnique?: boolean;
-  isNullable?: boolean;
-  defaultValue?: string;
-  isPrimaryKey?: boolean;
-  isForeignKey?: boolean;
-}
-
-export interface EREntity {
-  id: string;
-  name: string;
-  attributes: ERAttribute[];
-  isWeak?: boolean;
-}
-
-export interface ERRelationship {
-  id: string;
-  name: string;
-  cardinality: '1:1' | '1:N' | 'N:1' | 'N:M';
-  sourceEntity: string;
-  targetEntity: string;
-  sourceCardinality?: string;  // '1', 'N', '0..1', '1..N', '0..N', 'M'
-  targetCardinality?: string;  // '1', 'N', '0..1', '1..N', '0..N', 'M'
-  isIdentifying?: boolean;
-  color?: string;
-  strokeWidth?: number;
-  zIndex?: number;
-}
-
-// UML Class Diagram Specific
-export interface UMLAttribute {
-  id: string;
-  name: string;
-  type: string;
-  visibility: 'public' | 'private' | 'protected' | 'package';
+  dataType: string;
+  key?: 'PRIMARY KEY' | 'FOREIGN KEY' | 'Default';
+  visibility?: 'public' | 'private' | 'protected' | 'package';
   isStatic?: boolean;
   isFinal?: boolean;
+  defaultValue?: string;
 }
 
-export interface UMLMethod {
+export interface Method {
   id: string;
   name: string;
   returnType: string;
   parameters: Array<{ name: string; type: string }>;
-  visibility: 'public' | 'private' | 'protected' | 'package';
+  visibility?: 'public' | 'private' | 'protected' | 'package';
   isStatic?: boolean;
   isAbstract?: boolean;
 }
 
-export interface UMLClass {
-  id: string;
-  name: string;
-  stereotype?: string;
-  isAbstract?: boolean;
-  attributes: UMLAttribute[];
-  methods: UMLMethod[];
-}
+// ============================================================================
+// NODE DATA INTERFACES
+// ============================================================================
 
-// BPMN Specific
-export interface BPMNTask {
-  id: string;
-  name: string;
-  type: 'task' | 'userTask' | 'serviceTask' | 'manualTask' | 'scriptTask';
-  assignee?: string;
-  documentation?: string;
-}
-
-export interface BPMNEvent {
-  id: string;
-  name: string;
-  eventType: 'start' | 'end' | 'intermediate';
-  eventDefinition?: 'message' | 'timer' | 'error' | 'signal' | 'conditional';
-}
-
-export interface BPMNGateway {
-  id: string;
-  name: string;
-  gatewayType: 'exclusive' | 'parallel' | 'inclusive' | 'eventBased';
-}
-
-export interface BPMNPool {
-  id: string;
-  name: string;
-  lanes: BPMNLane[];
-}
-
-export interface BPMNLane {
-  id: string;
-  name: string;
-  height: number;
-}
-
-// Base Node Data
 export interface BaseNodeData {
   label: string;
-  description?: string;
-  metadata?: Record<string, any>;
-}
-
-export interface ERNodeData extends BaseNodeData {
-  entity?: EREntity;
-  attribute?: ERAttribute;
-  color?: string;
-  textColor?: string;
-  zIndex?: number;
-}
-
-export interface UMLNodeData extends BaseNodeData {
-  class?: UMLClass;
   stereotype?: string;
+  description?: string;
+  color: string;
+  parentId?: string; // For package membership
+  zIndex?: number;
+}
+
+export interface PackageNodeData extends BaseNodeData {
+  type: NodeType.PACKAGE;
+}
+
+export interface ClassNodeData extends BaseNodeData {
+  type: NodeType.CLASS;
+  attributes: Attribute[];
+  methods?: Method[];
   isAbstract?: boolean;
-  color?: string;
-  textColor?: string;
-  zIndex?: number;
 }
 
-export interface BPMNNodeData extends BaseNodeData {
-  task?: BPMNTask;
-  event?: BPMNEvent;
-  gateway?: BPMNGateway;
-  pool?: BPMNPool;
-  lane?: BPMNLane;
-  color?: string;
-  textColor?: string;
-  zIndex?: number;
+export interface ObjectNodeData extends BaseNodeData {
+  type: NodeType.OBJECT;
+  attributes: Attribute[];
 }
 
-// Diagram Node and Edge Types
-export type DiagramNode = Node<ERNodeData | UMLNodeData | BPMNNodeData>;
-export type DiagramEdge = Edge;
+export interface InterfaceNodeData extends BaseNodeData {
+  type: NodeType.INTERFACE;
+  methods?: Method[];
+}
 
-// Diagram State
+export interface EnumerationNodeData extends BaseNodeData {
+  type: NodeType.ENUMERATION;
+  literals: string[]; // e.g., ['SMALL', 'MEDIUM', 'LARGE']
+}
+
+export type NodeData = 
+  | PackageNodeData 
+  | ClassNodeData 
+  | ObjectNodeData 
+  | InterfaceNodeData 
+  | EnumerationNodeData;
+
+// ============================================================================
+// EDGE DATA INTERFACES
+// ============================================================================
+
+export interface EdgeData {
+  type: RelationshipType;
+  sourceCardinality: string; // e.g., '1', '0..1', '1..*', '*'
+  targetCardinality: string;
+  label?: string;
+  color?: string;
+  strokeWidth?: number;
+  isIdentifying?: boolean;
+}
+
+// ============================================================================
+// DIAGRAM STATE
+// ============================================================================
+
 export interface DiagramState {
   id: string;
   name: string;
-  type: DiagramType;
-  modelId: string;
-  workspaceId: string;
-  nodes: DiagramNode[];
-  edges: DiagramEdge[];
+  workspaceName: string;
+  graphName: string; // FalkorDB graph reference
+  nodes: Node<NodeData>[];
+  edges: Edge<EdgeData>[];
   viewport: {
     x: number;
     y: number;
     zoom: number;
   };
-  selectedNodeIds: string[];
-  selectedEdgeIds: string[];
+  isPublished: boolean;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
 }
 
-// Diagram Actions
-export interface DiagramAction {
-  type: string;
-  payload: any;
-  timestamp: number;
+// ============================================================================
+// API TYPES
+// ============================================================================
+
+export interface CreateDiagramRequest {
+  workspace_name: string;
+  name: string;
 }
 
-// Layout Options
-export interface LayoutOptions {
-  algorithm: 'manual' | 'layered' | 'force' | 'swimlane' | 'sequence';
-  direction?: 'TB' | 'BT' | 'LR' | 'RL';
-  spacing?: {
-    nodeSpacing?: number;
-    rankSpacing?: number;
-    edgeSpacing?: number;
+export interface CreateDiagramResponse {
+  id: string;
+  name: string;
+  workspace_name: string;
+  graph_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublishedModel {
+  id: string;
+  name: string;
+  workspace_name: string;
+  author_name: string;
+  total_classes: number;
+  total_relationships: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveDiagramRequest {
+  nodes: Node<NodeData>[];
+  edges: Edge<EdgeData>[];
+  viewport: {
+    x: number;
+    y: number;
+    zoom: number;
   };
-  alignment?: 'UL' | 'UR' | 'DL' | 'DR';
 }
 
-// Validation Result
-export interface ValidationResult {
-  isValid: boolean;
-  errors: ValidationError[];
-  warnings: ValidationWarning[];
+export interface SyncToFalkorDBRequest {
+  diagram_id: string;
+  nodes: Array<{
+    id: string;
+    type: string;
+    data: NodeData;
+    position: { x: number; y: number };
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    data: EdgeData;
+  }>;
 }
 
-export interface ValidationError {
-  id: string;
-  nodeId?: string;
-  edgeId?: string;
-  message: string;
-  severity: 'error';
-}
+// ============================================================================
+// CARDINALITY OPTIONS
+// ============================================================================
 
-export interface ValidationWarning {
-  id: string;
-  nodeId?: string;
-  edgeId?: string;
-  message: string;
-  severity: 'warning';
-}
+export const CARDINALITY_OPTIONS = [
+  { value: '0..1', label: '0..1 (Zero or One)' },
+  { value: '1', label: '1 (Exactly One)' },
+  { value: '0..*', label: '0..* (Zero or Many)' },
+  { value: '1..*', label: '1..* (One or Many)' },
+  { value: '*', label: '* (Many)' },
+] as const;
+
+// ============================================================================
+// RELATIONSHIP TYPE OPTIONS
+// ============================================================================
+
+export const RELATIONSHIP_TYPE_OPTIONS = [
+  { 
+    value: RelationshipType.ASSOCIATION, 
+    label: 'Association',
+    description: 'A structural relationship that describes a connection between objects'
+  },
+  { 
+    value: RelationshipType.COMPOSITION, 
+    label: 'Composition',
+    description: 'A strong "whole-part" relationship where the part cannot exist without the whole'
+  },
+  { 
+    value: RelationshipType.AGGREGATION, 
+    label: 'Aggregation',
+    description: 'A weak "whole-part" relationship where the part can exist independently'
+  },
+  { 
+    value: RelationshipType.INHERITANCE, 
+    label: 'Inheritance',
+    description: 'An "is-a" relationship representing generalization/specialization'
+  },
+  { 
+    value: RelationshipType.DEPENDENCY, 
+    label: 'Dependency',
+    description: 'A relationship where one element depends on another'
+  },
+  { 
+    value: RelationshipType.REALIZATION, 
+    label: 'Realization',
+    description: 'A relationship between an interface and a class that implements it'
+  },
+] as const;
+
+// ============================================================================
+// DATA TYPE OPTIONS
+// ============================================================================
+
+export const DATA_TYPE_OPTIONS = [
+  'INTEGER',
+  'VARCHAR',
+  'TEXT',
+  'BOOLEAN',
+  'DATE',
+  'TIMESTAMP',
+  'DECIMAL',
+  'FLOAT',
+  'DOUBLE',
+  'BIGINT',
+  'SMALLINT',
+  'CHAR',
+  'UUID',
+  'JSON',
+  'ARRAY',
+] as const;
+
+// ============================================================================
+// KEY TYPE OPTIONS
+// ============================================================================
+
+export const KEY_TYPE_OPTIONS = [
+  { value: 'PRIMARY KEY', label: 'PK', description: 'Primary Key' },
+  { value: 'FOREIGN KEY', label: 'FK', description: 'Foreign Key' },
+  { value: 'Default', label: 'ID', description: 'Regular Attribute' },
+] as const;
