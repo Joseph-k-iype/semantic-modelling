@@ -1,13 +1,17 @@
+// frontend/src/pages/HomePage/HomePage.tsx
 /**
- * Home Page Component
+ * Home Page Component - FIXED with Authentication Check
  * Path: frontend/src/pages/HomePage/HomePage.tsx
  * 
- * Displays published models library with red sidebar
+ * CRITICAL FIX:
+ * - Checks authentication before creating diagram
+ * - Redirects to login if not authenticated
+ * - Preserves intended action after login
  */
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, AlertCircle } from 'lucide-react';
+import { Plus, Search, AlertCircle, LogIn } from 'lucide-react';
 import { apiClient } from '../../services/api/client';
 import { CreateDiagramModal } from '../../components/modals/CreateDiagramModal/CreateDiagramModal'
 import { ModelCard } from '../../components/cards/ModelCard/ModelCard';
@@ -24,6 +28,13 @@ export const HomePage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Check authentication status
+  useEffect(() => {
+    const token = localStorage.getItem('access_token');
+    setIsAuthenticated(!!token);
+  }, []);
 
   // Fetch published models on mount
   useEffect(() => {
@@ -46,13 +57,34 @@ export const HomePage: React.FC = () => {
     }
   };
 
+  const handleCreateClick = () => {
+    // Check if user is authenticated
+    if (!isAuthenticated) {
+      // Redirect to login with return path
+      navigate('/login', { state: { from: { pathname: '/builder/new' } } });
+      return;
+    }
+
+    // User is authenticated, show create modal
+    setIsCreateModalOpen(true);
+  };
+
   const handleCreateDiagram = async (workspaceName: string, diagramName: string) => {
+    // Double-check authentication before API call
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: { pathname: '/builder/new' } } });
+      return;
+    }
+
     try {
       setIsCreating(true);
       
       const response = await apiClient.post<{ id: string }>('/diagrams', {
         workspace_name: workspaceName,
         name: diagramName,
+        nodes: [],  // Empty diagram to start
+        edges: [],
+        viewport: { x: 0, y: 0, zoom: 1 }
       });
 
       setIsCreateModalOpen(false);
@@ -61,201 +93,170 @@ export const HomePage: React.FC = () => {
       navigate(`/builder/${response.data.id}`);
     } catch (error: any) {
       console.error('Failed to create diagram:', error);
+      
+      // Check if it's an auth error
+      if (error?.response?.status === 401 || error?.response?.status === 403) {
+        // Token expired or invalid, redirect to login
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        setIsAuthenticated(false);
+        navigate('/login', { state: { from: { pathname: '/builder/new' } } });
+        return;
+      }
+      
       const errorMessage = error?.response?.data?.detail || 'Failed to create diagram. Please try again.';
-      alert(errorMessage);
+      setError(errorMessage);
     } finally {
       setIsCreating(false);
     }
   };
 
-  const handleModelClick = (modelId: string) => {
-    navigate(`/builder/${modelId}`);
+  const handleLogin = () => {
+    navigate('/login');
   };
 
   // Filter models based on search query
   const filteredModels = publishedModels.filter(model =>
     model.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    model.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    (model.workspace_name && model.workspace_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-    (model.author_name && model.author_name.toLowerCase().includes(searchQuery.toLowerCase()))
+    model.workspace_name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
-    <div 
-      className="min-h-screen"
-      style={{ backgroundColor: COLORS.OFF_WHITE }}
-    >
-      {/* Left Sidebar - Red */}
-      <aside
-        className="fixed left-0 top-0 h-full w-80 shadow-lg z-10"
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Left Sidebar - RED */}
+      <div 
+        className="w-64 flex-shrink-0"
         style={{ backgroundColor: COLORS.ERROR }}
       >
         <div className="p-6">
-          {/* Title */}
-          <h1 
-            className="text-2xl font-bold mb-6" 
-            style={{ color: COLORS.WHITE }}
-          >
-            Public Models
-          </h1>
-          
-          {/* Search Bar */}
-          <div className="relative">
-            <Search 
-              className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" 
-              style={{ color: COLORS.DARK_GREY }}
-            />
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name or id"
-              className="w-full pl-10 pr-4 py-2 rounded focus:outline-none focus:ring-2"
-              style={{ 
-                backgroundColor: COLORS.WHITE,
-                color: COLORS.BLACK,
-                borderColor: COLORS.LIGHT_GREY
-              }}
-            />
-          </div>
-
-          {/* Search Results Count */}
-          {searchQuery && (
-            <p 
-              className="mt-3 text-sm"
-              style={{ color: COLORS.WHITE }}
+          <h2 className="text-xl font-bold text-white mb-6">
+            Published Models
+          </h2>
+          <div className="space-y-2">
+            <button 
+              onClick={handleCreateClick}
+              className="w-full flex items-center gap-2 px-4 py-3 text-white bg-white bg-opacity-20 hover:bg-opacity-30 rounded-lg transition-all"
             >
-              {filteredModels.length} result{filteredModels.length !== 1 ? 's' : ''} found
-            </p>
-          )}
+              <Plus className="w-5 h-5" />
+              <span className="font-medium">New Diagram</span>
+            </button>
+          </div>
         </div>
-      </aside>
+      </div>
 
       {/* Main Content Area */}
-      <main className="ml-80 p-8">
-        {/* Header */}
-        <header className="flex justify-between items-center mb-8">
-          <h2 
-            className="text-4xl font-bold" 
-            style={{ color: COLORS.BLACK }}
-          >
-            SEMANTIC ARCHITECT
-          </h2>
-          
-          <button
-            onClick={() => setIsCreateModalOpen(true)}
-            className="flex items-center gap-2 px-6 py-3 rounded text-white font-semibold transition hover:opacity-90 shadow-md"
-            style={{ backgroundColor: COLORS.ERROR }}
-          >
-            Create
-            <Plus className="w-5 h-5" />
-          </button>
-        </header>
-
-        {/* Error Message */}
-        {error && (
-          <div 
-            className="mb-6 p-4 rounded border flex items-start gap-3"
-            style={{ 
-              backgroundColor: `${COLORS.ERROR}10`,
-              borderColor: COLORS.ERROR,
-              color: COLORS.ERROR
-            }}
-          >
-            <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold">Error loading models</p>
-              <p className="text-sm mt-1">{error}</p>
-              <button
-                onClick={fetchPublishedModels}
-                className="mt-2 text-sm underline hover:no-underline"
-              >
-                Try again
-              </button>
+      <div className="flex-1 overflow-auto">
+        {/* Top Bar */}
+        <div className="bg-white border-b border-gray-200 px-8 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex-1 max-w-2xl">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Search models..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+            
+            {/* Auth Status */}
+            <div className="ml-4">
+              {isAuthenticated ? (
+                <div className="flex items-center gap-2 text-sm text-gray-600">
+                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  <span>Logged in</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleLogin}
+                  className="flex items-center gap-2 px-4 py-2 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span className="font-medium">Sign In</span>
+                </button>
+              )}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Loading State */}
-        {isLoading ? (
-          <div className="text-center py-16">
-            <div 
-              className="inline-block animate-spin rounded-full h-12 w-12 border-4 border-solid"
-              style={{ 
-                borderColor: COLORS.LIGHT_GREY,
-                borderTopColor: COLORS.PRIMARY
-              }}
-            />
-            <p 
-              className="mt-4 text-lg"
-              style={{ color: COLORS.DARK_GREY }}
-            >
-              Loading published models...
-            </p>
-          </div>
-        ) : filteredModels.length === 0 ? (
-          /* Empty State */
-          <div className="text-center py-16">
-            <div
-              className="w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center"
-              style={{ backgroundColor: COLORS.LIGHT_GREY }}
-            >
-              <Search className="w-12 h-12" style={{ color: COLORS.DARK_GREY }} />
+        {/* Content */}
+        <div className="p-8">
+          {/* Error Message */}
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm text-red-800 font-medium">Error</p>
+                <p className="text-sm text-red-700">{error}</p>
+              </div>
             </div>
-            <p 
-              className="text-xl mb-2"
-              style={{ color: COLORS.BLACK }}
-            >
-              {searchQuery ? 'No models match your search' : 'Models not yet published'}
-            </p>
-            <p 
-              className="text-sm"
-              style={{ color: COLORS.DARK_GREY }}
-            >
-              {searchQuery 
-                ? 'Try adjusting your search terms' 
-                : 'Create your first diagram to get started'}
-            </p>
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="mt-4 px-4 py-2 rounded transition hover:opacity-90"
-                style={{ 
-                  backgroundColor: COLORS.PRIMARY,
-                  color: COLORS.WHITE
-                }}
-              >
-                Clear search
-              </button>
-            )}
-          </div>
-        ) : (
-          /* Published Models Grid */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredModels.map((model) => (
-              <ModelCard
-                key={model.id}
-                name={model.name}
-                workspace={model.workspace_name}
-                author={model.author_name}
-                totalClasses={model.total_classes}
-                totalRelationships={model.total_relationships}
-                onClick={() => handleModelClick(model.id)}
-              />
-            ))}
-          </div>
-        )}
-      </main>
+          )}
 
-      {/* Create Modal */}
-      <CreateDiagramModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onSubmit={handleCreateDiagram}
-        isLoading={isCreating}
-      />
+          {/* Loading State */}
+          {isLoading && (
+            <div className="flex items-center justify-center py-12">
+              <div className="text-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                <p className="mt-4 text-gray-600">Loading published models...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {!isLoading && filteredModels.length === 0 && (
+            <div className="text-center py-12">
+              <div className="mx-auto w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                <Search className="w-12 h-12 text-gray-400" />
+              </div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                {searchQuery ? 'No models found' : 'No published models yet'}
+              </h3>
+              <p className="text-gray-600 mb-6">
+                {searchQuery 
+                  ? 'Try adjusting your search terms' 
+                  : 'Create your first diagram to get started'}
+              </p>
+              <button
+                onClick={handleCreateClick}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+                Create New Diagram
+              </button>
+            </div>
+          )}
+
+          {/* Models Grid */}
+          {!isLoading && filteredModels.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              {filteredModels.map((model) => (
+                <ModelCard 
+                  key={model.id}
+                  name={model.name}
+                  workspace={model.workspace_name}
+                  author={model.author_name}
+                  totalClasses={model.total_classes}
+                  totalRelationships={model.total_relationships}
+                  onClick={() => navigate(`/builder/${model.id}`)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Create Diagram Modal */}
+      {isCreateModalOpen && (
+        <CreateDiagramModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onSubmit={handleCreateDiagram}
+          isLoading={isCreating}
+        />
+      )}
     </div>
   );
 };
-
-export default HomePage;

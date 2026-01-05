@@ -1,8 +1,9 @@
+# backend/app/middleware/auth_middleware.py
 """
-Authentication middleware for JWT token validation
+Authentication middleware for JWT token validation - FIXED
+Path: backend/app/middleware/auth_middleware.py
 
-This middleware validates JWT tokens on protected routes and adds user
-information to the request state for use in endpoint handlers.
+CRITICAL FIX: Added /api/v1/diagrams/published to PUBLIC_ROUTES
 """
 
 from typing import Callable, Optional
@@ -42,6 +43,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/api/v1/auth/refresh",
         "/api/v1/auth/password-reset",
         "/api/v1/auth/password-reset/confirm",
+        "/api/v1/diagrams/published",  # CRITICAL FIX: Allow public access to published diagrams
     ]
     
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -125,7 +127,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 )
             
             # Ensure it's an access token (not a refresh token)
-            if token_type != "access":
+            if token_type and token_type != "access":
                 logger.warning(
                     "Wrong token type used",
                     path=request.url.path,

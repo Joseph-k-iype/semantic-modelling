@@ -1,6 +1,6 @@
 # backend/app/services/semantic_model_service.py
 """
-Semantic Model Service - Updated for Semantic Architect
+Semantic Model Service - FIXED for proper FalkorDB sync
 Path: backend/app/services/semantic_model_service.py
 """
 
@@ -28,20 +28,10 @@ class SemanticModelService:
             logger.warning(f"FalkorDB client initialization failed: {e}")
     
     def _sanitize_name_component(self, name: str) -> str:
-        """
-        Sanitize name component for graph name
-        - Replace spaces with underscores
-        - Remove special characters except forward slashes
-        - Lowercase
-        - Truncate to reasonable length
-        """
-        # Replace spaces and dashes with underscores
+        """Sanitize name component for graph name"""
         sanitized = name.replace(" ", "_").replace("-", "_")
-        # Remove special characters except forward slashes, keep only alphanumeric and underscores
         sanitized = re.sub(r'[^a-zA-Z0-9_/]', '', sanitized)
-        # Lowercase
         sanitized = sanitized.lower()
-        # Truncate to 50 characters per component
         sanitized = sanitized[:50]
         return sanitized
     
@@ -51,26 +41,11 @@ class SemanticModelService:
         workspace_name: str,
         diagram_name: str
     ) -> str:
-        """
-        Generate unique graph name for a diagram
-        
-        NEW FORMAT per PRD: {workspace_name}/{diagram_name}/{username}
-        
-        Example: engineering_workspace/customer_order_diagram/john_doe
-        
-        Args:
-            username: Username
-            workspace_name: Workspace name
-            diagram_name: Diagram name
-            
-        Returns:
-            Sanitized graph name in format: workspace/diagram/user
-        """
+        """Generate unique graph name for a diagram"""
         safe_workspace = self._sanitize_name_component(workspace_name)
         safe_diagram = self._sanitize_name_component(diagram_name)
-        safe_username = self._sanitize_name_component(username)
+        safe_username = self._sanitize_name_component(username or "user")
         
-        # New format as per PRD: {workspace}/{diagram}/{user}
         graph_name = f"{safe_workspace}/{safe_diagram}/{safe_username}"
         
         logger.info(
@@ -83,6 +58,29 @@ class SemanticModelService:
         
         return graph_name
     
+    def _escape_string(self, value: str) -> str:
+        """Escape string for Cypher query"""
+        if value is None:
+            return ""
+        # Escape single quotes and backslashes
+        escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
+        return escaped
+    
+    def _serialize_property(self, value: Any) -> str:
+        """Serialize property value for Cypher query"""
+        if value is None:
+            return "null"
+        elif isinstance(value, bool):
+            return "true" if value else "false"
+        elif isinstance(value, (int, float)):
+            return str(value)
+        elif isinstance(value, (list, dict)):
+            # Serialize as JSON string
+            json_str = json.dumps(value)
+            return f"'{self._escape_string(json_str)}'"
+        else:
+            return f"'{self._escape_string(str(value))}'"
+    
     async def sync_to_falkordb(
         self,
         graph_name: str,
@@ -90,8 +88,7 @@ class SemanticModelService:
         edges: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Real-time synchronization to FalkorDB
-        Called on every node/edge change
+        FIXED: Real-time synchronization to FalkorDB with proper data extraction
         
         Args:
             graph_name: FalkorDB graph reference
@@ -110,123 +107,194 @@ class SemanticModelService:
             return {"error": "FalkorDB not connected", "success": False}
         
         try:
+            logger.info(
+                "Starting FalkorDB sync",
+                graph_name=graph_name,
+                node_count=len(nodes),
+                edge_count=len(edges)
+            )
+            
             # Clear existing graph
             clear_query = "MATCH (n) DETACH DELETE n"
             self.graph_client.query(graph_name, clear_query)
-            
-            logger.info(
-                "Cleared existing graph",
-                graph_name=graph_name
-            )
+            logger.info("Cleared existing graph", graph_name=graph_name)
             
             # Create nodes
             nodes_created = 0
+            node_id_mapping = {}  # Track which nodes exist
+            
             for node in nodes:
                 try:
                     node_id = node.get('id', '')
                     node_type = node.get('type', 'Class')
                     node_data = node.get('data', {})
+                    position = node.get('position', {})
                     
-                    # Prepare node properties
+                    # Extract node name/label
+                    node_label = node_data.get('label', node_data.get('name', 'Unnamed'))
+                    
+                    # Build properties
                     properties = {
                         'id': node_id,
-                        'label': node_data.get('label', ''),
-                        'type': node_type,
-                        'stereotype': node_data.get('stereotype', ''),
-                        'color': node_data.get('color', '#059669'),
-                        'parentId': node_data.get('parentId', ''),
+                        'label': node_label,
+                        'node_type': node_type,
+                        'x': position.get('x', 0),
+                        'y': position.get('y', 0),
                     }
                     
-                    # Add attributes as JSON string if present
-                    if 'attributes' in node_data:
+                    # Add optional properties
+                    if 'color' in node_data:
+                        properties['color'] = node_data['color']
+                    if 'stereotype' in node_data:
+                        properties['stereotype'] = node_data['stereotype']
+                    
+                    # Handle parentId for package containment
+                    if 'parentId' in node_data and node_data['parentId']:
+                        properties['parent_id'] = node_data['parentId']
+                    
+                    # Handle attributes (for classes, objects, interfaces)
+                    if 'attributes' in node_data and node_data['attributes']:
+                        # Store as JSON string
                         properties['attributes'] = json.dumps(node_data['attributes'])
                     
-                    # Add methods as JSON string if present
-                    if 'methods' in node_data:
+                    # Handle methods (for classes, interfaces)
+                    if 'methods' in node_data and node_data['methods']:
                         properties['methods'] = json.dumps(node_data['methods'])
                     
-                    # Add literals as JSON string if present
-                    if 'literals' in node_data:
+                    # Handle literals (for enumerations)
+                    if 'literals' in node_data and node_data['literals']:
                         properties['literals'] = json.dumps(node_data['literals'])
                     
-                    # Create Cypher query
-                    node_label = node_type.upper()
-                    query = f"""
-                    CREATE (n:{node_label} {{
-                        id: $id,
-                        label: $label,
-                        type: $type,
-                        stereotype: $stereotype,
-                        color: $color,
-                        parentId: $parentId
-                    }})
-                    """
+                    # Build property string for Cypher
+                    prop_strings = []
+                    for key, value in properties.items():
+                        prop_strings.append(f"{key}: {self._serialize_property(value)}")
                     
-                    # Add optional properties
-                    if 'attributes' in properties:
-                        query = query.replace(
-                            "parentId: $parentId",
-                            "parentId: $parentId, attributes: $attributes"
-                        )
-                    if 'methods' in properties:
-                        query = query.replace(
-                            "})",
-                            ", methods: $methods})"
-                        )
-                    if 'literals' in properties:
-                        query = query.replace(
-                            "})",
-                            ", literals: $literals})"
-                        )
+                    props_clause = "{" + ", ".join(prop_strings) + "}"
                     
-                    self.graph_client.query(graph_name, query, properties)
+                    # Use node type as label, add Concept as secondary label
+                    # This allows filtering by type OR all concepts
+                    label = f"{node_type.upper()}:Concept"
+                    
+                    # Create node query
+                    create_query = f"CREATE (n:{label} {props_clause}) RETURN n"
+                    
+                    self.graph_client.query(graph_name, create_query)
                     nodes_created += 1
+                    node_id_mapping[node_id] = True
+                    
+                    logger.debug(
+                        "Created node in FalkorDB",
+                        node_id=node_id,
+                        node_type=node_type,
+                        label=node_label
+                    )
                     
                 except Exception as node_error:
                     logger.error(
                         "Failed to create node",
                         node_id=node.get('id'),
-                        error=str(node_error)
+                        error=str(node_error),
+                        node_data=node
                     )
                     continue
             
-            # Create relationships (edges)
+            # Create edges (relationships)
             edges_created = 0
             for edge in edges:
                 try:
-                    source = edge.get('source', '')
-                    target = edge.get('target', '')
+                    edge_id = edge.get('id', '')
+                    source_id = edge.get('source', '')
+                    target_id = edge.get('target', '')
                     edge_data = edge.get('data', {})
                     
-                    rel_type = edge_data.get('type', 'RELATES_TO').upper().replace(' ', '_')
+                    # Only create edge if both nodes exist
+                    if source_id not in node_id_mapping or target_id not in node_id_mapping:
+                        logger.warning(
+                            "Skipping edge with missing nodes",
+                            edge_id=edge_id,
+                            source=source_id,
+                            target=target_id
+                        )
+                        continue
                     
-                    properties = {
-                        'source': source,
-                        'target': target,
-                        'sourceCardinality': edge_data.get('sourceCardinality', '1'),
-                        'targetCardinality': edge_data.get('targetCardinality', '*'),
-                        'label': edge_data.get('label', ''),
-                        'color': edge_data.get('color', '#000000'),
+                    # Extract edge properties
+                    edge_type = edge_data.get('type', 'Association').upper().replace(' ', '_')
+                    edge_label = edge_data.get('label', '')
+                    source_cardinality = edge_data.get('sourceCardinality', '1')
+                    target_cardinality = edge_data.get('targetCardinality', '1')
+                    
+                    # Build edge properties
+                    edge_props = {
+                        'id': edge_id,
+                        'relationship_type': edge_type,
+                        'source_cardinality': source_cardinality,
+                        'target_cardinality': target_cardinality,
                     }
                     
-                    query = f"""
-                    MATCH (a {{id: $source}}), (b {{id: $target}})
-                    CREATE (a)-[r:{rel_type} {{
-                        sourceCardinality: $sourceCardinality,
-                        targetCardinality: $targetCardinality,
-                        label: $label,
-                        color: $color
-                    }}]->(b)
+                    if edge_label:
+                        edge_props['label'] = edge_label
+                    
+                    # Build property string
+                    edge_prop_strings = []
+                    for key, value in edge_props.items():
+                        edge_prop_strings.append(f"{key}: {self._serialize_property(value)}")
+                    
+                    edge_props_clause = "{" + ", ".join(edge_prop_strings) + "}"
+                    
+                    # Create relationship query
+                    # Use RELATES_TO as the relationship type in graph
+                    rel_query = f"""
+                    MATCH (source:Concept {{id: '{source_id}'}})
+                    MATCH (target:Concept {{id: '{target_id}'}})
+                    CREATE (source)-[r:RELATES_TO {edge_props_clause}]->(target)
+                    RETURN r
                     """
                     
-                    self.graph_client.query(graph_name, query, properties)
+                    self.graph_client.query(graph_name, rel_query)
                     edges_created += 1
+                    
+                    logger.debug(
+                        "Created edge in FalkorDB",
+                        edge_id=edge_id,
+                        source=source_id,
+                        target=target_id,
+                        type=edge_type
+                    )
                     
                 except Exception as edge_error:
                     logger.error(
                         "Failed to create edge",
                         edge_id=edge.get('id'),
                         error=str(edge_error)
+                    )
+                    continue
+            
+            # Create parent-child relationships for packages
+            for node in nodes:
+                try:
+                    node_id = node.get('id', '')
+                    node_data = node.get('data', {})
+                    parent_id = node_data.get('parentId')
+                    
+                    if parent_id and parent_id in node_id_mapping:
+                        # Create CONTAINS relationship from parent to child
+                        contains_query = f"""
+                        MATCH (parent:Concept {{id: '{parent_id}'}})
+                        MATCH (child:Concept {{id: '{node_id}'}})
+                        CREATE (parent)-[r:CONTAINS]->(child)
+                        RETURN r
+                        """
+                        self.graph_client.query(graph_name, contains_query)
+                        logger.debug(
+                            "Created containment relationship",
+                            parent=parent_id,
+                            child=node_id
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Failed to create containment relationship",
+                        error=str(e)
                     )
                     continue
             
@@ -246,6 +314,8 @@ class SemanticModelService:
             
         except Exception as e:
             logger.error("FalkorDB sync failed", graph_name=graph_name, error=str(e))
+            import traceback
+            traceback.print_exc()
             return {
                 "success": False,
                 "error": str(e),
@@ -253,32 +323,30 @@ class SemanticModelService:
             }
     
     def get_graph_stats(self, graph_name: str) -> Dict[str, Any]:
-        """
-        Get statistics about a graph
-        
-        Args:
-            graph_name: FalkorDB graph reference
-            
-        Returns:
-            Graph statistics
-        """
+        """Get statistics about a graph"""
         if not self.graph_client or not self.graph_client.is_connected():
             return {"error": "FalkorDB not available"}
         
         try:
             # Count nodes
-            node_query = "MATCH (n) RETURN count(n) as count"
+            node_query = "MATCH (n:Concept) RETURN count(n) as count"
             node_result = self.graph_client.query(graph_name, node_query)
             total_nodes = node_result.result_set[0][0] if node_result.result_set else 0
             
             # Count edges
-            edge_query = "MATCH ()-[r]->() RETURN count(r) as count"
+            edge_query = "MATCH ()-[r:RELATES_TO]->() RETURN count(r) as count"
             edge_result = self.graph_client.query(graph_name, edge_query)
             total_edges = edge_result.result_set[0][0] if edge_result.result_set else 0
+            
+            # Count containment relationships
+            contains_query = "MATCH ()-[r:CONTAINS]->() RETURN count(r) as count"
+            contains_result = self.graph_client.query(graph_name, contains_query)
+            total_contains = contains_result.result_set[0][0] if contains_result.result_set else 0
             
             return {
                 "total_nodes": total_nodes,
                 "total_edges": total_edges,
+                "total_contains": total_contains,
                 "graph_name": graph_name,
             }
             

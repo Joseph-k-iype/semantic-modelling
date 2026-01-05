@@ -1,16 +1,34 @@
 // frontend/src/pages/LoginPage/LoginPage.tsx
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+/**
+ * Login Page Component - FIXED with proper redirects
+ * Path: frontend/src/pages/LoginPage/LoginPage.tsx
+ * 
+ * CRITICAL FIX: Redirects to intended location after login
+ */
+
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Database, Mail, Lock, AlertCircle } from 'lucide-react';
 import { apiClient } from '../../services/api/client';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
+
+  // Check if user is already logged in
+  useEffect(() => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      // Already logged in, redirect to home or intended location
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
+    }
+  }, [navigate, location]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,21 +47,9 @@ export const LoginPage: React.FC = () => {
       localStorage.setItem('access_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
 
-      // Check if there was an intended action before login
-      const intendedAction = sessionStorage.getItem('intended_action');
-      if (intendedAction) {
-        const action = JSON.parse(intendedAction);
-        sessionStorage.removeItem('intended_action');
-        
-        // Navigate to the intended diagram creation
-        if (action.type === 'create_diagram') {
-          navigate(`/diagram/new?type=${action.diagramType}&name=${encodeURIComponent(action.modelName)}`);
-          return;
-        }
-      }
-
-      // Default: navigate to home
-      navigate('/');
+      // Redirect to intended location or home
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
       
     } catch (err: any) {
       console.error('Login error:', err);
@@ -69,6 +75,7 @@ export const LoginPage: React.FC = () => {
       await apiClient.post('/auth/register', {
         email,
         password,
+        username: email.split('@')[0], // Use email prefix as username
         full_name: email.split('@')[0], // Use email prefix as default name
       });
 
@@ -82,11 +89,23 @@ export const LoginPage: React.FC = () => {
       localStorage.setItem('access_token', access_token);
       localStorage.setItem('refresh_token', refresh_token);
 
-      navigate('/');
+      // Redirect to intended location or home
+      const from = (location.state as any)?.from?.pathname || '/';
+      navigate(from, { replace: true });
       
     } catch (err: any) {
       console.error('Registration error:', err);
-      if (err.response?.data?.detail) {
+      if (err.response?.status === 422) {
+        // Validation error
+        const errors = err.response.data?.errors || err.response.data?.detail;
+        if (Array.isArray(errors)) {
+          setError(errors.map(e => e.msg).join(', '));
+        } else if (typeof errors === 'string') {
+          setError(errors);
+        } else {
+          setError('Please check your input and try again.');
+        }
+      } else if (err.response?.data?.detail) {
         setError(err.response.data.detail);
       } else {
         setError('Failed to register. Please try again.');
@@ -106,7 +125,7 @@ export const LoginPage: React.FC = () => {
               <Database className="w-7 h-7 text-white" />
             </div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Enterprise Modeling
+              Semantic Architect
             </h1>
           </div>
           <p className="text-gray-600">
@@ -178,7 +197,7 @@ export const LoginPage: React.FC = () => {
               )}
             </div>
 
-            {/* Remember Me & Forgot Password (only for login) */}
+            {/* Remember Me (only for login) */}
             {!showRegister && (
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -191,13 +210,6 @@ export const LoginPage: React.FC = () => {
                     Remember me
                   </label>
                 </div>
-                <button
-                  type="button"
-                  className="text-sm text-blue-600 hover:text-blue-700"
-                  onClick={() => alert('Password reset feature coming soon!')}
-                >
-                  Forgot password?
-                </button>
               </div>
             )}
 

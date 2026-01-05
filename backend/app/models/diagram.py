@@ -1,6 +1,6 @@
 # backend/app/models/diagram.py
 """
-Diagram Database Model - Updated for Semantic Architect
+Diagram Database Model - FIXED with layouts relationship
 Path: backend/app/models/diagram.py
 """
 from datetime import datetime
@@ -88,6 +88,59 @@ class Diagram(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
     # Relationships
+    # CRITICAL FIX: Added layouts relationship with back_populates
     model = relationship("Model", back_populates="diagrams")
+    layouts = relationship("Layout", back_populates="diagram", cascade="all, delete-orphan")
     creator = relationship("User", foreign_keys=[created_by])
     updater = relationship("User", foreign_keys=[updated_by])
+    
+    def __repr__(self):
+        return f"<Diagram(id={self.id}, name='{self.name}', notation='{self.notation}')>"
+    
+    @property
+    def is_deleted(self):
+        """Check if diagram has been soft-deleted"""
+        return self.deleted_at is not None
+    
+    @property
+    def node_count(self):
+        """Get the number of nodes in this diagram"""
+        settings = self.settings or {}
+        nodes = settings.get('nodes', [])
+        return len(nodes)
+    
+    @property
+    def edge_count(self):
+        """Get the number of edges in this diagram"""
+        settings = self.settings or {}
+        edges = settings.get('edges', [])
+        return len(edges)
+    
+    @property
+    def layout_count(self):
+        """Get the number of layouts for this diagram"""
+        return len(self.layouts) if self.layouts else 0
+    
+    def to_dict(self):
+        """Convert model to dictionary"""
+        return {
+            'id': str(self.id),
+            'model_id': str(self.model_id) if self.model_id else None,
+            'name': self.name,
+            'description': self.description,
+            'workspace_name': self.workspace_name,
+            'notation': self.notation,
+            'graph_name': self.graph_name,
+            'is_published': self.is_published,
+            'published_at': self.published_at.isoformat() if self.published_at else None,
+            'notation_config': self.notation_config,
+            'settings': self.settings,
+            'is_default': self.is_default,
+            'is_valid': self.is_valid,
+            'validation_errors': self.validation_errors,
+            'last_validated_at': self.last_validated_at.isoformat() if self.last_validated_at else None,
+            'created_by': str(self.created_by),
+            'updated_by': str(self.updated_by) if self.updated_by else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
