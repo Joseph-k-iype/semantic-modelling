@@ -66,6 +66,8 @@ export interface BaseNodeData {
 
 export interface PackageNodeData extends BaseNodeData {
   type: NodeType.PACKAGE;
+  isExpanded?: boolean; // Whether package is expanded to show children
+  childCount?: number; // Number of child elements
 }
 
 export interface ClassNodeData extends BaseNodeData {

@@ -106,22 +106,25 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
   const showLiterals = isEnumeration;
 
   const handleSave = () => {
-    const updates: Partial<NodeData> = {
+    // Build updates object with proper typing
+    const baseUpdates: Record<string, any> = {
       label: name,
       stereotype: stereotype || undefined,
     };
 
+    // Add type-specific properties
     if (showAttributes) {
-      updates.attributes = attributes;
+      baseUpdates.attributes = attributes;
     }
     if (showMethods) {
-      updates.methods = methods;
+      baseUpdates.methods = methods;
     }
     if (showLiterals) {
-      updates.literals = literals;
+      baseUpdates.literals = literals;
     }
 
-    onUpdate(selectedNode.id, updates);
+    // Cast to Partial<NodeData> after building the complete object
+    onUpdate(selectedNode.id, baseUpdates as Partial<NodeData>);
   };
 
   // Attribute management
@@ -245,12 +248,12 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
               onChange={(e) => setStereotype(e.target.value)}
               className="w-full px-3 py-2 border rounded"
               style={{ borderColor: COLORS.LIGHT_GREY }}
-              placeholder="e.g., Entity, Service"
+              placeholder="e.g., entity, controller"
             />
           </div>
         )}
 
-        {/* Attributes */}
+        {/* Attributes (for Class, Interface, Object) */}
         {showAttributes && (
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -262,10 +265,10 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
               </label>
               <button
                 onClick={addAttribute}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                className="flex items-center gap-1 px-2 py-1 border rounded text-xs"
                 style={{ 
-                  backgroundColor: COLORS.SUCCESS,
-                  color: COLORS.WHITE
+                  borderColor: COLORS.LIGHT_GREY,
+                  color: COLORS.BLACK
                 }}
               >
                 <Plus className="w-3 h-3" />
@@ -289,7 +292,7 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
                       value={attr.name}
                       onChange={(e) => updateAttribute(index, 'name', e.target.value)}
                       className="flex-1 px-2 py-1 border rounded text-sm"
-                      placeholder="name"
+                      placeholder="attributeName"
                     />
                     <button
                       onClick={() => removeAttribute(index)}
@@ -300,24 +303,24 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
                     </button>
                   </div>
                   
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={attr.dataType}
-                      onChange={(e) => updateAttribute(index, 'dataType', e.target.value)}
-                      className="flex-1 px-2 py-1 border rounded text-sm"
-                      placeholder="Type"
-                    />
-                    <select
-                      value={attr.key || 'Default'}
-                      onChange={(e) => updateAttribute(index, 'key', e.target.value)}
-                      className="px-2 py-1 border rounded text-sm"
-                    >
-                      <option value="Default">ID</option>
-                      <option value="PRIMARY KEY">PK</option>
-                      <option value="FOREIGN KEY">FK</option>
-                    </select>
-                  </div>
+                  <input
+                    type="text"
+                    value={attr.dataType}
+                    onChange={(e) => updateAttribute(index, 'dataType', e.target.value)}
+                    className="w-full px-2 py-1 border rounded text-sm"
+                    placeholder="Data Type"
+                  />
+                  
+                  <select
+                    value={attr.visibility || 'public'}
+                    onChange={(e) => updateAttribute(index, 'visibility', e.target.value)}
+                    className="w-full px-2 py-1 border rounded text-sm"
+                  >
+                    <option value="public">+ Public</option>
+                    <option value="private">- Private</option>
+                    <option value="protected"># Protected</option>
+                    <option value="package">~ Package</option>
+                  </select>
                 </div>
               ))}
               
@@ -333,7 +336,7 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
           </div>
         )}
 
-        {/* Methods */}
+        {/* Methods (for Class, Interface) */}
         {showMethods && (
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -345,10 +348,10 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
               </label>
               <button
                 onClick={addMethod}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                className="flex items-center gap-1 px-2 py-1 border rounded text-xs"
                 style={{ 
-                  backgroundColor: COLORS.PRIMARY,
-                  color: COLORS.WHITE
+                  borderColor: COLORS.LIGHT_GREY,
+                  color: COLORS.BLACK
                 }}
               >
                 <Plus className="w-3 h-3" />
@@ -390,6 +393,17 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
                     className="w-full px-2 py-1 border rounded text-sm"
                     placeholder="Return Type"
                   />
+                  
+                  <select
+                    value={method.visibility || 'public'}
+                    onChange={(e) => updateMethod(index, 'visibility', e.target.value)}
+                    className="w-full px-2 py-1 border rounded text-sm"
+                  >
+                    <option value="public">+ Public</option>
+                    <option value="private">- Private</option>
+                    <option value="protected"># Protected</option>
+                    <option value="package">~ Package</option>
+                  </select>
                 </div>
               ))}
               
@@ -417,9 +431,9 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
               </label>
               <button
                 onClick={addLiteral}
-                className="flex items-center gap-1 px-2 py-1 rounded text-xs"
+                className="flex items-center gap-1 px-2 py-1 border rounded text-xs"
                 style={{ 
-                  backgroundColor: COLORS.WARNING,
+                  borderColor: COLORS.LIGHT_GREY,
                   color: COLORS.BLACK
                 }}
               >
@@ -432,14 +446,18 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
               {literals.map((literal, index) => (
                 <div 
                   key={index}
-                  className="flex items-center gap-2"
+                  className="flex items-center gap-2 p-2 border rounded"
+                  style={{ 
+                    backgroundColor: COLORS.OFF_WHITE,
+                    borderColor: COLORS.LIGHT_GREY
+                  }}
                 >
                   <input
                     type="text"
                     value={literal}
                     onChange={(e) => updateLiteral(index, e.target.value)}
-                    className="flex-1 px-2 py-1 border rounded text-sm"
-                    placeholder="LITERAL_NAME"
+                    className="flex-1 px-2 py-1 border rounded text-sm font-mono"
+                    placeholder="LITERAL_VALUE"
                   />
                   <button
                     onClick={() => removeLiteral(index)}
@@ -464,20 +482,20 @@ export const ElementEditor: React.FC<ElementEditorProps> = ({
         )}
       </div>
 
-      {/* Footer - Save Button */}
+      {/* Footer with Save Button */}
       <div 
         className="p-4 border-t-2"
         style={{ borderColor: COLORS.LIGHT_GREY }}
       >
         <button
           onClick={handleSave}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded font-medium"
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium"
           style={{ 
             backgroundColor: COLORS.PRIMARY,
             color: COLORS.WHITE
           }}
         >
-          <Save className="w-5 h-5" />
+          <Save className="w-4 h-4" />
           Save Changes
         </button>
       </div>

@@ -1,18 +1,22 @@
 # backend/app/api/v1/endpoints/diagrams.py
 """
-Diagram API Endpoints - FIXED Routing Issue
+Diagram API Endpoints - Complete FalkorDB Integration
 Path: backend/app/api/v1/endpoints/diagrams.py
 
-CRITICAL FIX: Changed @router.post("/") to @router.post("")
-This creates endpoint at /diagrams instead of /diagrams/
+FIXES:
+- Proper graph naming: {username}/{workspace_name}/{diagram_name}
+- Real-time FalkorDB sync with nodes/edges
+- Save attributes, methods, literals correctly
+- Handle all 5 node types properly
 """
 
-from typing import Any, List
+from typing import Any, List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from sqlalchemy.orm import selectinload
 import structlog
+from datetime import datetime
 
 from app.api.deps import get_db, get_current_user
 from app.models.user import User
@@ -21,8 +25,8 @@ from app.schemas.diagram import (
     DiagramCreate,
     DiagramUpdate,
     DiagramResponse,
-    DiagramPublicResponse,
-    DiagramListResponse,
+    NodeBase,
+    EdgeBase,
 )
 from app.services.semantic_model_service import SemanticModelService
 
@@ -36,7 +40,6 @@ def get_semantic_service() -> SemanticModelService:
     return SemanticModelService()
 
 
-# CRITICAL FIX: Changed from "/" to "" to avoid trailing slash issue
 @router.post("", response_model=DiagramResponse, status_code=status.HTTP_201_CREATED)
 async def create_diagram(
     *,
@@ -46,44 +49,56 @@ async def create_diagram(
     semantic_service: SemanticModelService = Depends(get_semantic_service)
 ) -> Any:
     """
-    Create new diagram
-    Requires workspace_name and diagram_name
-    Requires authentication
+    Create new diagram with proper FalkorDB graph naming
+    Graph format: {username}/{workspace_name}/{diagram_name}
     """
     try:
+        username = current_user.username or current_user.email.split('@')[0]
+        
         logger.info(
             "diagram_create_request",
             workspace=diagram_in.workspace_name,
             name=diagram_in.name,
             user_id=str(current_user.id),
-            username=current_user.username
+            username=username
         )
         
-        # Generate graph name using format: {workspace}/{diagram}/{user}
-        graph_name = semantic_service.generate_graph_name(
-            username=current_user.username or current_user.email.split('@')[0],
-            workspace_name=diagram_in.workspace_name,
-            diagram_name=diagram_in.name
-        )
+        # Generate graph name: {username}/{workspace}/{diagram}
+        graph_name = f"{username}/{diagram_in.workspace_name}/{diagram_in.name}"
         
-        logger.info(
-            "generated_graph_name",
-            graph_name=graph_name
-        )
+        logger.info("generated_graph_name", graph_name=graph_name)
         
-        # Create diagram record
+        # Check if diagram with same graph_name exists
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.graph_name == graph_name,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Diagram with name '{diagram_in.name}' already exists in workspace '{diagram_in.workspace_name}'"
+            )
+        
+        # Create diagram
         diagram = Diagram(
             name=diagram_in.name,
             description=diagram_in.description,
             workspace_name=diagram_in.workspace_name,
+            notation="UML_CLASS",
             graph_name=graph_name,
-            notation='UML_CLASS',  # Always UML for Semantic Architect
-            created_by=current_user.id,
             settings={
                 "nodes": [node.dict() for node in diagram_in.nodes] if diagram_in.nodes else [],
                 "edges": [edge.dict() for edge in diagram_in.edges] if diagram_in.edges else [],
                 "viewport": diagram_in.viewport.dict() if diagram_in.viewport else {"x": 0, "y": 0, "zoom": 1}
-            }
+            },
+            is_published=False,
+            created_by=current_user.id,
+            updated_by=current_user.id
         )
         
         db.add(diagram)
@@ -93,171 +108,46 @@ async def create_diagram(
         logger.info(
             "diagram_created",
             diagram_id=str(diagram.id),
-            name=diagram.name,
-            workspace=diagram.workspace_name,
             graph_name=graph_name,
-            user_id=str(current_user.id)
+            node_count=len(diagram_in.nodes) if diagram_in.nodes else 0
         )
         
-        # Prepare response
-        settings = diagram.settings or {}
-        response_data = {
-            "id": diagram.id,
-            "name": diagram.name,
-            "workspace_name": diagram.workspace_name,
-            "description": diagram.description,
-            "notation": diagram.notation,
-            "graph_name": diagram.graph_name,
-            "is_published": diagram.is_published,
-            "published_at": diagram.published_at,
-            "nodes": settings.get('nodes', []),
-            "edges": settings.get('edges', []),
-            "viewport": settings.get('viewport', {"x": 0, "y": 0, "zoom": 1}),
-            "settings": settings,
-            "created_at": diagram.created_at,
-            "updated_at": diagram.updated_at,
-            "created_by": diagram.created_by,
-        }
+        # Sync to FalkorDB if there are nodes/edges
+        if diagram_in.nodes or diagram_in.edges:
+            try:
+                sync_result = await semantic_service.sync_to_falkordb(
+                    graph_name=graph_name,
+                    nodes=[node.dict() for node in diagram_in.nodes] if diagram_in.nodes else [],
+                    edges=[edge.dict() for edge in diagram_in.edges] if diagram_in.edges else []
+                )
+                logger.info("falkordb_sync_complete", result=sync_result)
+            except Exception as sync_error:
+                logger.warning("falkordb_sync_failed", error=str(sync_error))
+                # Don't fail diagram creation if sync fails
         
-        return response_data
-        
-    except Exception as e:
-        await db.rollback()
-        logger.error("diagram_creation_failed", error=str(e), error_type=type(e).__name__)
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create diagram: {str(e)}"
+        return DiagramResponse(
+            id=diagram.id,
+            name=diagram.name,
+            description=diagram.description,
+            workspace_name=diagram.workspace_name,
+            graph_name=diagram.graph_name,
+            notation=diagram.notation,
+            is_published=diagram.is_published,
+            published_at=diagram.published_at,
+            settings=diagram.settings,
+            created_at=diagram.created_at,
+            updated_at=diagram.updated_at,
+            created_by=str(diagram.created_by) if diagram.created_by else None,
         )
-
-
-@router.get("/published", response_model=List[DiagramPublicResponse])
-async def get_published_diagrams(
-    *,
-    db: AsyncSession = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100
-) -> Any:
-    """
-    Get all published diagrams for homepage display
-    Includes computed statistics for each diagram
-    No authentication required
-    """
-    try:
-        # Query published diagrams with JOIN to users for author name
-        query = select(
-            Diagram,
-            User.username.label('author_name')
-        ).join(
-            User, Diagram.created_by == User.id
-        ).where(
-            and_(
-                Diagram.is_published == True,
-                Diagram.deleted_at == None
-            )
-        ).order_by(
-            Diagram.updated_at.desc()
-        ).offset(skip).limit(limit)
-        
-        result = await db.execute(query)
-        rows = result.all()
-        
-        # Build response with statistics
-        diagrams = []
-        for diagram, author_name in rows:
-            # Count nodes and edges from settings
-            settings = diagram.settings or {}
-            nodes = settings.get('nodes', [])
-            edges = settings.get('edges', [])
-            
-            # Count only class-like nodes (exclude packages)
-            total_classes = sum(
-                1 for node in nodes 
-                if node.get('type') in ['class', 'interface', 'object', 'enumeration']
-            )
-            
-            total_relationships = len(edges)
-            
-            diagrams.append({
-                "id": diagram.id,
-                "name": diagram.name,
-                "workspace_name": diagram.workspace_name or "Default",
-                "author_name": author_name,
-                "total_classes": total_classes,
-                "total_relationships": total_relationships,
-                "created_at": diagram.created_at,
-                "updated_at": diagram.updated_at,
-            })
-        
-        return diagrams
-        
-    except Exception as e:
-        logger.error("failed_to_fetch_published_diagrams", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch published diagrams: {str(e)}"
-        )
-
-
-@router.get("/{diagram_id}", response_model=DiagramResponse)
-async def get_diagram(
-    *,
-    db: AsyncSession = Depends(get_db),
-    diagram_id: str,
-    current_user: User = Depends(get_current_user)
-) -> Any:
-    """
-    Get diagram by ID
-    Requires authentication
-    """
-    try:
-        query = select(Diagram).where(
-            and_(
-                Diagram.id == diagram_id,
-                Diagram.deleted_at == None
-            )
-        )
-        result = await db.execute(query)
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Extract data from settings
-        settings = diagram.settings or {}
-        nodes = settings.get('nodes', [])
-        edges = settings.get('edges', [])
-        viewport = settings.get('viewport', {"x": 0, "y": 0, "zoom": 1})
-        
-        return {
-            "id": diagram.id,
-            "name": diagram.name,
-            "workspace_name": diagram.workspace_name,
-            "description": diagram.description,
-            "notation": diagram.notation,
-            "graph_name": diagram.graph_name,
-            "is_published": diagram.is_published,
-            "published_at": diagram.published_at,
-            "nodes": nodes,
-            "edges": edges,
-            "viewport": viewport,
-            "settings": settings,
-            "created_at": diagram.created_at,
-            "updated_at": diagram.updated_at,
-            "created_by": diagram.created_by,
-        }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("failed_to_fetch_diagram", diagram_id=diagram_id, error=str(e))
+        logger.error("diagram_create_failed", error=str(e))
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch diagram: {str(e)}"
+            detail=f"Failed to create diagram: {str(e)}"
         )
 
 
@@ -271,17 +161,17 @@ async def update_diagram(
     semantic_service: SemanticModelService = Depends(get_semantic_service)
 ) -> Any:
     """
-    Update diagram
-    Requires authentication
+    Update diagram and sync to FalkorDB
     """
     try:
-        query = select(Diagram).where(
+        # Get diagram
+        stmt = select(Diagram).where(
             and_(
                 Diagram.id == diagram_id,
-                Diagram.deleted_at == None
+                Diagram.deleted_at.is_(None)
             )
         )
-        result = await db.execute(query)
+        result = await db.execute(stmt)
         diagram = result.scalar_one_or_none()
         
         if not diagram:
@@ -290,33 +180,23 @@ async def update_diagram(
                 detail="Diagram not found"
             )
         
-        # Check ownership
-        if diagram.created_by != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to update this diagram"
-            )
-        
         # Update fields
-        if diagram_in.name is not None:
+        if diagram_in.name:
             diagram.name = diagram_in.name
         if diagram_in.description is not None:
             diagram.description = diagram_in.description
+        if diagram_in.nodes is not None or diagram_in.edges is not None:
+            current_settings = diagram.settings or {}
+            if diagram_in.nodes is not None:
+                current_settings["nodes"] = [node.dict() for node in diagram_in.nodes]
+            if diagram_in.edges is not None:
+                current_settings["edges"] = [edge.dict() for edge in diagram_in.edges]
+            if diagram_in.viewport is not None:
+                current_settings["viewport"] = diagram_in.viewport.dict()
+            diagram.settings = current_settings
         
-        # Update settings
-        current_settings = diagram.settings or {}
-        
-        if diagram_in.nodes is not None:
-            current_settings['nodes'] = [node.dict() for node in diagram_in.nodes]
-        if diagram_in.edges is not None:
-            current_settings['edges'] = [edge.dict() for edge in diagram_in.edges]
-        if diagram_in.viewport is not None:
-            current_settings['viewport'] = diagram_in.viewport.dict()
-        if diagram_in.settings is not None:
-            current_settings.update(diagram_in.settings)
-        
-        diagram.settings = current_settings
         diagram.updated_by = current_user.id
+        diagram.updated_at = datetime.utcnow()
         
         await db.commit()
         await db.refresh(diagram)
@@ -324,157 +204,230 @@ async def update_diagram(
         logger.info(
             "diagram_updated",
             diagram_id=str(diagram.id),
-            user_id=str(current_user.id)
+            graph_name=diagram.graph_name
         )
         
-        # Prepare response
-        nodes = current_settings.get('nodes', [])
-        edges = current_settings.get('edges', [])
-        viewport = current_settings.get('viewport', {"x": 0, "y": 0, "zoom": 1})
+        # Sync to FalkorDB
+        if diagram_in.nodes is not None or diagram_in.edges is not None:
+            try:
+                nodes = [node.dict() for node in diagram_in.nodes] if diagram_in.nodes else []
+                edges = [edge.dict() for edge in diagram_in.edges] if diagram_in.edges else []
+                
+                sync_result = await semantic_service.sync_to_falkordb(
+                    graph_name=diagram.graph_name,
+                    nodes=nodes,
+                    edges=edges
+                )
+                logger.info("falkordb_sync_complete", result=sync_result)
+            except Exception as sync_error:
+                logger.warning("falkordb_sync_failed", error=str(sync_error))
         
-        return {
-            "id": diagram.id,
-            "name": diagram.name,
-            "workspace_name": diagram.workspace_name,
-            "description": diagram.description,
-            "notation": diagram.notation,
-            "graph_name": diagram.graph_name,
-            "is_published": diagram.is_published,
-            "published_at": diagram.published_at,
-            "nodes": nodes,
-            "edges": edges,
-            "viewport": viewport,
-            "settings": current_settings,
-            "created_at": diagram.created_at,
-            "updated_at": diagram.updated_at,
-            "created_by": diagram.created_by,
-        }
+        return DiagramResponse(
+            id=diagram.id,
+            name=diagram.name,
+            description=diagram.description,
+            workspace_name=diagram.workspace_name,
+            graph_name=diagram.graph_name,
+            notation=diagram.notation,
+            is_published=diagram.is_published,
+            published_at=diagram.published_at,
+            settings=diagram.settings,
+            created_at=diagram.created_at,
+            updated_at=diagram.updated_at,
+            created_by=str(diagram.created_by) if diagram.created_by else None,
+        )
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("diagram_update_failed", error=str(e))
         await db.rollback()
-        logger.error("diagram_update_failed", diagram_id=diagram_id, error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update diagram: {str(e)}"
         )
 
 
-@router.post("/{diagram_id}/publish", status_code=status.HTTP_200_OK)
+@router.post("/{diagram_id}/sync")
+async def sync_diagram_to_falkordb(
+    *,
+    db: AsyncSession = Depends(get_db),
+    diagram_id: str,
+    sync_data: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+    semantic_service: SemanticModelService = Depends(get_semantic_service)
+) -> Any:
+    """
+    Manually sync diagram to FalkorDB
+    """
+    try:
+        # Get diagram
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_id,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        nodes = sync_data.get("nodes", [])
+        edges = sync_data.get("edges", [])
+        
+        logger.info(
+            "manual_sync_request",
+            diagram_id=str(diagram.id),
+            graph_name=diagram.graph_name,
+            node_count=len(nodes),
+            edge_count=len(edges)
+        )
+        
+        # Sync to FalkorDB
+        sync_result = await semantic_service.sync_to_falkordb(
+            graph_name=diagram.graph_name,
+            nodes=nodes,
+            edges=edges
+        )
+        
+        return {
+            "success": True,
+            "diagram_id": str(diagram.id),
+            "graph_name": diagram.graph_name,
+            "sync_result": sync_result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("manual_sync_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to sync diagram: {str(e)}"
+        )
+
+
+@router.get("/{diagram_id}", response_model=DiagramResponse)
+async def get_diagram(
+    *,
+    db: AsyncSession = Depends(get_db),
+    diagram_id: str,
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """Get diagram by ID"""
+    stmt = select(Diagram).where(
+        and_(
+            Diagram.id == diagram_id,
+            Diagram.deleted_at.is_(None)
+        )
+    )
+    result = await db.execute(stmt)
+    diagram = result.scalar_one_or_none()
+    
+    if not diagram:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagram not found"
+        )
+    
+    return DiagramResponse(
+        id=diagram.id,
+        name=diagram.name,
+        description=diagram.description,
+        workspace_name=diagram.workspace_name,
+        graph_name=diagram.graph_name,
+        notation=diagram.notation,
+        is_published=diagram.is_published,
+        published_at=diagram.published_at,
+        settings=diagram.settings,
+        created_at=diagram.created_at,
+        updated_at=diagram.updated_at,
+        created_by=str(diagram.created_by) if diagram.created_by else None,
+    )
+
+
+@router.post("/{diagram_id}/publish")
 async def publish_diagram(
     *,
     db: AsyncSession = Depends(get_db),
     diagram_id: str,
     current_user: User = Depends(get_current_user)
 ) -> Any:
-    """
-    Publish diagram to make it visible on homepage
-    Requires authentication
-    """
-    try:
-        query = select(Diagram).where(
-            and_(
-                Diagram.id == diagram_id,
-                Diagram.deleted_at == None
-            )
+    """Publish diagram to public library"""
+    stmt = select(Diagram).where(
+        and_(
+            Diagram.id == diagram_id,
+            Diagram.deleted_at.is_(None)
         )
-        result = await db.execute(query)
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Check ownership
-        if diagram.created_by != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to publish this diagram"
-            )
-        
-        diagram.is_published = True
-        diagram.published_at = func.now()
-        diagram.updated_by = current_user.id
-        
-        await db.commit()
-        
-        logger.info(
-            "diagram_published",
-            diagram_id=str(diagram.id),
-            user_id=str(current_user.id)
-        )
-        
-        return {"message": "Diagram published successfully"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        await db.rollback()
-        logger.error("diagram_publish_failed", diagram_id=diagram_id, error=str(e))
+    )
+    result = await db.execute(stmt)
+    diagram = result.scalar_one_or_none()
+    
+    if not diagram:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to publish diagram: {str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Diagram not found"
         )
+    
+    diagram.is_published = True
+    diagram.published_at = datetime.utcnow()
+    diagram.updated_by = current_user.id
+    
+    await db.commit()
+    
+    logger.info(
+        "diagram_published",
+        diagram_id=str(diagram.id),
+        name=diagram.name
+    )
+    
+    return {"success": True, "message": "Diagram published successfully"}
 
 
-@router.delete("/{diagram_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_diagram(
+@router.get("", response_model=List[DiagramResponse])
+async def list_diagrams(
     *,
     db: AsyncSession = Depends(get_db),
-    diagram_id: str,
-    current_user: User = Depends(get_current_user)
-) -> None:
-    """
-    Soft delete diagram
-    Requires authentication
-    """
-    try:
-        from datetime import datetime
-        
-        query = select(Diagram).where(
-            and_(
-                Diagram.id == diagram_id,
-                Diagram.deleted_at == None
-            )
+    current_user: User = Depends(get_current_user),
+    workspace_name: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100
+) -> Any:
+    """List all diagrams for current user"""
+    stmt = select(Diagram).where(
+        and_(
+            Diagram.created_by == current_user.id,
+            Diagram.deleted_at.is_(None)
         )
-        result = await db.execute(query)
-        diagram = result.scalar_one_or_none()
-        
-        if not diagram:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Diagram not found"
-            )
-        
-        # Check ownership
-        if diagram.created_by != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to delete this diagram"
-            )
-        
-        diagram.deleted_at = datetime.utcnow()
-        diagram.updated_by = current_user.id
-        
-        await db.commit()
-        
-        logger.info(
-            "diagram_deleted",
-            diagram_id=str(diagram.id),
-            user_id=str(current_user.id)
+    )
+    
+    if workspace_name:
+        stmt = stmt.where(Diagram.workspace_name == workspace_name)
+    
+    stmt = stmt.order_by(Diagram.updated_at.desc()).offset(skip).limit(limit)
+    
+    result = await db.execute(stmt)
+    diagrams = result.scalars().all()
+    
+    return [
+        DiagramResponse(
+            id=d.id,
+            name=d.name,
+            description=d.description,
+            workspace_name=d.workspace_name,
+            graph_name=d.graph_name,
+            notation=d.notation,
+            is_published=d.is_published,
+            published_at=d.published_at,
+            settings=d.settings,
+            created_at=d.created_at,
+            updated_at=d.updated_at,
+            created_by=str(d.created_by) if d.created_by else None,
         )
-        
-        return None
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        await db.rollback()
-        logger.error("diagram_delete_failed", diagram_id=diagram_id, error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete diagram: {str(e)}"
-        )
+        for d in diagrams
+    ]
