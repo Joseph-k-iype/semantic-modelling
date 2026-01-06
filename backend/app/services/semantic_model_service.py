@@ -5,14 +5,15 @@ Path: backend/app/services/semantic_model_service.py
 
 CORRECT APPROACH:
 1. Attributes/Methods/Literals are PROPERTIES of the node (not separate nodes)
-2. Edge relationship type is generic (RELATES_TO)
+2. Edge relationship type uses USER LABEL from UI (or defaults to "relates_to")
 3. Actual relationship type (Association, Composition, etc.) is a PROPERTY
-4. Edge label is the user-defined label (separate from relationship type)
+4. Edge label is the user-defined label (also used as Cypher relationship type)
 """
 
 from typing import Any, Dict, List, Optional
 import structlog
 import json
+import re
 from app.graph.client import get_graph_client
 
 logger = structlog.get_logger()
@@ -33,6 +34,47 @@ class SemanticModelService:
         # Escape single quotes and backslashes
         escaped = value.replace("\\", "\\\\").replace("'", "\\'")
         return escaped
+    
+    def _sanitize_relationship_type(self, label: str) -> str:
+        """
+        Sanitize a user label to be a valid Cypher relationship type
+        
+        Rules:
+        - Convert to uppercase
+        - Replace spaces and special chars with underscores
+        - Remove consecutive underscores
+        - Ensure starts with letter or underscore
+        
+        Args:
+            label: User-provided label
+            
+        Returns:
+            Valid Cypher relationship type identifier
+        """
+        if not label or not label.strip():
+            return "RELATES_TO"
+        
+        # Convert to uppercase
+        sanitized = label.upper()
+        
+        # Replace spaces and special characters with underscores
+        sanitized = re.sub(r'[^A-Z0-9_]', '_', sanitized)
+        
+        # Remove consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        
+        # Ensure starts with letter or underscore
+        if sanitized and not re.match(r'^[A-Z_]', sanitized):
+            sanitized = '_' + sanitized
+        
+        # If empty after sanitization, use default
+        if not sanitized:
+            sanitized = "RELATES_TO"
+        
+        return sanitized
     
     def _serialize_property(self, value: Any) -> str:
         """
@@ -70,7 +112,8 @@ class SemanticModelService:
         
         CORRECT STRUCTURE:
         - Each concept is ONE node with all its attributes/methods as properties
-        - Relationships use generic type (RELATES_TO) with relationship_type as property
+        - Relationships use USER LABEL as Cypher type (or "relates_to" as default)
+        - Relationship semantic type is stored as 'relationship_type' property
         - Edge label is stored as 'label' property
         
         Args:
@@ -120,7 +163,7 @@ class SemanticModelService:
             for node in nodes:
                 try:
                     node_id = node.get('id', '')
-                    node_type = node.get('type', 'Class')
+                    node_type = node.get('type', 'class')
                     node_data = node.get('data', {})
                     position = node.get('position', {})
                     
@@ -267,9 +310,10 @@ class SemanticModelService:
             # ================================================================
             # CREATE RELATIONSHIPS WITH PROPER STRUCTURE
             # ================================================================
-            # Relationship type in Cypher: RELATES_TO (generic)
-            # Actual type stored as property: relationship_type
-            # User label stored as property: label
+            # CRITICAL CHANGE: Use user's edge label as Cypher relationship type
+            # - If user provides label → use that (sanitized)
+            # - If no label → default to "relates_to"
+            # - Store semantic type (Association, Composition) as property
             # ================================================================
             edges_created = 0
             for edge in edges:
@@ -291,9 +335,13 @@ class SemanticModelService:
                     
                     # Extract relationship properties
                     relationship_type = edge_data.get('type', 'Association')  # Association, Composition, etc.
-                    edge_label = edge_data.get('label', '')  # User-defined label
+                    edge_label = edge_data.get('label', '').strip()  # User-defined label
                     source_cardinality = edge_data.get('sourceCardinality', '1')
                     target_cardinality = edge_data.get('targetCardinality', '1')
+                    
+                    # CRITICAL: Use user's label as Cypher relationship type
+                    # If no label provided, default to "relates_to"
+                    cypher_rel_type = self._sanitize_relationship_type(edge_label) if edge_label else "RELATES_TO"
                     
                     # Build edge properties
                     edge_props = {
@@ -303,9 +351,8 @@ class SemanticModelService:
                         'target_cardinality': target_cardinality,
                     }
                     
-                    # Add user-defined label if provided
-                    if edge_label:
-                        edge_props['label'] = edge_label
+                    # Store original label as property (even if empty)
+                    edge_props['label'] = edge_label if edge_label else 'relates_to'
                     
                     # Add optional properties
                     if 'color' in edge_data:
@@ -322,11 +369,11 @@ class SemanticModelService:
                     
                     edge_props_clause = "{" + ", ".join(edge_prop_strings) + "}"
                     
-                    # CRITICAL: Use generic RELATES_TO type, store actual type as property
+                    # CRITICAL: Use dynamic relationship type based on user's label
                     create_edge_query = f"""
                     MATCH (source:Concept {{id: {self._serialize_property(source_id)}}})
                     MATCH (target:Concept {{id: {self._serialize_property(target_id)}}})
-                    CREATE (source)-[r:RELATES_TO {edge_props_clause}]->(target)
+                    CREATE (source)-[r:{cypher_rel_type} {edge_props_clause}]->(target)
                     RETURN r
                     """
                     
@@ -336,6 +383,7 @@ class SemanticModelService:
                     logger.debug(
                         "✅ Created relationship",
                         edge_id=edge_id,
+                        cypher_type=cypher_rel_type,
                         relationship_type=relationship_type,
                         label=edge_label,
                         source=source_id,
@@ -375,7 +423,8 @@ class SemanticModelService:
                 except Exception as e:
                     logger.error(
                         "❌ Failed to create containment relationship",
-                        node_id=node.get('id'),
+                        parent_id=parent_id,
+                        child_id=node_id,
                         error=str(e)
                     )
                     continue
@@ -427,8 +476,8 @@ class SemanticModelService:
             node_result = graph.query(node_query)
             total_nodes = node_result.result_set[0][0] if node_result.result_set else 0
             
-            # Count relationships
-            edge_query = "MATCH ()-[r:RELATES_TO]->() RETURN count(r) as count"
+            # Count ALL relationships (not just RELATES_TO anymore)
+            edge_query = "MATCH ()-[r]->() RETURN count(r) as count"
             edge_result = graph.query(edge_query)
             total_edges = edge_result.result_set[0][0] if edge_result.result_set else 0
             
@@ -501,3 +550,15 @@ class SemanticModelService:
         except Exception as e:
             logger.error("Query failed", graph_name=graph_name, error=str(e))
             return {"error": str(e), "success": False}
+
+
+# Global service instance
+_semantic_service: Optional[SemanticModelService] = None
+
+
+def get_semantic_service() -> SemanticModelService:
+    """Get or create the semantic model service singleton"""
+    global _semantic_service
+    if _semantic_service is None:
+        _semantic_service = SemanticModelService()
+    return _semantic_service

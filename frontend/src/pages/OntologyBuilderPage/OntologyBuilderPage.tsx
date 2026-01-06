@@ -1,12 +1,17 @@
 // frontend/src/pages/OntologyBuilderPage/OntologyBuilderPage.tsx
 /**
- * Ontology Builder Page - FIXED: 409 Issue & UI Update
+ * Ontology Builder Page - COMPLETE WITH EDGE EDITING & PACKAGE GROUPING
  * Path: frontend/src/pages/OntologyBuilderPage/OntologyBuilderPage.tsx
  * 
- * FIXES:
- * - No 409 conflict (tracks current diagram ID separately)
- * - UI updates diagram name after save
- * - Proper graph structure (attributes as properties)
+ * NEW FEATURES ADDED:
+ * 1. Edge editing - Click edge to edit properties
+ * 2. Package grouping - Select nodes and group into package
+ * 
+ * EXISTING FEATURES PRESERVED:
+ * - 409 fix (separate diagram ID tracking)
+ * - Auto-save and sync to FalkorDB
+ * - Undo/Redo
+ * - Element palette and hierarchy
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -34,6 +39,7 @@ import {
   ZoomOut,
   Save,
   Upload,
+  FolderPlus,
 } from 'lucide-react';
 import { COLORS, ELEMENT_COLORS } from '../../constants/colors';
 import type { NodeData, EdgeData, NodeType } from '../../types/diagram.types';
@@ -47,6 +53,7 @@ import { HierarchyView } from '../../components/builder/HierarchyView/HierarchyV
 import { CardinalityModal } from '../../components/modals/CardinalityModal/CardinalityModal';
 import { DiagramNameModal } from '../../components/modals/DiagramNameModal/DiagramNameModal';
 import { ElementEditor } from '../../components/builder/ElementEditor/ElementEditor';
+import { EdgeEditor } from '../../components/builder/EdgeEditor/EdgeEditor';
 import { FalkorDebugPanel } from '../../components/debug/FalkorDebugPanel';
 import PackageNode from '../../components/nodes/PackageNode/PackageNode';
 import { ClassNode } from '../../components/nodes/ClassNode/ClassNode';
@@ -71,8 +78,7 @@ export const OntologyBuilderPage: React.FC = () => {
   const { diagramId: urlDiagramId } = useParams();
   const navigate = useNavigate();
   
-  // CRITICAL FIX: Track current diagram ID separately from URL
-  // This prevents 409 errors on subsequent saves
+  // Track current diagram ID separately from URL (fixes 409 issue)
   const [currentDiagramId, setCurrentDiagramId] = useState<string | null>(
     urlDiagramId && urlDiagramId !== 'new' ? urlDiagramId : null
   );
@@ -84,6 +90,7 @@ export const OntologyBuilderPage: React.FC = () => {
   
   // UI state
   const [selectedNode, setSelectedNode] = useState<Node<NodeData> | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<Edge<EdgeData> | null>(null);
   const [selectedTool, setSelectedTool] = useState<'select' | 'pan'>('select');
   const [activeTab, setActiveTab] = useState<'elements' | 'hierarchy'>('elements');
   
@@ -112,37 +119,37 @@ export const OntologyBuilderPage: React.FC = () => {
   // EFFECTS
   // ============================================================================
 
-  // Update currentDiagramId when URL changes
   useEffect(() => {
     if (urlDiagramId && urlDiagramId !== 'new' && urlDiagramId !== currentDiagramId) {
       setCurrentDiagramId(urlDiagramId);
     }
-  }, [urlDiagramId]);
+  }, [urlDiagramId, currentDiagramId]);
 
-  // Load diagram data
   useEffect(() => {
     if (currentDiagramId) {
       loadDiagram(currentDiagramId);
     }
   }, [currentDiagramId]);
 
-  // Track selection changes
+  // Track selection changes for both nodes and edges
   useEffect(() => {
-    const handleSelectionChange = () => {
-      if (!reactFlowInstance) return;
-      
-      const selectedNodes = nodes.filter(node => node.selected);
-      if (selectedNodes.length === 1) {
-        setSelectedNode(selectedNodes[0]);
-      } else {
-        setSelectedNode(null);
-      }
-    };
+    if (!reactFlowInstance) return;
+    
+    const selectedNodes = nodes.filter(node => node.selected);
+    const selectedEdges = edges.filter(edge => edge.selected);
+    
+    if (selectedNodes.length === 1 && selectedEdges.length === 0) {
+      setSelectedNode(selectedNodes[0]);
+      setSelectedEdge(null);
+    } else if (selectedEdges.length === 1 && selectedNodes.length === 0) {
+      setSelectedEdge(selectedEdges[0]);
+      setSelectedNode(null);
+    } else {
+      setSelectedNode(null);
+      setSelectedEdge(null);
+    }
+  }, [nodes, edges, reactFlowInstance]);
 
-    handleSelectionChange();
-  }, [nodes, reactFlowInstance]);
-
-  // Setup global updateNodeData function
   useEffect(() => {
     window.updateNodeData = (nodeId: string, updates: Partial<NodeData>) => {
       handleNodeUpdate(nodeId, updates);
@@ -235,7 +242,6 @@ export const OntologyBuilderPage: React.FC = () => {
         y: event.clientY,
       });
 
-      // Create node WITHOUT default attributes - empty by default
       const newNode: Node<NodeData> = {
         id: `node_${nodeIdCounter.current++}`,
         type: type,
@@ -245,11 +251,9 @@ export const OntologyBuilderPage: React.FC = () => {
           type: type as any,
           stereotype: '',
           color: ELEMENT_COLORS[type],
-          // NO default attributes - users add them via ElementEditor
           attributes: (type === 'class' || type === 'object') ? [] : undefined,
           methods: (type === 'class' || type === 'interface') ? [] : undefined,
           literals: type === 'enumeration' ? [] : undefined,
-          // Package-specific properties
           isExpanded: type === 'package' ? true : undefined,
           childCount: type === 'package' ? 0 : undefined,
         } as any,
@@ -290,7 +294,6 @@ export const OntologyBuilderPage: React.FC = () => {
         return;
       }
 
-      // Store pending connection and show cardinality modal
       setPendingConnection({
         source: connection.source,
         target: connection.target,
@@ -340,19 +343,127 @@ export const OntologyBuilderPage: React.FC = () => {
     [pendingConnection, setEdges]
   );
 
+  const handleEdgeUpdate = useCallback(
+    (edgeId: string, updates: Partial<EdgeData>) => {
+      setEdges((eds) =>
+        eds.map((edge) =>
+          edge.id === edgeId
+            ? {
+                ...edge,
+                data: { ...edge.data, ...updates },
+                label: updates.label || edge.label,
+                style: { ...edge.style, stroke: updates.color || edge.style?.stroke },
+              }
+            : edge
+        )
+      );
+      saveToHistory();
+    },
+    [setEdges]
+  );
+
+  const handleEdgeDelete = useCallback(
+    (edgeId: string) => {
+      setEdges((eds) => eds.filter((edge) => edge.id !== edgeId));
+      setSelectedEdge(null);
+      saveToHistory();
+    },
+    [setEdges]
+  );
+
   // ============================================================================
-  // SAVE OPERATIONS - FIXED FOR 409 ISSUE
+  // PACKAGE GROUPING - NEW FEATURE
+  // ============================================================================
+
+  const handleGroupIntoPackage = useCallback(() => {
+    const selectedNodes = nodes.filter(node => node.selected && node.type !== 'package');
+    
+    if (selectedNodes.length === 0) {
+      alert('Please select at least one element to group into a package.');
+      return;
+    }
+
+    // Calculate bounding box of selected nodes
+    const bounds = selectedNodes.reduce(
+      (acc, node) => ({
+        minX: Math.min(acc.minX, node.position.x),
+        minY: Math.min(acc.minY, node.position.y),
+        maxX: Math.max(acc.maxX, node.position.x + 200),
+        maxY: Math.max(acc.maxY, node.position.y + 150),
+      }),
+      { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity }
+    );
+
+    // Package position
+    const packageX = bounds.minX - 40;
+    const packageY = bounds.minY - 80;
+
+    // Create package node
+    const packageId = `package_${Date.now()}`;
+    const packageNode: Node<NodeData> = {
+      id: packageId,
+      type: 'package',
+      position: {
+        x: packageX,
+        y: packageY,
+      },
+      data: {
+        label: 'New Package',
+        type: 'package' as any,
+        color: ELEMENT_COLORS.package,
+        isExpanded: true,
+        childCount: selectedNodes.length,
+      } as any,
+      style: {
+        width: bounds.maxX - bounds.minX + 80,
+        height: bounds.maxY - bounds.minY + 120,
+        zIndex: 0, // Package in background
+      },
+    };
+
+    // Update selected nodes to have this package as parent
+    // CRITICAL: Set parentNode property and adjust position to be relative to package
+    setNodes((nds) => {
+      const updatedNodes = nds.map((node) => {
+        if (node.selected && node.type !== 'package') {
+          return {
+            ...node,
+            // ReactFlow parent-child relationship
+            parentNode: packageId,
+            extent: 'parent' as const,
+            // Position relative to package (not absolute)
+            position: {
+              x: node.position.x - packageX,
+              y: node.position.y - packageY,
+            },
+            // Also store in data for hierarchy view
+            data: { ...node.data, parentId: packageId },
+            selected: false,
+            style: {
+              ...node.style,
+              zIndex: 1, // Children above package
+            },
+          };
+        }
+        return { ...node, selected: false };
+      });
+      return [...updatedNodes, packageNode];
+    });
+
+    saveToHistory();
+    alert(`Grouped ${selectedNodes.length} element(s) into new package!`);
+  }, [nodes, setNodes]);
+
+  // ============================================================================
+  // SAVE OPERATIONS
   // ============================================================================
 
   const handleSave = async () => {
-    // CRITICAL FIX: Check currentDiagramId, not urlDiagramId
     if (!currentDiagramId) {
-      // First save - show name modal
       setShowNameModal(true);
       return;
     }
     
-    // Subsequent saves - update existing diagram
     await performSave(workspaceName, diagramName);
   };
 
@@ -371,7 +482,6 @@ export const OntologyBuilderPage: React.FC = () => {
       let savedDiagramId: string;
       let savedGraphName: string;
 
-      // CRITICAL FIX: Use currentDiagramId to determine if updating or creating
       const isUpdate = currentDiagramId !== null;
       
       console.log('Save operation:', {
@@ -382,13 +492,11 @@ export const OntologyBuilderPage: React.FC = () => {
       });
 
       if (isUpdate) {
-        // Update existing diagram
         console.log('Updating existing diagram:', currentDiagramId);
         const response = await apiClient.put(`/diagrams/${currentDiagramId}`, payload);
         savedDiagramId = response.data.id;
         savedGraphName = response.data.graph_name;
       } else {
-        // Create new diagram
         console.log('Creating new diagram:', name, 'in workspace:', workspace);
         
         const response = await apiClient.post('/diagrams', {
@@ -405,14 +513,10 @@ export const OntologyBuilderPage: React.FC = () => {
           graph_name: savedGraphName
         });
         
-        // CRITICAL FIX: Update currentDiagramId immediately
         setCurrentDiagramId(savedDiagramId);
-        
-        // Update URL
         navigate(`/builder/${savedDiagramId}`, { replace: true });
       }
 
-      // CRITICAL FIX: Update UI state immediately
       setDiagramName(name);
       setWorkspaceName(workspace);
       setGraphName(savedGraphName);
@@ -438,7 +542,6 @@ export const OntologyBuilderPage: React.FC = () => {
           console.log('✅ Synced to FalkorDB:', savedGraphName);
         } catch (syncError) {
           console.error('FalkorDB sync failed:', syncError);
-          // Don't fail the save if sync fails
         }
       }
 
@@ -446,7 +549,6 @@ export const OntologyBuilderPage: React.FC = () => {
     } catch (error: any) {
       console.error('Failed to save diagram:', error);
       
-      // Better error handling
       if (error.response?.status === 409) {
         alert('A diagram with this name already exists in this workspace. Please try a different name.');
       } else {
@@ -462,10 +564,6 @@ export const OntologyBuilderPage: React.FC = () => {
     setShowNameModal(false);
     performSave(workspace, name);
   };
-
-  // ============================================================================
-  // PUBLISH OPERATION
-  // ============================================================================
 
   const handlePublish = async () => {
     if (!currentDiagramId) {
@@ -489,39 +587,33 @@ export const OntologyBuilderPage: React.FC = () => {
   // RENDER
   // ============================================================================
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p>Loading diagram...</p>
-        </div>
-      </div>
-    );
-  }
+  const selectedNodesCount = nodes.filter(n => n.selected && n.type !== 'package').length;
 
   return (
-    <div className="flex h-screen" style={{ backgroundColor: COLORS.OFF_WHITE }}>
+    <div className="h-screen flex" style={{ backgroundColor: COLORS.WHITE }}>
       {/* Left Sidebar */}
       <aside
-        className="w-80 border-r-2 flex flex-col"
-        style={{ borderColor: COLORS.LIGHT_GREY, backgroundColor: COLORS.WHITE }}
+        className="w-64 border-r-2 flex flex-col"
+        style={{
+          backgroundColor: COLORS.OFF_WHITE,
+          borderColor: COLORS.LIGHT_GREY,
+        }}
       >
-        {/* Header - FIXED: Updates after save */}
+        {/* Header */}
         <div className="p-4 border-b-2" style={{ borderColor: COLORS.LIGHT_GREY }}>
-          <h2 className="text-xl font-bold" style={{ color: COLORS.BLACK }}>
-            {diagramName}
+          <h2 className="text-xl font-bold" style={{ color: COLORS.PRIMARY }}>
+            Semantic Architect
           </h2>
-          <p className="text-sm" style={{ color: COLORS.DARK_GREY }}>
-            Workspace: {workspaceName}
+          <p className="text-sm mt-1" style={{ color: COLORS.DARK_GREY }}>
+            {diagramName}
           </p>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b" style={{ borderColor: COLORS.LIGHT_GREY }}>
+        <div className="flex border-b-2" style={{ borderColor: COLORS.LIGHT_GREY }}>
           <button
             onClick={() => setActiveTab('elements')}
-            className="flex-1 py-2 text-sm font-medium transition"
+            className="flex-1 py-2 font-medium transition"
             style={{
               backgroundColor: activeTab === 'elements' ? COLORS.PRIMARY : COLORS.OFF_WHITE,
               color: activeTab === 'elements' ? COLORS.WHITE : COLORS.BLACK,
@@ -531,7 +623,7 @@ export const OntologyBuilderPage: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('hierarchy')}
-            className="flex-1 py-2 text-sm font-medium transition"
+            className="flex-1 py-2 font-medium transition"
             style={{
               backgroundColor: activeTab === 'hierarchy' ? COLORS.PRIMARY : COLORS.OFF_WHITE,
               color: activeTab === 'hierarchy' ? COLORS.WHITE : COLORS.BLACK,
@@ -567,6 +659,9 @@ export const OntologyBuilderPage: React.FC = () => {
           fitView
           panOnScroll={selectedTool === 'pan'}
           selectionOnDrag={selectedTool === 'select'}
+          // CRITICAL: Enable parent-child node features
+          nodeExtent={undefined}
+          selectNodesOnDrag={false}
         >
           <Background color={COLORS.LIGHT_GREY} />
           <Controls showInteractive={false} />
@@ -574,6 +669,20 @@ export const OntologyBuilderPage: React.FC = () => {
 
         {/* Top Toolbar */}
         <div className="absolute top-4 right-4 flex gap-2">
+          {selectedNodesCount > 0 && (
+            <button
+              onClick={handleGroupIntoPackage}
+              className="flex items-center gap-2 px-4 py-2 rounded shadow-lg transition"
+              style={{
+                backgroundColor: COLORS.PRIMARY,
+                color: COLORS.WHITE,
+              }}
+              title={`Group ${selectedNodesCount} selected element(s) into package`}
+            >
+              <FolderPlus className="w-4 h-4" />
+              Group into Package ({selectedNodesCount})
+            </button>
+          )}
           <button
             onClick={handleSave}
             disabled={isSaving}
@@ -662,8 +771,8 @@ export const OntologyBuilderPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Right Sidebar - Element Editor */}
-      {selectedNode && (
+      {/* Right Sidebar - Context-Aware Editor */}
+      {selectedNode && !selectedEdge && (
         <ElementEditor
           selectedNode={selectedNode}
           onUpdate={handleNodeUpdate}
@@ -671,7 +780,16 @@ export const OntologyBuilderPage: React.FC = () => {
         />
       )}
 
-      {/* Cardinality Modal */}
+      {selectedEdge && !selectedNode && (
+        <EdgeEditor
+          selectedEdge={selectedEdge}
+          onUpdate={handleEdgeUpdate}
+          onDelete={handleEdgeDelete}
+          onClose={() => setSelectedEdge(null)}
+        />
+      )}
+
+      {/* Modals */}
       {showCardinalityModal && (
         <CardinalityModal
           isOpen={showCardinalityModal}
@@ -685,7 +803,6 @@ export const OntologyBuilderPage: React.FC = () => {
         />
       )}
 
-      {/* Diagram Name Modal */}
       <DiagramNameModal
         isOpen={showNameModal}
         onClose={() => setShowNameModal(false)}
@@ -700,6 +817,14 @@ export const OntologyBuilderPage: React.FC = () => {
           diagramId={currentDiagramId} 
           graphName={graphName} 
         />
+      )}
+
+      {isLoading && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-8 rounded-lg shadow-xl">
+            <p className="text-lg font-medium">Loading diagram...</p>
+          </div>
+        </div>
       )}
     </div>
   );
