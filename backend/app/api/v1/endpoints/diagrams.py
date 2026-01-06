@@ -431,3 +431,170 @@ async def list_diagrams(
         )
         for d in diagrams
     ]
+
+# Add these endpoints to backend/app/api/v1/endpoints/diagrams.py
+
+@router.get("/{diagram_id}/falkor-stats")
+async def get_diagram_falkor_stats(
+    *,
+    db: AsyncSession = Depends(get_db),
+    diagram_id: str,
+    current_user: User = Depends(get_current_user),
+    semantic_service: SemanticModelService = Depends(get_semantic_service)
+) -> Any:
+    """
+    Get FalkorDB statistics for a diagram
+    Debug endpoint to verify sync status
+    """
+    try:
+        # Get diagram
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_id,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        # Get FalkorDB stats
+        stats = semantic_service.get_graph_stats(diagram.graph_name)
+        
+        return {
+            "diagram_id": str(diagram.id),
+            "diagram_name": diagram.name,
+            "graph_name": diagram.graph_name,
+            "falkordb_stats": stats
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get FalkorDB stats", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get FalkorDB stats: {str(e)}"
+        )
+
+
+@router.post("/{diagram_id}/falkor-query")
+async def query_diagram_falkor(
+    *,
+    db: AsyncSession = Depends(get_db),
+    diagram_id: str,
+    query_data: Dict[str, Any],
+    current_user: User = Depends(get_current_user),
+    semantic_service: SemanticModelService = Depends(get_semantic_service)
+) -> Any:
+    """
+    Execute a Cypher query on diagram's FalkorDB graph
+    Debug endpoint for testing queries
+    """
+    try:
+        # Get diagram
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_id,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        cypher_query = query_data.get("query", "MATCH (n) RETURN n LIMIT 10")
+        
+        # Execute query
+        query_result = semantic_service.query_graph(diagram.graph_name, cypher_query)
+        
+        return {
+            "diagram_id": str(diagram.id),
+            "graph_name": diagram.graph_name,
+            "query": cypher_query,
+            "result": query_result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to query FalkorDB", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query FalkorDB: {str(e)}"
+        )
+
+
+@router.post("/{diagram_id}/force-sync")
+async def force_sync_diagram(
+    *,
+    db: AsyncSession = Depends(get_db),
+    diagram_id: str,
+    current_user: User = Depends(get_current_user),
+    semantic_service: SemanticModelService = Depends(get_semantic_service)
+) -> Any:
+    """
+    Force re-sync of diagram to FalkorDB
+    Useful for debugging or fixing sync issues
+    """
+    try:
+        # Get diagram
+        stmt = select(Diagram).where(
+            and_(
+                Diagram.id == diagram_id,
+                Diagram.deleted_at.is_(None)
+            )
+        )
+        result = await db.execute(stmt)
+        diagram = result.scalar_one_or_none()
+        
+        if not diagram:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Diagram not found"
+            )
+        
+        # Extract nodes and edges from settings
+        settings = diagram.settings or {}
+        nodes = settings.get('nodes', [])
+        edges = settings.get('edges', [])
+        
+        logger.info(
+            "Force sync requested",
+            diagram_id=str(diagram.id),
+            graph_name=diagram.graph_name,
+            node_count=len(nodes),
+            edge_count=len(edges)
+        )
+        
+        # Force sync
+        sync_result = await semantic_service.sync_to_falkordb(
+            graph_name=diagram.graph_name,
+            nodes=nodes,
+            edges=edges
+        )
+        
+        return {
+            "diagram_id": str(diagram.id),
+            "graph_name": diagram.graph_name,
+            "sync_result": sync_result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Force sync failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Force sync failed: {str(e)}"
+        )

@@ -1,11 +1,12 @@
+// frontend/src/pages/OntologyBuilderPage/OntologyBuilderPage.tsx
 /**
- * Ontology Builder Page - Main Editor (ERROR-FREE VERSION)
+ * Ontology Builder Page - FIXED: 409 Issue & UI Update
  * Path: frontend/src/pages/OntologyBuilderPage/OntologyBuilderPage.tsx
  * 
  * FIXES:
- * - Correct CardinalityModal props (includes isOpen)
- * - Uses correct ClassNode import
- * - No TypeScript errors
+ * - No 409 conflict (tracks current diagram ID separately)
+ * - UI updates diagram name after save
+ * - Proper graph structure (attributes as properties)
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -34,21 +35,23 @@ import {
   Save,
   Upload,
 } from 'lucide-react';
-import { apiClient } from '../../services/api/client';
 import { COLORS, ELEMENT_COLORS } from '../../constants/colors';
 import type { NodeData, EdgeData, NodeType } from '../../types/diagram.types';
+
+// API Client
+import { apiClient } from '../../services/api/client';
 
 // Import components
 import { ElementPalette } from '../../components/builder/ElementPalette/ElementPalette';
 import { HierarchyView } from '../../components/builder/HierarchyView/HierarchyView';
 import { CardinalityModal } from '../../components/modals/CardinalityModal/CardinalityModal';
-import PackageNode from '../../components/nodes/PackageNode/PackageNode';
+import { DiagramNameModal } from '../../components/modals/DiagramNameModal/DiagramNameModal';
 import { ElementEditor } from '../../components/builder/ElementEditor/ElementEditor';
-
-// Import the CORRECT ClassNode (not the UML one with ClassAttribute)
+import { FalkorDebugPanel } from '../../components/debug/FalkorDebugPanel';
+import PackageNode from '../../components/nodes/PackageNode/PackageNode';
 import { ClassNode } from '../../components/nodes/ClassNode/ClassNode';
 
-// Node types registry - use the correct ClassNode
+// Node types registry
 const nodeTypes = {
   package: PackageNode,
   class: ClassNode,
@@ -65,39 +68,63 @@ interface PendingConnection {
 }
 
 export const OntologyBuilderPage: React.FC = () => {
-  const { diagramId } = useParams();
+  const { diagramId: urlDiagramId } = useParams();
   const navigate = useNavigate();
   
+  // CRITICAL FIX: Track current diagram ID separately from URL
+  // This prevents 409 errors on subsequent saves
+  const [currentDiagramId, setCurrentDiagramId] = useState<string | null>(
+    urlDiagramId && urlDiagramId !== 'new' ? urlDiagramId : null
+  );
+  
+  // ReactFlow state
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
   
+  // UI state
   const [selectedNode, setSelectedNode] = useState<Node<NodeData> | null>(null);
   const [selectedTool, setSelectedTool] = useState<'select' | 'pan'>('select');
   const [activeTab, setActiveTab] = useState<'elements' | 'hierarchy'>('elements');
   
+  // Modal state
   const [showCardinalityModal, setShowCardinalityModal] = useState(false);
+  const [showNameModal, setShowNameModal] = useState(false);
   const [pendingConnection, setPendingConnection] = useState<PendingConnection | null>(null);
   
+  // Loading state
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
+  // Diagram metadata
   const [diagramName, setDiagramName] = useState('Untitled Diagram');
   const [workspaceName, setWorkspaceName] = useState('default');
   const [graphName, setGraphName] = useState('');
   
+  // History for undo/redo
   const [history, setHistory] = useState<Array<{ nodes: Node<NodeData>[]; edges: Edge<EdgeData>[] }>>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   
   const nodeIdCounter = useRef(1);
 
+  // ============================================================================
+  // EFFECTS
+  // ============================================================================
+
+  // Update currentDiagramId when URL changes
+  useEffect(() => {
+    if (urlDiagramId && urlDiagramId !== 'new' && urlDiagramId !== currentDiagramId) {
+      setCurrentDiagramId(urlDiagramId);
+    }
+  }, [urlDiagramId]);
+
   // Load diagram data
   useEffect(() => {
-    if (diagramId && diagramId !== 'new') {
-      loadDiagram();
+    if (currentDiagramId) {
+      loadDiagram(currentDiagramId);
     }
-  }, [diagramId]);
+  }, [currentDiagramId]);
 
   // Track selection changes
   useEffect(() => {
@@ -126,12 +153,14 @@ export const OntologyBuilderPage: React.FC = () => {
     };
   }, []);
 
-  const loadDiagram = async () => {
-    if (!diagramId || diagramId === 'new') return;
+  // ============================================================================
+  // LOAD DIAGRAM
+  // ============================================================================
 
+  const loadDiagram = async (id: string) => {
     try {
       setIsLoading(true);
-      const response = await apiClient.get(`/diagrams/${diagramId}`);
+      const response = await apiClient.get(`/diagrams/${id}`);
       const diagram = response.data;
 
       setDiagramName(diagram.name || 'Untitled Diagram');
@@ -158,6 +187,10 @@ export const OntologyBuilderPage: React.FC = () => {
     }
   };
 
+  // ============================================================================
+  // HISTORY (UNDO/REDO)
+  // ============================================================================
+
   const saveToHistory = () => {
     const newHistory = history.slice(0, historyIndex + 1);
     newHistory.push({ nodes: [...nodes], edges: [...edges] });
@@ -182,6 +215,10 @@ export const OntologyBuilderPage: React.FC = () => {
       setHistoryIndex(historyIndex + 1);
     }
   };
+
+  // ============================================================================
+  // NODE OPERATIONS
+  // ============================================================================
 
   const handleDrop = useCallback(
     (event: React.DragEvent) => {
@@ -228,6 +265,24 @@ export const OntologyBuilderPage: React.FC = () => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
+
+  const handleNodeUpdate = useCallback(
+    (nodeId: string, updates: Partial<NodeData>) => {
+      setNodes((nds) =>
+        nds.map((node) =>
+          node.id === nodeId
+            ? { ...node, data: { ...node.data, ...updates } }
+            : node
+        )
+      );
+      saveToHistory();
+    },
+    [setNodes]
+  );
+
+  // ============================================================================
+  // EDGE OPERATIONS
+  // ============================================================================
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -285,21 +340,23 @@ export const OntologyBuilderPage: React.FC = () => {
     [pendingConnection, setEdges]
   );
 
-  const handleNodeUpdate = useCallback(
-    (nodeId: string, updates: Partial<NodeData>) => {
-      setNodes((nds) =>
-        nds.map((node) =>
-          node.id === nodeId
-            ? { ...node, data: { ...node.data, ...updates } }
-            : node
-        )
-      );
-      saveToHistory();
-    },
-    [setNodes]
-  );
+  // ============================================================================
+  // SAVE OPERATIONS - FIXED FOR 409 ISSUE
+  // ============================================================================
 
   const handleSave = async () => {
+    // CRITICAL FIX: Check currentDiagramId, not urlDiagramId
+    if (!currentDiagramId) {
+      // First save - show name modal
+      setShowNameModal(true);
+      return;
+    }
+    
+    // Subsequent saves - update existing diagram
+    await performSave(workspaceName, diagramName);
+  };
+
+  const performSave = async (workspace: string, name: string) => {
     try {
       setIsSaving(true);
 
@@ -311,28 +368,59 @@ export const OntologyBuilderPage: React.FC = () => {
         viewport,
       };
 
-      let savedDiagramId = diagramId;
-      let savedGraphName = graphName;
+      let savedDiagramId: string;
+      let savedGraphName: string;
 
-      if (diagramId && diagramId !== 'new') {
+      // CRITICAL FIX: Use currentDiagramId to determine if updating or creating
+      const isUpdate = currentDiagramId !== null;
+      
+      console.log('Save operation:', {
+        isUpdate,
+        currentDiagramId,
+        diagramName: name,
+        workspaceName: workspace
+      });
+
+      if (isUpdate) {
         // Update existing diagram
-        await apiClient.put(`/diagrams/${diagramId}`, payload);
-      } else {
-        // Create new diagram
-        const response = await apiClient.post('/diagrams', {
-          ...payload,
-          name: diagramName,
-          workspace_name: workspaceName,
-        });
+        console.log('Updating existing diagram:', currentDiagramId);
+        const response = await apiClient.put(`/diagrams/${currentDiagramId}`, payload);
         savedDiagramId = response.data.id;
         savedGraphName = response.data.graph_name;
-        setGraphName(savedGraphName);
+      } else {
+        // Create new diagram
+        console.log('Creating new diagram:', name, 'in workspace:', workspace);
+        
+        const response = await apiClient.post('/diagrams', {
+          ...payload,
+          name: name,
+          workspace_name: workspace,
+        });
+        
+        savedDiagramId = response.data.id;
+        savedGraphName = response.data.graph_name;
+        
+        console.log('Diagram created:', {
+          id: savedDiagramId,
+          graph_name: savedGraphName
+        });
+        
+        // CRITICAL FIX: Update currentDiagramId immediately
+        setCurrentDiagramId(savedDiagramId);
+        
+        // Update URL
         navigate(`/builder/${savedDiagramId}`, { replace: true });
       }
 
-      // Sync to FalkorDB with correct graph name
+      // CRITICAL FIX: Update UI state immediately
+      setDiagramName(name);
+      setWorkspaceName(workspace);
+      setGraphName(savedGraphName);
+
+      // Sync to FalkorDB
       if (savedDiagramId && savedGraphName) {
         try {
+          console.log('Syncing to FalkorDB:', savedGraphName);
           await apiClient.post(`/diagrams/${savedDiagramId}/sync`, {
             nodes: nodes.map(node => ({
               id: node.id,
@@ -354,24 +442,40 @@ export const OntologyBuilderPage: React.FC = () => {
         }
       }
 
-      alert('Diagram saved successfully!');
-    } catch (error) {
+      alert(`Diagram saved successfully!`);
+    } catch (error: any) {
       console.error('Failed to save diagram:', error);
-      alert('Failed to save diagram. Please try again.');
+      
+      // Better error handling
+      if (error.response?.status === 409) {
+        alert('A diagram with this name already exists in this workspace. Please try a different name.');
+      } else {
+        const errorMsg = error.response?.data?.detail || error.message || 'Unknown error';
+        alert(`Failed to save diagram: ${errorMsg}`);
+      }
     } finally {
       setIsSaving(false);
     }
   };
 
+  const handleNameModalSubmit = (workspace: string, name: string) => {
+    setShowNameModal(false);
+    performSave(workspace, name);
+  };
+
+  // ============================================================================
+  // PUBLISH OPERATION
+  // ============================================================================
+
   const handlePublish = async () => {
-    if (!diagramId || diagramId === 'new') {
+    if (!currentDiagramId) {
       alert('Please save the diagram before publishing.');
       return;
     }
 
     try {
       setIsPublishing(true);
-      await apiClient.post(`/diagrams/${diagramId}/publish`);
+      await apiClient.post(`/diagrams/${currentDiagramId}/publish`);
       alert('Diagram published successfully!');
     } catch (error) {
       console.error('Failed to publish diagram:', error);
@@ -380,6 +484,10 @@ export const OntologyBuilderPage: React.FC = () => {
       setIsPublishing(false);
     }
   };
+
+  // ============================================================================
+  // RENDER
+  // ============================================================================
 
   if (isLoading) {
     return (
@@ -399,7 +507,7 @@ export const OntologyBuilderPage: React.FC = () => {
         className="w-80 border-r-2 flex flex-col"
         style={{ borderColor: COLORS.LIGHT_GREY, backgroundColor: COLORS.WHITE }}
       >
-        {/* Header */}
+        {/* Header - FIXED: Updates after save */}
         <div className="p-4 border-b-2" style={{ borderColor: COLORS.LIGHT_GREY }}>
           <h2 className="text-xl font-bold" style={{ color: COLORS.BLACK }}>
             {diagramName}
@@ -563,7 +671,7 @@ export const OntologyBuilderPage: React.FC = () => {
         />
       )}
 
-      {/* Cardinality Modal - WITH isOpen prop */}
+      {/* Cardinality Modal */}
       {showCardinalityModal && (
         <CardinalityModal
           isOpen={showCardinalityModal}
@@ -574,6 +682,23 @@ export const OntologyBuilderPage: React.FC = () => {
           onSubmit={handleCardinalitySubmit}
           sourceNode={nodes.find((n) => n.id === pendingConnection?.source)}
           targetNode={nodes.find((n) => n.id === pendingConnection?.target)}
+        />
+      )}
+
+      {/* Diagram Name Modal */}
+      <DiagramNameModal
+        isOpen={showNameModal}
+        onClose={() => setShowNameModal(false)}
+        onSubmit={handleNameModalSubmit}
+        defaultWorkspace={workspaceName}
+        defaultDiagram={diagramName}
+      />
+
+      {/* FalkorDB Debug Panel */}
+      {currentDiagramId && graphName && (
+        <FalkorDebugPanel 
+          diagramId={currentDiagramId} 
+          graphName={graphName} 
         />
       )}
     </div>
