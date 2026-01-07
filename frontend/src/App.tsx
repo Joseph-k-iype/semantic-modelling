@@ -1,51 +1,55 @@
 // frontend/src/App.tsx
 /**
- * Main App Component with Routing - FIXED with Authentication
- * Path: frontend/src/App.tsx
- * 
- * CRITICAL FIX: Added ProtectedRoute wrapper for authenticated routes
+ * Main Application Component
+ * Semantic Architect - UML Ontology and Graph Modeling Platform
  */
 
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import AuthGuard from './components/auth/AuthGuard/AuthGuard';
+import Layout from './components/layout/Layout';
+
+// Pages - using named exports
 import { HomePage } from './pages/HomePage/HomePage';
 import { LoginPage } from './pages/LoginPage/LoginPage';
+import { WorkspacePage } from './pages/WorkspacePage/WorkspacePage';
+import ModelEditorPage from './pages/ModelEditorPage/ModelEditorPage';
 import { OntologyBuilderPage } from './pages/OntologyBuilderPage/OntologyBuilderPage';
-import { ProtectedRoute } from './components/auth/ProtectedRoute';
+import SettingsPage from './pages/SettingsPage/SettingsPage';
+import { NotFoundPage } from './pages/NotFoundPage/NotFoundPage';
+import ImportWorkflow from './pages/ImportWorkflow/ImportWorkflow';
 
 function App() {
   return (
-    <BrowserRouter>
+    <Router>
       <Routes>
-        {/* Public Routes - No authentication required */}
-        <Route path="/" element={<HomePage />} />
+        {/* Public Routes */}
         <Route path="/login" element={<LoginPage />} />
-        
-        {/* Protected Routes - Authentication required */}
-        <Route 
-          path="/builder/new" 
+
+        {/* Protected Routes with Layout */}
+        <Route
+          path="/*"
           element={
-            <ProtectedRoute>
-              <OntologyBuilderPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/builder/:id" 
-          element={
-            <ProtectedRoute>
-              <OntologyBuilderPage />
-            </ProtectedRoute>
-          } 
-        />
-        
-        {/* Legacy route redirects */}
-        <Route path="/diagram/*" element={<Navigate to="/builder/new" replace />} />
-        
-        {/* Fallback - redirect to home */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+            <AuthGuard>
+              <Layout />
+            </AuthGuard>
+          }
+        >
+          <Route index element={<HomePage />} />
+          <Route path="workspace" element={<WorkspacePage />} />
+          <Route path="workspace/:workspaceId" element={<WorkspacePage />} />
+          <Route path="model/:modelId" element={<ModelEditorPage />} />
+          <Route path="ontology" element={<OntologyBuilderPage />} />
+          <Route path="ontology/:diagramId" element={<OntologyBuilderPage />} />
+          
+          {/* Import Feature Route */}
+          <Route path="import" element={<ImportWorkflow />} />
+          
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="404" element={<NotFoundPage />} />
+          <Route path="*" element={<Navigate to="/404" replace />} />
+        </Route>
       </Routes>
-    </BrowserRouter>
+    </Router>
   );
 }
 

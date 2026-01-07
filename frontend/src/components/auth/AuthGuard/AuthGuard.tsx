@@ -1,19 +1,30 @@
+// frontend/src/components/auth/AuthGuard/AuthGuard.tsx
+/**
+ * Authentication Guard Component - Simplified
+ * Protects routes from unauthenticated access
+ */
+
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useAuthStore, type AuthState } from '../../../store/authStore';
 
 interface AuthGuardProps {
   children: React.ReactNode;
 }
 
 const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
-  // TODO: Implement actual authentication check
-  // For now, we'll allow all access to see the UI
-  const isAuthenticated = true; // Change this to check actual auth state
+  const location = useLocation();
   
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+  // Get auth state - this will be true if user logged in
+  const isAuthenticated = useAuthStore((state: AuthState) => state.isAuthenticated);
+  const token = useAuthStore((state: AuthState) => state.token);
+
+  // If not authenticated and no token, redirect to login
+  if (!isAuthenticated || !token) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
-  
+
+  // Render protected content
   return <>{children}</>;
 };
 
